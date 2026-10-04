@@ -1030,7 +1030,9 @@ window.__ModuleLoader__.load({
           style: {
             // 图已是圆形透明底（tools/prepare-art.py 的 circular_mask），
             // 所以不需要 objectPosition 微调，也不需要额外裁切。
-            width: edge, height: edge, borderRadius: '50%',
+            // cornerShape: 'round' 必须写 —— 外壳全局 `*{corner-shape:superellipse(1.5)}`
+            // 会把 borderRadius:50% 渲染成圆角方形。
+            width: edge, height: edge, borderRadius: '50%', cornerShape: 'round',
             objectFit: 'cover', display: 'block'
           }
         })
@@ -1051,7 +1053,11 @@ window.__ModuleLoader__.load({
           height: edge,
           decoding: 'async',
           style: {
-            width: edge, height: edge, borderRadius: '50%',
+            // cornerShape 必须写：外壳有一条全局规则
+            //   *, :before, :after{ corner-shape: var(--dsw-corner-shape) }
+            // 值为 superellipse(1.5)，会把 borderRadius:50% 渲染成
+            // 「圆角方形」而不是正圆（用户截图里那个方圆角就是它）。
+            width: edge, height: edge, borderRadius: '50%', cornerShape: 'round',
             objectFit: 'cover', display: 'block'
           }
         })

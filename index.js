@@ -467,7 +467,10 @@ export function structureStyle () {
 
     /* ── 观测栏内部结构 ─────────────────────────────────────────────── */
     '.zf-rail__head{ display:flex;align-items:center;gap:9px; }',
-    '.zf-rail__avatar{ width:32px;height:32px;border-radius:50%;flex:0 0 auto;object-fit:cover; }',
+    // `corner-shape:round` 必须写：外壳全局把 `*`/`::before`/`::after` 设成了
+    // 超椭圆圆角（`corner-shape: var(--dsw-corner-shape)` = superellipse(1.5)），
+    // 它会把 `border-radius:50%` 渲染成圆角方形而不是正圆。
+    '.zf-rail__avatar{ width:32px;height:32px;flex:0 0 auto;object-fit:cover;border-radius:50% !important;corner-shape:round !important; }',
     '.zf-rail__title{ font-weight:600;font-size:13px; }',
     '.zf-rail__caption{ color:var(--dsw-alias-label-tertiary);font-size:11px; }',
     '.zf-rail__group{ display:flex;flex-direction:column;gap:7px; }',
@@ -546,10 +549,18 @@ export function structureStyle () {
     '}',
     'body[data-zf-avatar] [data-chat-flow-kind="assistant-step"]:not(:empty):not(:has(>[data-slot="conversation.chat.node"]:empty))::before{',
     '  content:"";position:absolute;top:2px;left:0;width:28px;height:28px;',
-    '  box-sizing:border-box;border-radius:50%;',
+    // 去掉边框：用户反馈头像外面那圈黄绿描边难看（截图确认）。
+    //
+    // `corner-shape:round` 是**必须的**：外壳有一条全局规则
+    //   @supports (corner-shape:superellipse(1.5)){
+    //     *, :before, :after{ corner-shape: var(--dsw-corner-shape) }
+    //   }
+    // 把**所有元素与伪元素**都设成了超椭圆圆角。它会把 `border-radius:50%`
+    // 渲染成「圆角方形」（squircle）而不是正圆 —— 用户截图里那个方圆角就是它。
+    '  box-sizing:border-box;border:0;',
+    '  border-radius:50% !important;corner-shape:round !important;',
     '  background-image:var(--zf-avatar-image);',
     '  background-position:center;background-size:cover;',
-    '  border:1px solid color-mix(in srgb, var(--dsw-alias-brand-primary) 34%, transparent);',
     '  pointer-events:none;',
     '}',
     // 折叠行 / 空行：完全不加任何占位，交给外壳的 height:0

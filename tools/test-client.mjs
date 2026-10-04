@@ -1244,7 +1244,40 @@ function shellDom (opts = {}) {
   ok('Windows 右栏让开标题栏',
     /html\[data-windows-titlebar\] \.zf-rail\{[^}]*top:var\(--dsh-windows-titlebar-height/.test(css))
 }
+// 用例 35：头像不能有描边，且必须是正圆（外壳全局 corner-shape 会变方圆角）
+{
+  console.log('\n--- 头像描边与正圆 ---')
+  const { structureStyle } = await import('../index.js')
+  const css = structureStyle()
+  const before = css.match(/assistant-step"\]:not\(:empty\):not\(:has\(>\[data-slot="conversation\.chat\.node"\]:empty\)\)::before\{[^}]*\}/)
+  ok('找到助手头像规则', before !== null)
 
+  // 用户反馈：头像外面那圈黄绿描边难看
+  ok('助手头像无 border 描边', before !== null && !/border:1px/.test(before[0]))
+  ok('助手头像 border 显式清零', before !== null && /border:0/.test(before[0]))
+
+  // 外壳有一条全局规则把「所有元素与伪元素」设成超椭圆圆角：
+  //   @supports (corner-shape:superellipse(1.5)){
+  //     *, :before, :after{ corner-shape: var(--dsw-corner-shape) }
+  //   }
+  // 它会把 border-radius:50% 渲染成圆角方形（squircle）—— 用户截图确认过。
+  // 所以每处圆形头像都必须显式 corner-shape:round。
+  ok('助手头像 corner-shape:round', before !== null && /corner-shape:round/.test(before[0]))
+  ok('观测栏头像 corner-shape:round',
+    /\.zf-rail__avatar\{[^}]*corner-shape:round/.test(css))
+
+  // client.js 里两处 <img> 头像（HeroMark / BrandMark）走内联 style，
+  // 也要 cornerShape:'round'
+  const src = fs.readFileSync(path.join(ROOT, 'client.js'), 'utf8')
+  // 只数代码里的赋值 —— 注释里也会提到 `cornerShape: 'round'`，要排除
+  const codeOnly = src
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '')
+  const n = (codeOnly.match(/cornerShape: 'round'/g) ?? []).length
+  ok('两处 <img> 头像都设了 cornerShape', n === 2, `实际 ${n} 处`)
+  ok('不再有裸的 borderRadius:50% 而无 cornerShape',
+    !/borderRadius: '50%',\s*\n\s*objectFit/.test(codeOnly))
+}
 console.log(`\n合计 ${pass + fail} 项，通过 ${pass}，失败 ${fail}`)
 if (fail > 0) {
   console.log(`\n失败项：\n  ${failures.join('\n  ')}`)
