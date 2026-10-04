@@ -1,0 +1,822 @@
+/**
+ * 庄方宜主题 · Host 半身
+ *
+ * 职责：
+ *   1. 持久化设置（`$DSH_HOME/zhuang-fangyi/settings.json`，临时文件 + rename 原子写）
+ *   2. 提供浏览器半边需要的 JSON 与静态资源路由
+ *   3. `tapIndex` 在 `</head>` 前内联首帧 token + 壁纸样式，消除启动闪白
+ *
+ * 关于首帧：外壳的 presenter 会把 token 逐条 `setProperty` 到 body 的行内样式，
+ * 但内置 light/dark 主题的 tokens 是**空对象**，所以在浏览器半边跑起来之前，
+ * 页面上没有任何主题色 —— 这一帧就是默认蓝白。tapIndex 在服务端渲染阶段就把
+ * 与首帧等价的 `<style>` 写进 HTML，用户看不到那一帧。
+ *
+ * 依赖取舍：`webServer` 走嵌套 `ctx.inject` fiber（参考已验证的插件写法）。
+ * 它可能在 apply 时尚未提供（插件先于浏览器半边加载），一次性 `ctx.get` 会拿到
+ * undefined 并导致路由永不注册；嵌套 inject 会在服务可用时回调，服务被替换时重跑。
+ * 缺它时本插件不半残：配色仍由浏览器半边独立工作。
+ */
+
+import fs from 'node:fs'
+import path from 'node:path'
+import os from 'node:os'
+import { fileURLToPath } from 'node:url'
+
+import { PRESET_IDS, PRESETS, buildTokens, overridesFor, themeDefinitions } from './src/palette.js'
+import {
+  SETTINGS_VERSION,
+  BACKGROUNDS,
+  defaultSettings,
+  normalizeSettings
+} from './src/settings.js'
+
+/** 插件标识（Loader 行 id、token 层 source、样式标记共用）。 */
+export const name = 'zhuang-fangyi'
+
+/** 无硬依赖；`webServer` 由嵌套 inject 处理。 */
+export const inject = []
+
+const HERE = path.dirname(fileURLToPath(import.meta.url))
+const ART_DIR = path.join(HERE, 'art')
+const DATA_DIR_NAME = 'zhuang-fangyi'
+const ROUTE_PREFIX = '/api/zhuang-fangyi'
+
+/**
+ * 构建标记。由 `tools/deploy.ps1` 在部署时写入（取源文件 mtime），
+ * 用于确认**运行中的宿主进程到底跑的是哪一版代码**。
+ *
+ * 为什么需要它：宿主进程会缓存 ESM 模块。`plugin_manager` 的
+ * disable → enable 只重跑 `apply()`，**不会**重新 `import` 依赖模块
+ * （`src/palette.js` 等）。所以改了配色后可能「文件已更新、页面仍是旧色」。
+ * 有了这个标记，一次 HTTP 探活就能判断是否需要重启宿主。
+ */
+const PLUGIN_BUILD = '__ZF_BUILD__'
+
+/** 单文件大小上限（壁纸 12MB、图标 1MB）。 */
+const MAX_ART_BYTES = 12 * 1024 * 1024
+
+/** `$DSH_HOME` 优先，其次 `~/.dsh`（与外壳 home-paths 同一解析规则）。 */
+function resolveDshHome () {
+  const fromEnv = process.env.DSH_HOME
+  if (typeof fromEnv === 'string' && fromEnv.trim() !== '') return fromEnv.trim()
+  return path.join(os.homedir(), '.dsh')
+}
+
+/**
+ * 极简 JSON 持久化：读损坏时把原文件改名保留，绝不静默覆盖用户数据。
+ * 写入走 `临时文件 + rename`，崩溃不会留下半截文件。
+ */
+class JsonStore {
+  constructor (file, fallback, { normalize, log } = {}) {
+    this.file = file
+    this.fallback = fallback
+    this.normalize = normalize
+    this.log = log
+    this.value = this.#read()
+    this.timer = null
+  }
+
+  #read () {
+    let raw
+    try {
+      raw = fs.readFileSync(this.file, 'utf8')
+    } catch (error) {
+      if (error?.code !== 'ENOENT') this.log?.(`读取失败：${error?.message ?? error}`)
+      return this.normalize ? this.normalize(this.fallback) : this.fallback
+    }
+    try {
+      const parsed = JSON.parse(raw)
+      return this.normalize ? this.normalize(parsed) : parsed
+    } catch (error) {
+      // 保留损坏文件：否则下一次写入会用默认值把它盖掉，用户设置无从恢复。
+      try {
+        const keep = `${this.file}.corrupt-${Date.now()}`
+        fs.copyFileSync(this.file, keep)
+        this.log?.(`设置文件损坏，已备份到 ${keep}：${error?.message ?? error}`)
+      } catch { /* 无法写入的 home 不是这个文件的问题 */ }
+      return this.normalize ? this.normalize(this.fallback) : this.fallback
+    }
+  }
+
+  get () {
+    return this.value
+  }
+
+  /** 合并补丁并安排一次合并写入。 */
+  update (patch) {
+    const next = { ...this.value, ...patch }
+    this.value = this.normalize ? this.normalize(next) : next
+    this.schedule()
+    return this.value
+  }
+
+  replace (next) {
+    this.value = this.normalize ? this.normalize(next) : next
+    this.schedule()
+    return this.value
+  }
+
+  schedule () {
+    if (this.timer !== null) return
+    this.timer = setTimeout(() => {
+      this.timer = null
+      this.flush()
+    }, 250)
+    this.timer.unref?.()
+  }
+
+  /** 立即落盘（原子写）。 */
+  flush () {
+    try {
+      fs.mkdirSync(path.dirname(this.file), { recursive: true })
+      const tmp = `${this.file}.tmp-${process.pid}-${Date.now()}`
+      fs.writeFileSync(tmp, `${JSON.stringify(this.value, null, 2)}\n`, 'utf8')
+      fs.renameSync(tmp, this.file)
+    } catch (error) {
+      this.log?.(`写入失败：${error?.message ?? error}`)
+    }
+  }
+
+  dispose () {
+    if (this.timer !== null) {
+      clearTimeout(this.timer)
+      this.timer = null
+    }
+    this.flush()
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * 静态资源
+ * ------------------------------------------------------------------ */
+
+const MIME = {
+  '.webp': 'image/webp',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.svg': 'image/svg+xml',
+  '.mp3': 'audio/mpeg',
+  '.ogg': 'audio/ogg',
+  '.woff2': 'font/woff2'
+}
+
+/**
+ * 白名单：只服务本插件 art/ 下的已知文件，客户端不能任意指定路径。
+ * 由 BACKGROUNDS + 固定图标清单派生，避免目录遍历。
+ */
+function artWhitelist () {
+  const out = new Set()
+  for (const id of Object.keys(BACKGROUNDS)) {
+    const file = BACKGROUNDS[id]
+    if (file === null) continue
+    out.add(file)
+    // 明暗两版：`x.webp` / `x-dark.webp`
+    out.add(file.replace(/\.webp$/, '-dark.webp'))
+  }
+  out.add('contour.webp')
+  out.add('avatar.webp')
+  out.add('icon.svg')
+  out.add('favicon.svg')
+  for (let i = 1; i <= 8; i += 1) out.add(`icons/spot-${i}.svg`)
+  return out
+}
+
+const ART_WHITELIST = artWhitelist()
+
+/** 读取一个白名单内的 art 文件。 */
+function readArt (rel) {
+  if (!ART_WHITELIST.has(rel)) return null
+  // 双保险：拼出的绝对路径必须仍在 art/ 内
+  const abs = path.resolve(ART_DIR, rel)
+  if (!abs.startsWith(path.resolve(ART_DIR) + path.sep)) return null
+  try {
+    const stat = fs.statSync(abs)
+    if (!stat.isFile() || stat.size > MAX_ART_BYTES) return null
+    return { abs, size: stat.size, mime: MIME[path.extname(abs).toLowerCase()] ?? 'application/octet-stream' }
+  } catch {
+    return null
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * 首帧样式
+ * ------------------------------------------------------------------ */
+
+/**
+ * 转义用于 `<style>` 的文本。
+ *
+ * 值本身全部来自固定表（预设色值 / 白名单文件名），没有用户输入；这里仍是
+ * 一层廉价的纵深防御：万一将来把用户数据拼进来，`</style>` 不会提前闭合标签。
+ */
+function cssText (value) {
+  return String(value).replace(/<\/style/gi, '<\\/style')
+}
+
+/**
+ * 静态样式骨架（**CSS 结构的唯一来源**）。
+ *
+ * 分两块，职责不同：
+ *
+ *   · `tokenStyle(settings)` —— 预设 token 表。只在首帧需要：浏览器半边跑起来后
+ *     会用 `overrideTokens`（跟随系统）或 `setTheme`（固定明暗）接管，此时它会
+ *     把 `<style id="zf-boot-tokens">` 移除，避免两个来源同时存在。
+ *
+ *   · `structureStyle()` —— 壁纸与装饰的**结构**，全程常驻。它把所有随设置变化的
+ *     量都写成自定义属性并给默认值，浏览器半边只改属性、不重建 CSS。
+ *     这样 CSS 只有一份，客户端不会与宿主产生分叉。
+ *
+ * @param {object} settings - 归一化后的设置
+ * @returns {string} `<style>` 标签；关闭时返回空串
+ */
+export function bootStyle (settings) {  if (!settings.enabled) return ''
+  return cssText([tokenStyle(settings), structureStyle()].join('\n'))
+}
+
+/** 预设 token 表（首帧用；浏览器半边接管后移除）。 */
+export function tokenStyle (settings) {
+  const { light, dark } = buildTokens(settings.preset)
+  const decl = (table, indent) =>
+    Object.entries(table)
+      .map(([k, v]) => `${indent}${k}:${v};`)
+      .join('\n')
+  return [
+    '<style id="zf-boot-tokens">',
+    '/* 庄方宜主题 · 首帧 token（浏览器半边接管后移除本标签） */',
+    'body{',
+    decl(light, '  '),
+    '}',
+    'body[data-ds-dark-theme]{',
+    decl(dark, '  '),
+    '}',
+    '</style>'
+  ].join('\n')
+}
+
+/**
+ * 壁纸与装饰的结构样式。所有可变项都是自定义属性，客户端只写属性值。
+ *
+ * ── 为什么不用「降低 token 的 alpha」这个做法 ──────────────────────────
+ *
+ * 最初的实现是给 `--dsw-alias-bg-base` 套 alpha 让外壳透出壁纸。实测**无效**：
+ * 外壳 presenter 会把快照里全部 token 逐条 `setProperty` 到 body 的**行内样式**，
+ * 行内优先级高于任何样式表规则，所以我在样式表里写的半透明值被它的不透明值
+ * 覆盖 —— 结果就是「只改了配色，壁纸完全看不见」。
+ *
+ * 正确做法：**不去动 token**，而是把外壳那几层不透明的背景改成半透明。
+ * 半透明色由客户端算好（它知道当前预设的底色），写成 `--zf-veil*`，
+ * 这些是外壳不认识的新变量，presenter 不会碰它们。可读性由这层「纱」保证：
+ * 壁纸在最底层，纱覆盖其上，正文再压在纱上。
+ *
+ * 选择器说明 —— **两套壳，必须同时兼容**（实测确认，不是猜测）：
+ *
+ *   桌面端（本机实际运行）  0.2.0-rc.2，类名 `BynINW_*`，右栏叫 `rightbarCol`
+ *   Web 端                  0.1.0-rc.7，类名 `pI_x6G_*`，右栏叫 `detailsCol`
+ *
+ * 所以：
+ *   · 每处都写 `[class*="_xxxCol"]` 的**语义后缀**匹配（两套壳都命中）；
+ *   · 右栏同时写 `_rightbarCol` 与 `_detailsCol`（只写一个必漏一半）；
+ *   · 客户端用 `data-plugin-css` 反查真实哈希并打上 `data-zf-*`，
+ *     样式表同时认这些自有属性 —— 首帧靠后缀匹配，之后靠打标，双保险。
+ *
+ * ── 这张样式表由谁注入（重要，踩过坑）──────────────────────────────────
+ *
+ * 宿主把本函数的产物同时用于两处：
+ *   1. `bootStyle()` → `tapIndex`，**只在 Web 端有效**；
+ *   2. `/api/zhuang-fangyi/style.css` → 浏览器半边**自己插 `<style>`**。
+ *
+ * 为什么必须两条路都走：桌面端的渲染进程**不经过 Host 的 HTTP 服务** ——
+ * `app.asar` 的 `dsh-app://` 协议处理器直接从磁盘读
+ * `@deepseek-ai/dsh-web-frontend/dist/index.html`，只额外注入一个
+ * `__DSH_BOOT_READY__` 脚本。所以 `tapIndex` 在桌面端**从来不会执行**，
+ * 靠它注入的 CSS 一个字都不会出现（壁纸、顶栏、右栏全部失效）。
+ *
+ * 这也解释了最初「只改了配色」的反馈：不是壁纸被纱遮住了，是壁纸的 CSS
+ * 压根不存在 —— 而 token 是由浏览器半边 `overrideTokens` 独立生效的，
+ * 所以只有配色变了。
+ */
+export function structureStyle () {
+  const artVars = []
+  for (const [id, file] of Object.entries(BACKGROUNDS)) {
+    if (file === null) continue
+    const dark = file.endsWith('.webp') ? `${file.slice(0, -'.webp'.length)}-dark.webp` : file
+    const url = name => `url("${ROUTE_PREFIX}/art/${encodeURIComponent(name)}")`
+    artVars.push(`  --zf-art-${id}:${url(file)};`)
+    artVars.push(`  --zf-art-${id}-dark:${url(dark)};`)
+  }
+
+  // 模糊层：只对壁纸本身模糊。
+  //
+  // 不能放在 html 的 ::after 上用 backdrop-filter —— 那会把它**下面所有内容**
+  // 一起模糊（包括正文），因为它是覆盖全屏的独立层。正确做法是把模糊作用在
+  // 壁纸那一层：用一张只含壁纸的伪元素，对它自身 filter:blur()。
+  return [
+    '<style id="zf-boot-css">',
+    '/* 庄方宜主题 · 皮肤结构（客户端只改自定义属性） */',
+    'html{',
+    '  --zf-art-src:none;',
+    '  --zf-art-size:cover;',
+    '  --zf-art-position:center;',
+    '  --zf-art-repeat:no-repeat;',
+    '  --zf-blur:0px;',
+    // 模糊会糊掉四边，轻微放大避免露出底色边
+    '  --zf-art-scale:1;',
+    // 纱：半透明主题底色，覆盖在壁纸之上、正文之下。客户端按当前预设与明暗算好。
+    '  --zf-veil:transparent;',
+    '  --zf-veil-sidebar:transparent;',
+    // 头像图（客户端也可覆盖）。助手消息头像与顶栏/右栏共用这一张。
+    '  --zf-avatar-image:none;',
+    // 顶栏高度：Windows 上并入系统标题栏带（不额外占高度），其它平台自行占位。
+    '  --zf-topbar-height:40px;',
+    '  --zf-rail-width:288px;',
+    ...artVars,
+    '}',
+    // 壁纸画在 html 的 ::before 上（这样能单独对它做模糊，不影响内容）。
+    //
+    // 层级要注意：负 z-index 的元素会跑到**最近的层叠上下文**的背景之上、
+    // 内容之下。html 是根层叠上下文，所以 z-index:-1 正好落在「html 背景之上、
+    // body 及其后代之下」—— 这正是我们要的位置（body 已透明）。
+    // 同时给 html 一个不透明背景色兜底，避免壁纸没加载时露白。
+    'html[data-zf-wallpaper]{ background-color:var(--zf-veil,Canvas); }',
+    'html[data-zf-wallpaper]::before{',
+    '  content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;',
+    '  background-image:var(--zf-art-src);',
+    '  background-size:var(--zf-art-size);',
+    '  background-position:var(--zf-art-position);',
+    '  background-repeat:var(--zf-art-repeat);',
+    // 模糊会糊掉边缘，放大一点点避免露出白边
+    '  filter:blur(var(--zf-blur));',
+    '  transform:scale(var(--zf-art-scale,1));',
+    '}',
+    // ── 纱的层次（这里最容易做错，值得说清）────────────────────────────
+    //
+    // 外壳的实际结构是嵌套的，每层都有自己的不透明背景：
+    //     body
+    //       └ #root > …frame…              background: --dsw-alias-bg-base
+    //           ├ …sidebarCol…             background: --dsw-specific-sidebar-fill
+    //           ├ …centerCol…              （无背景，透出 frame 的）
+    //           └ …rightbarCol…            （无背景，透出 frame 的）
+    //
+    // 若给每层都套 alpha，壁纸可见度会**连乘**：两层各 0.83 就只剩 0.69。
+    // 实测「壁纸设了却完全看不见」正是这个原因（两层相乘后只剩 3%）。
+    //
+    // 正确做法：外层（body / #root / frame）全部透明，**只让三个列各带一层纱**。
+    // 三列铺满整个 frame，不会露底，且每处壁纸可见度都等于同一个 (1-alpha)。
+    'body[data-zf-wallpaper]{ background-color:transparent !important; }',
+    'body[data-zf-wallpaper] #root,',
+    'body[data-zf-wallpaper] #root > *,',
+    'body[data-zf-wallpaper] [data-zf-frame],',
+    'body[data-zf-wallpaper] [class*="_frame"]{ background:transparent !important; }',
+    // 中栏**内容**层：`ConversationRoot` 的根元素自己铺了不透明 `bg-base`
+    // （`.Dc7zOa_root{background:var(--dsw-alias-bg-base)}`），会整个盖住壁纸。
+    // 实测：中栏 153 个采样点唯一色数 = 1（纯色），就是被它挡的。
+    //
+    // **只认客户端打的精确锚点**，不要写 `[class*="_root"]` 这类模糊兜底 ——
+    // `data-phase` 是通用属性（对话根 / 输入编辑器 / 重连指示器都在用），
+    // 配合 `_root` 后缀会误伤一大片元素（实测把侧栏整个刷透明了）。
+    'body[data-zf-wallpaper] [data-zf-content],',
+    'body[data-zf-wallpaper] [data-zf-scroll]{ background:transparent !important; }',
+    'body[data-zf-wallpaper] [data-zf-sidebar],',
+    'body[data-zf-wallpaper] [class*="_sidebarCol"]{',
+    '  background:var(--zf-veil-sidebar) !important;',
+    '}',
+    // 右栏两套壳名字不同：桌面 `rightbarCol`、Web `detailsCol`。都要写。
+    'body[data-zf-wallpaper] [data-zf-center],',
+    'body[data-zf-wallpaper] [data-zf-rightbar],',
+    'body[data-zf-wallpaper] [class*="_centerCol"],',
+    'body[data-zf-wallpaper] [class*="_rightbarCol"],',
+    'body[data-zf-wallpaper] [class*="_detailsCol"]{',
+    '  background:var(--zf-veil) !important;',
+    '}',
+    // Windows 标题栏拖拽区（frame 的 ::before，40px 高）也带一层纱，
+    // 否则那一条会是全透明，与下面的侧栏/中栏不一致。
+    'body[data-zf-wallpaper]:not([data-zf-opaque-titlebar]) [data-zf-frame]::before,',
+    'body[data-zf-wallpaper]:not([data-zf-opaque-titlebar]) [class*="_frame"]::before{',
+    '  background:var(--zf-veil-sidebar) !important;',
+    '}',
+    // macOS 侧栏在外壳里是 background:0 0 + vibrancy，纱已足够
+    'html[data-platform=darwin] body[data-zf-wallpaper] [class*="sidebarCol"]{',
+    '  background:var(--zf-veil-sidebar) !important;',
+    '}',
+    // 焦点环：外壳未定义 --dsw-alias-focus-ring-color，由本插件补上
+    'body[data-zf-glow] :focus-visible{',
+    '  outline:2px solid var(--dsw-alias-focus-ring-color);',
+    '  outline-offset:2px;',
+    '  box-shadow:0 0 0 6px color-mix(in srgb, var(--dsw-alias-focus-ring-color) 18%, transparent);',
+    '}',
+    // 等高线细边框：把侧栏右分割线换成主题色
+    'body[data-zf-contour] [data-zf-sidebar],',
+    'body[data-zf-contour] [class*="sidebarCol"]{',
+    '  border-right-color:color-mix(in srgb, var(--dsw-alias-focus-ring-color) 30%, transparent) !important;',
+    '}',
+
+    /* ══════════════════════════════════════════════════════════════════
+     * 顶栏（40px，并入 Windows 标题栏带）
+     *
+     * 挂在 `shell.overlay` 插槽里 —— 外壳原生渲染的浮动层
+     * （`absolute; inset:0; z-index:20; pointer-events:none`，子元素自动恢复
+     * pointer-events）。不硬贴 DOM 的原因：overlay 由 React 管理，
+     * 重渲染不会掉，也不与其它插件抢位置。
+     *
+     * ── Windows 上必须避开原生 chrome（实测踩过，用户反馈「左上角这啥玩意儿」）
+     *
+     * 标题栏带**已经被占满**，不是空的：
+     *   · 左：系统窗口图标（约 0–40px）
+     *   · 左：Desktop 自带的「应用 / 编辑」菜单栏 —— Shadow DOM，
+     *     `position:fixed; top:0; left:var(--dsh-windows-menu-start, 48px); z-index:1100`
+     *   · 右：最小化 / 最大化 / 关闭（约 138px）
+     *
+     * 最初顶栏用 `padding:0 14px` 全宽铺开，结果：头像压在窗口图标上、
+     * 文字与「应用 / 编辑」叠字、按钮压在窗口按钮下。
+     *
+     * 修法：左右各让出原生 chrome 的宽度。菜单宽度按「应用 + 编辑 + 间距」
+     * 估为 116px，起点用 `--dsh-windows-menu-start`（展开 48px / 收起 84px）。
+     * ══════════════════════════════════════════════════════════════════ */
+    '.zf-topbar{',
+    '  position:absolute;top:0;left:0;right:0;height:var(--zf-topbar-height);',
+    '  display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;',
+    '  gap:12px;padding:0 14px;box-sizing:border-box;z-index:12;',
+    '  background:color-mix(in srgb, var(--dsw-specific-sidebar-fill) 88%, transparent);',
+    '  border-bottom:1px solid var(--dsw-alias-border-l1);',
+    '  backdrop-filter:blur(10px);',
+    '  font-size:13px;color:var(--dsw-alias-label-primary);',
+    '}',
+    // Windows：让开左侧窗口图标 + 菜单栏，右侧让开窗口按钮
+    'html[data-windows-titlebar] .zf-topbar{',
+    '  padding-left:calc(var(--dsh-windows-menu-start, 48px) + 116px);',
+    '  padding-right:150px;',
+    '}',
+    // 窗口不够宽时原生 chrome 与顶栏必然打架，直接不显示
+    // （这些信息在侧栏与右栏都有，不算丢功能）
+    '@media (max-width:1400px){',
+    '  html[data-windows-titlebar] .zf-topbar{ display:none; }',
+    '}',
+    // 顶栏本身不吃窗口拖拽（保留壳原生的拖拽条行为），但内部控件必须显式
+    // no-drag，否则点不动。
+    '.zf-topbar *{ -webkit-app-region:no-drag; }',
+    '.zf-topbar__lead{ display:flex;align-items:center;gap:9px;min-width:0; }',
+    '.zf-topbar__avatar{',
+    '  width:24px;height:24px;border-radius:50%;flex:0 0 auto;object-fit:cover;display:block;',
+    '  box-shadow:0 0 0 1px color-mix(in srgb, var(--dsw-alias-brand-primary) 40%, transparent);',
+    '}',
+    '.zf-topbar__name{ font-weight:600;letter-spacing:.02em;white-space:nowrap; }',
+    '.zf-topbar__sub{',
+    '  color:var(--dsw-alias-label-tertiary);font-size:11px;white-space:nowrap;',
+    '  overflow:hidden;text-overflow:ellipsis;',
+    '}',
+    '.zf-topbar__actions{ display:flex;align-items:center;gap:6px;flex:0 0 auto; }',
+    '.zf-topbar__btn{',
+    '  display:inline-flex;align-items:center;justify-content:center;gap:5px;',
+    '  height:26px;padding:0 10px;border-radius:7px;cursor:pointer;',
+    '  border:1px solid var(--dsw-alias-border-l2);',
+    '  background:var(--dsw-alias-button-floating-fill);',
+    '  color:var(--dsw-alias-label-secondary);font-size:12px;',
+    '}',
+    '.zf-topbar__btn:hover{',
+    '  background:var(--dsw-alias-button-floating-hover);',
+    '  color:var(--dsw-alias-label-primary);',
+    '}',
+    '.zf-topbar__btn[aria-pressed="true"]{',
+    '  background:var(--dsw-alias-button-primary-fill);',
+    '  color:var(--dsw-alias-label-primary-foreground);',
+    '  border-color:transparent;',
+    '}',
+    // 关闭顶栏
+    'body[data-zf-topbar="off"] .zf-topbar{ display:none; }',
+
+    /* ══════════════════════════════════════════════════════════════════
+     * 右侧观测栏
+     *
+     * 同样挂在 `shell.overlay`。**不调用 `ctx.layout.openRightbar()`** ——
+     * 那是文件 / 终端 / 文档预览等插件共用的原生面板，抢过来会与它们打架。
+     * 这里独立渲染，并在原生右栏展开时自动隐藏（见客户端 `refresh()`）。
+     * ══════════════════════════════════════════════════════════════════ */
+    '.zf-rail{',
+    '  position:absolute;top:var(--zf-topbar-height);bottom:0;right:0;',
+    '  width:var(--zf-rail-width);box-sizing:border-box;',
+    '  display:flex;flex-direction:column;gap:14px;padding:16px 14px;overflow-y:auto;',
+    '  background:color-mix(in srgb, var(--dsw-alias-bg-layer-1) 82%, transparent);',
+    '  border-left:1px solid var(--dsw-alias-border-l2);',
+    '  backdrop-filter:blur(10px);',
+    '  font-size:12px;color:var(--dsw-alias-label-primary);',
+    '}',
+    'body[data-zf-rail="off"] .zf-rail{ display:none; }',
+    // 中栏让位：只在本插件右栏可见时加内边距，否则会白白留一条空白
+    'body[data-zf-rail="on"] [data-zf-center]{ padding-right:var(--zf-rail-width); }',
+    '.zf-rail__head{ display:flex;align-items:center;gap:9px; }',
+    '.zf-rail__avatar{ width:32px;height:32px;border-radius:50%;flex:0 0 auto;object-fit:cover; }',
+    '.zf-rail__title{ font-weight:600;font-size:13px; }',
+    '.zf-rail__caption{ color:var(--dsw-alias-label-tertiary);font-size:11px; }',
+    '.zf-rail__group{ display:flex;flex-direction:column;gap:7px; }',
+    '.zf-rail__label{',
+    '  color:var(--dsw-alias-label-tertiary);font-size:10px;',
+    '  letter-spacing:.14em;text-transform:uppercase;',
+    '}',
+    '.zf-rail__row{ display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:10px; }',
+    '.zf-rail__value{',
+    '  font-family:Consolas,"Cascadia Mono",monospace;font-size:12px;',
+    '  color:var(--dsw-alias-brand-primary);font-weight:600;',
+    '}',
+    '.zf-rail__stats{ display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px; }',
+    '.zf-rail__stat{',
+    '  display:flex;flex-direction:column;gap:3px;padding:9px 8px;border-radius:9px;',
+    '  background:var(--dsw-alias-bg-layer-2);',
+    '  border:1px solid var(--dsw-alias-border-l1);min-width:0;',
+    '}',
+    '.zf-rail__stat b{',
+    '  font-family:Consolas,"Cascadia Mono",monospace;font-size:15px;font-weight:600;',
+    '  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;',
+    '}',
+    '.zf-rail__stat span{ color:var(--dsw-alias-label-tertiary);font-size:10px; }',
+    // 状态点：颜色随会话状态变（客户端写 data-zf-session-state）
+    '.zf-rail__dot{',
+    '  width:7px;height:7px;border-radius:50%;flex:0 0 auto;',
+    '  background:var(--dsw-alias-state-idle-primary);',
+    '}',
+    '[data-zf-session-state="running"] .zf-rail__dot{ background:var(--dsw-alias-brand-primary); }',
+    '[data-zf-session-state="tool"] .zf-rail__dot{ background:var(--dsw-alias-state-warn-primary); }',
+    '[data-zf-session-state="error"] .zf-rail__dot{ background:var(--dsw-alias-state-error-primary); }',
+    '[data-zf-session-state="done"] .zf-rail__dot{ background:var(--dsw-alias-state-success-primary); }',
+    '.zf-rail__swatches{ display:flex;flex-direction:column;gap:6px; }',
+    '.zf-rail__swatch{',
+    '  width:100%;height:28px;border-radius:7px;cursor:pointer;padding:0 9px;box-sizing:border-box;',
+    '  display:inline-flex;align-items:center;justify-content:space-between;gap:6px;',
+    '  border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-2);',
+    '  color:var(--dsw-alias-label-secondary);font-size:11px;',
+    '}',
+    '.zf-rail__swatch:hover{ border-color:var(--dsw-alias-border-l4);color:var(--dsw-alias-label-primary); }',
+    '.zf-rail__swatch[aria-pressed="true"]{',
+    '  border-color:var(--dsw-alias-brand-primary);',
+    '  background:color-mix(in srgb, var(--dsw-alias-brand-primary) 14%, var(--dsw-alias-bg-layer-2));',
+    '  color:var(--dsw-alias-label-primary);',
+    '}',
+    '.zf-rail__chip{ width:11px;height:11px;border-radius:3px;flex:0 0 auto; }',
+
+    /* ══════════════════════════════════════════════════════════════════
+     * 头像与气泡重绘
+     *
+     * 助手消息头像用 CSS `::before` 打在 `[data-chat-flow-kind="assistant-step"]`
+     * 上 —— 这是**语义锚点**（桌面壳有 456 个 data-* 之一），比类名稳。
+     * ══════════════════════════════════════════════════════════════════ */
+    'body[data-zf-avatar] [data-chat-flow-kind="assistant-step"]{',
+    '  position:relative;min-height:48px;padding:22px 0 2px 58px;',
+    '}',
+    'body[data-zf-avatar] [data-chat-flow-kind="assistant-step"]::before{',
+    '  content:"";position:absolute;top:0;left:0;width:40px;height:40px;',
+    '  box-sizing:border-box;border-radius:50%;',
+    '  background-image:var(--zf-avatar-image);',
+    '  background-position:center;background-size:cover;',
+    '  border:1px solid color-mix(in srgb, var(--dsw-alias-brand-primary) 34%, transparent);',
+    '  box-shadow:0 0 0 3px color-mix(in srgb, var(--dsw-alias-bg-base) 72%, transparent);',
+    '  pointer-events:none;',
+    '}',
+    'body[data-zf-avatar] [data-chat-flow-kind="assistant-step"]::after{',
+    '  content:"庄方宜";position:absolute;top:1px;left:52px;',
+    '  max-width:calc(100% - 52px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;',
+    '  color:var(--dsw-alias-label-tertiary);',
+    '  font-family:Consolas,"Cascadia Mono",monospace;font-size:9px;font-weight:600;',
+    '  letter-spacing:.16em;pointer-events:none;',
+    '}',
+    // 用户气泡：细边框 + 圆角，去阴影
+    'body[data-zf-avatar] [data-chat-flow-kind="user"] [data-zf-bubble],',
+    'body[data-zf-avatar] [data-chat-flow-kind="steering"] [data-zf-bubble]{',
+    '  border:1px solid var(--dsw-alias-border-l1);border-radius:12px;box-shadow:none;',
+    '}',
+    // 输入框：圆角 + 柔和投影
+    'body[data-zf-avatar] [data-composer-card]{',
+    '  border-radius:14px;',
+    '  box-shadow:0 8px 26px color-mix(in srgb, var(--dsw-alias-bg-base) 26%, transparent);',
+    '}',
+    'body[data-zf-avatar] [data-composer-seat]{ padding-bottom:14px; }',
+    // 窄屏降级
+    '@media (max-width:520px){',
+    '  body[data-zf-avatar] [data-chat-flow-kind="assistant-step"]{ padding-left:44px; }',
+    '  body[data-zf-avatar] [data-chat-flow-kind="assistant-step"]::before{ width:32px;height:32px; }',
+    '  body[data-zf-avatar] [data-chat-flow-kind="assistant-step"]::after{ left:40px;max-width:calc(100% - 40px);content:"庄"; }',
+    '}',
+    // 视口过窄时藏掉右栏，避免挤压中栏
+    '@media (max-width:1180px){ .zf-rail{ display:none; } }',
+    // 尊重系统的减弱动效
+    '@media (prefers-reduced-motion:reduce){',
+    '  .zf-topbar,.zf-rail{ transition:none; }',
+    '}',
+    '</style>'
+  ].join('\n')
+}
+/* ------------------------------------------------------------------ *
+ * 插件主体
+ * ------------------------------------------------------------------ */
+
+/**
+ * @param {import('@deepseek-ai/cordis').Context} ctx
+ * @param {object} config
+ */
+export function apply (ctx, config) {
+  const logger = ctx.logger ?? console
+  const home = resolveDshHome()
+  const dataDir = path.join(home, DATA_DIR_NAME)
+
+  let settings
+  try {
+    fs.mkdirSync(dataDir, { recursive: true })
+    settings = new JsonStore(path.join(dataDir, 'settings.json'), defaultSettings(), {
+      normalize: normalizeSettings,
+      log: message => logger.warn?.(`zhuang-fangyi: ${message}`)
+    })
+  } catch (error) {
+    logger.warn?.(`zhuang-fangyi: 无法建立设置目录，改用内存默认值（${error?.message ?? error}）`)
+    settings = new JsonStore(path.join(os.tmpdir(), 'zhuang-fangyi-settings.json'), defaultSettings(), {
+      normalize: normalizeSettings
+    })
+  }
+
+  ctx.effect(() => () => settings.dispose(), 'zhuang-fangyi: settings store')
+
+  /**
+   * 客户端自检上报的存放处（仅内存，不落盘）。
+   *
+   * 浏览器半边是否加载、插槽是否注册、样式表是否注入，宿主侧看不到 ——
+   * 只能靠客户端主动上报。`GET /diag` 读取它。
+   */
+  const diag = { last: null }
+
+  /* ---------------- 路由 ---------------- */
+
+  const sendJson = (res, code, body) => {
+    const text = JSON.stringify(body)
+    res.writeHead(code, {
+      'content-type': 'application/json; charset=utf-8',
+      'cache-control': 'no-store',
+      'content-length': Buffer.byteLength(text)
+    })
+    res.end(text)
+  }
+
+  const readBody = req =>
+    new Promise((resolve, reject) => {
+      const chunks = []
+      let size = 0
+      req.on('data', chunk => {
+        size += chunk.length
+        if (size > 64 * 1024) {
+          reject(new Error('请求体过大'))
+          req.destroy()
+          return
+        }
+        chunks.push(chunk)
+      })
+      req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
+      req.on('error', reject)
+    })
+
+  /** `/api/zhuang-fangyi/*` 统一入口。 */
+  async function api (req, res) {
+    let url
+    try {
+      url = new URL(req.url ?? '/', 'http://localhost')
+    } catch {
+      sendJson(res, 400, { error: 'bad url' })
+      return
+    }
+    const route = url.pathname.slice(ROUTE_PREFIX.length) || '/'
+
+    try {
+      if (route === '/settings') {
+        if (req.method === 'GET') {
+          sendJson(res, 200, { settings: settings.get(), presets: PRESET_IDS })
+          return
+        }
+        if (req.method === 'POST' || req.method === 'PUT') {
+          const raw = await readBody(req)
+          let parsed
+          try {
+            parsed = JSON.parse(raw)
+          } catch {
+            sendJson(res, 400, { error: 'invalid json' })
+            return
+          }
+          const next = settings.replace(parsed?.settings ?? parsed)
+          settings.flush()
+          sendJson(res, 200, { settings: next })
+          return
+        }
+        sendJson(res, 405, { error: 'method not allowed' })
+        return
+      }
+
+      if (route === '/themes') {
+        // 浏览器半边据此注册「外观」下拉里的主题，并用 roles 算壁纸的「纱」色。
+        sendJson(res, 200, {
+          // 探活标记：宿主进程会缓存 ESM 模块，这个字段能一眼看出
+          // 跑的是不是最新代码（`plugin_manager` 重载不一定能刷新依赖模块）。
+          build: PLUGIN_BUILD,
+          themes: themeDefinitions(),
+          presets: PRESET_IDS,
+          overrides: Object.fromEntries(PRESET_IDS.map(id => [id, overridesFor(id)])),
+          roles: Object.fromEntries(PRESET_IDS.map(id => [id, PRESETS[id].light !== undefined
+            ? { light: PRESETS[id].light, dark: PRESETS[id].dark }
+            : null]))
+        })
+        return
+      }
+
+      if (route === '/style.css') {
+        // 皮肤结构样式表，供浏览器半边**自己插 `<style>`**。
+        //
+        // 桌面端的渲染进程直接从磁盘读 index.html（`dsh-app://` 协议），
+        // 不经过 Host 的 HTTP 服务，所以 `tapIndex` 在桌面端永远不执行 ——
+        // 必须让客户端自己取这份 CSS，否则壁纸/顶栏/右栏全都不会出现。
+        const css = structureStyle()
+        const body = Buffer.from(css, 'utf8')
+        res.writeHead(200, {
+          'content-type': 'text/css; charset=utf-8',
+          'cache-control': 'no-store',
+          'content-length': body.length
+        })
+        res.end(body)
+        return
+      }
+
+      // 客户端自检上报。
+      //
+      // 为什么需要：浏览器半边是否真的加载、插槽是否真的注册、样式表是否真的
+      // 注入，这些在宿主侧完全看不到 —— 只能靠客户端主动上报。
+      // `GET /api/zhuang-fangyi/diag` 返回最近一次上报，用于诊断「插件没生效」。
+      //
+      // 注意 `dsh-client-modules` 会按包名缓存「是不是客户端包」的判定且
+      // **永不过期**，所以插件集合变化必须重启 DSH；这个上报能立刻区分
+      // 「代码有问题」和「浏览器半边压根没加载」。
+      if (route === '/diag') {
+        if (req.method === 'POST') {
+          const raw = await readBody(req)
+          try {
+            diag.last = { ...JSON.parse(raw), at: new Date().toISOString() }
+          } catch {
+            diag.last = { error: 'invalid json', raw: raw.slice(0, 200), at: new Date().toISOString() }
+          }
+          sendJson(res, 200, { ok: true })
+          return
+        }
+        sendJson(res, 200, {
+          build: PLUGIN_BUILD,
+          reported: diag.last,
+          note: diag.last === null
+            ? '浏览器半边从未上报 —— 说明它没有被加载（检查 dsh.client 声明与插件是否启用）'
+            : '最近一次客户端自检'
+        })
+        return
+      }
+
+      if (route.startsWith('/art/')) {
+        const rel = decodeURIComponent(route.slice('/art/'.length))
+        const hit = readArt(rel)
+        if (hit === null) {
+          res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' })
+          res.end('not found')
+          return
+        }
+        // 长缓存：文件名随内容变化，客户端无需重复拉取
+        res.writeHead(200, {
+          'content-type': hit.mime,
+          'content-length': hit.size,
+          'cache-control': 'public, max-age=604800, immutable'
+        })
+        fs.createReadStream(hit.abs).pipe(res)
+        return
+      }
+
+      sendJson(res, 404, { error: 'not found' })
+    } catch (error) {
+      logger.warn?.(`zhuang-fangyi: 路由失败（${error?.message ?? error}）`)
+      if (!res.headersSent) sendJson(res, 500, { error: 'internal error' })
+      else res.end()
+    }
+  }
+
+  /* ---------------- 首帧注入 ---------------- */
+
+  function tap (html) {
+    const tag = bootStyle(settings.get())
+    if (tag === '') return html
+    // 插在 </head> 之前：晚于外壳的 <link rel=stylesheet>，同优先级下后者胜出
+    const at = html.lastIndexOf('</head>')
+    if (at < 0) return html.replace(/<body/i, `${tag}<body`)
+    return `${html.slice(0, at)}${tag}\n${html.slice(at)}`
+  }
+
+  ctx.inject(['webServer'], scoped => {
+    const server = scoped.webServer
+    scoped.effect(
+      () => server.register({ kind: 'prefix', path: ROUTE_PREFIX, handler: api }),
+      'zhuang-fangyi: api routes'
+    )
+    scoped.effect(
+      () => server.tapIndex(tap),
+      'zhuang-fangyi: first-paint tokens'
+    )
+    logger.info?.('zhuang-fangyi: 路由已挂载于 ' + ROUTE_PREFIX)
+  })
+}
+
+export { SETTINGS_VERSION }

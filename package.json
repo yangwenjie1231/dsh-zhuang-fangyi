@@ -1,0 +1,56 @@
+{
+  "name": "dsh-zhuang-fangyi",
+  "version": "0.1.0",
+  "description": "庄方宜主题 for DeepSeek Harness —— 接入官方 ctx.theme 体系（4 套官方配色 × 浅色/深色完整适配），附皮肤层（顶栏 / 右侧观测栏 / 头像气泡重绘）与官方素材壁纸。官方素材量化取色，非官方同人作品。",
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "theme",
+    "skin",
+    "zhuang-fangyi",
+    "endfield",
+    "庄方宜",
+    "终末地"
+  ],
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "src",
+    "art",
+    "locale",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-theme",
+        "@deepseek-ai/dsh-client-locale"
+      ]
+    }
+  },
+  "scripts": {
+    "check": "node --check index.js && node --check client.js",
+    "contrast": "node src/contrast.js",
+    "test": "node --check index.js && node --check client.js && node src/contrast.js",
+    "art": "python tools/prepare-art.py"
+  }
+}
