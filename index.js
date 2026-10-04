@@ -554,29 +554,50 @@ export function structureStyle () {
     '.zf-rail__chip{ width:11px;height:11px;border-radius:3px;flex:0 0 auto; }',
 
     /* ══════════════════════════════════════════════════════════════════
-     * 头像与气泡重绘
+     * 助手头像（气泡重绘在下面单独一段）
      *
-     * 助手消息头像用 CSS `::before` 打在 `[data-chat-flow-kind="assistant-step"]`
-     * 上 —— 这是**语义锚点**（桌面壳有 456 个 data-* 之一），比类名稳。
+     * 头像用 CSS `::before` 打在 `[data-chat-flow-kind="assistant-step"]` 上 ——
+     * 这是**语义锚点**（桌面壳 456 个 data-* 之一），比类名稳。
+     *
+     * ── 关键是「不要干预折叠」（实测踩过，用户截图反馈空白）────────────
+     *
+     * 聊天区是**虚拟化列表**，外壳自己有一条折叠规则：
+     *
+     *   [class*="_flowItem"]:is(:empty,
+     *     :has(>[data-slot="conversation.chat.node"]:empty)){ height:0 }
+     *
+     * 注意它是**两个条件**：行本身空 **或** 它的 slot 子节点空。过程块
+     * （工具调用、推理）折叠后正是第二种 —— 行还在，但子节点空了。
+     *
+     * 我最初写 `min-height:48px; padding:22px 0 2px 58px`，用 `min-height`
+     * 强行撑开了本该 `height:0` 的行 → 折叠后留下一大片空白；虚拟化列表的
+     * 高度估算也会因此失准。
+     *
+     * 正确做法：**用与外壳相同的折叠条件取反**，只在「真的没折叠」时才
+     * 加左侧占位。这样我的规则与外壳的折叠语义严格互补，不可能打架。
+     *
+     * 另外**不加 `min-height`**：行高由内容决定，我只在一旁放头像。
      * ══════════════════════════════════════════════════════════════════ */
-    'body[data-zf-avatar] [data-chat-flow-kind="assistant-step"]{',
-    '  position:relative;min-height:48px;padding:22px 0 2px 58px;',
+    // 「未折叠」= 非空 且 slot 子节点非空 —— 与外壳的折叠条件严格取反
+    'body[data-zf-avatar] [data-chat-flow-kind="assistant-step"]:not(:empty):not(:has(>[data-slot="conversation.chat.node"]:empty)){',
+    '  position:relative;padding-left:44px;',
     '}',
-    'body[data-zf-avatar] [data-chat-flow-kind="assistant-step"]::before{',
-    '  content:"";position:absolute;top:0;left:0;width:40px;height:40px;',
+    'body[data-zf-avatar] [data-chat-flow-kind="assistant-step"]:not(:empty):not(:has(>[data-slot="conversation.chat.node"]:empty))::before{',
+    '  content:"";position:absolute;top:2px;left:0;width:28px;height:28px;',
     '  box-sizing:border-box;border-radius:50%;',
     '  background-image:var(--zf-avatar-image);',
     '  background-position:center;background-size:cover;',
     '  border:1px solid color-mix(in srgb, var(--dsw-alias-brand-primary) 34%, transparent);',
-    '  box-shadow:0 0 0 3px color-mix(in srgb, var(--dsw-alias-bg-base) 72%, transparent);',
     '  pointer-events:none;',
     '}',
-    'body[data-zf-avatar] [data-chat-flow-kind="assistant-step"]::after{',
-    '  content:"庄方宜";position:absolute;top:1px;left:52px;',
-    '  max-width:calc(100% - 52px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;',
-    '  color:var(--dsw-alias-label-tertiary);',
-    '  font-family:Consolas,"Cascadia Mono",monospace;font-size:9px;font-weight:600;',
-    '  letter-spacing:.16em;pointer-events:none;',
+    // 折叠行 / 空行：完全不加任何占位，交给外壳的 height:0
+    'body[data-zf-avatar] [data-chat-flow-kind="assistant-step"]:empty,',
+    'body[data-zf-avatar] [data-chat-flow-kind="assistant-step"]:has(>[data-slot="conversation.chat.node"]:empty){',
+    '  padding-left:0;min-height:0;',
+    '}',
+    'body[data-zf-avatar] [data-chat-flow-kind="assistant-step"]:empty::before,',
+    'body[data-zf-avatar] [data-chat-flow-kind="assistant-step"]:has(>[data-slot="conversation.chat.node"]:empty)::before{',
+    '  content:none;display:none;',
     '}',
     // 用户气泡：细边框 + 圆角，去阴影
     'body[data-zf-avatar] [data-chat-flow-kind="user"] [data-zf-bubble],',
@@ -591,9 +612,8 @@ export function structureStyle () {
     'body[data-zf-avatar] [data-composer-seat]{ padding-bottom:14px; }',
     // 窄屏降级
     '@media (max-width:520px){',
-    '  body[data-zf-avatar] [data-chat-flow-kind="assistant-step"]{ padding-left:44px; }',
-    '  body[data-zf-avatar] [data-chat-flow-kind="assistant-step"]::before{ width:32px;height:32px; }',
-    '  body[data-zf-avatar] [data-chat-flow-kind="assistant-step"]::after{ left:40px;max-width:calc(100% - 40px);content:"庄"; }',
+    '  body[data-zf-avatar] [data-chat-flow-kind="assistant-step"]:not(:empty):not(:has(>[data-slot="conversation.chat.node"]:empty)){ padding-left:34px; }',
+    '  body[data-zf-avatar] [data-chat-flow-kind="assistant-step"]:not(:empty):not(:has(>[data-slot="conversation.chat.node"]:empty))::before{ width:22px;height:22px; }',
     '}',
     // 视口过窄时藏掉右栏，避免挤压中栏
     '@media (max-width:1180px){ .zf-rail{ display:none; } }',

@@ -1201,6 +1201,37 @@ function shellDom (opts = {}) {
     h.dom.head.children.some(c => c.getAttribute('id') === 'zf-style'))
   ok('主题仍注册（不依赖插槽）', h.registered.size === 8, `实际 ${h.registered.size}`)
 }
+// 用例 33：头像不得破坏外壳的折叠（用户截图「折叠后留空白」的回归）
+{
+  console.log('\n--- 头像与折叠互补 ---')
+  const { structureStyle } = await import('../index.js')
+  const css = structureStyle()
+
+  // 外壳的折叠规则（虚拟化列表）：
+  //   [class*="_flowItem"]:is(:empty,
+  //     :has(>[data-slot="conversation.chat.node"]:empty)){ height:0 }
+  // 我的规则必须与它**严格互补**，否则要么折叠后留空白，要么头像不显示。
+  const unfolded = ':not(:empty):not(:has(>[data-slot="conversation.chat.node"]:empty))'
+  ok('未折叠态用双取反条件', css.includes(unfolded))
+  ok('折叠条件与外壳一致（含 slot 空子节点那种）',
+    css.includes(':has(>[data-slot="conversation.chat.node"]:empty)'))
+
+  // 绝不能加 min-height —— 它会把外壳的 `height:0` 顶开
+  ok('不含 min-height（会顶开 height:0 折叠）', !css.includes('min-height:48px'))
+  ok('不含固定 padding-top 占位（同样会顶开折叠）',
+    !/assistant-step"\][^{]*\{[^}]*padding:2[0-9]px/.test(css))
+
+  // 折叠态必须显式清零，避免继承
+  ok('折叠态 padding 清零', /padding-left:0;min-height:0/.test(css))
+  ok('折叠态不画头像', css.includes('content:none;display:none'))
+
+  // 头像占位只用 padding-left（不改行高）
+  const block = css.match(/assistant-step"\]\)?[^{]*\{[^}]*position:relative;padding-left:\d+px/)
+  ok('未折叠态只加 padding-left', block !== null || /position:relative;padding-left:44px/.test(css))
+  ok('CSS 大括号平衡',
+    (css.match(/\{/g) ?? []).length === (css.match(/\}/g) ?? []).length)
+}
+
 console.log(`\n合计 ${pass + fail} 项，通过 ${pass}，失败 ${fail}`)
 if (fail > 0) {
   console.log(`\n失败项：\n  ${failures.join('\n  ')}`)
