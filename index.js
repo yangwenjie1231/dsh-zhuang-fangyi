@@ -440,13 +440,18 @@ export function structureStyle () {
      * `top: var(--zf-topbar-height)` 开始（紧接顶栏）。
      * ══════════════════════════════════════════════════════════════════ */
     '.zf-topbar{',
-    '  position:absolute;top:0;left:0;right:0;height:var(--zf-topbar-height);',
+    // 同 `.zf-rail`：必须用 fixed 绕开 overlay 的 grid 自动放置偏移，见下方长注释
+    '  position:fixed;top:0;left:0;right:0;height:var(--zf-topbar-height);',
     '  display:flex;align-items:center;gap:12px;padding:0 14px;box-sizing:border-box;',
     '  z-index:12;',
     '  background:color-mix(in srgb, var(--dsw-specific-sidebar-fill) 88%, transparent);',
     '  border-bottom:1px solid var(--dsw-alias-border-l1);',
     '  backdrop-filter:blur(10px);',
     '  font-size:13px;color:var(--dsw-alias-label-primary);',
+    '}',
+    // Windows：fixed 定位要自己让开原生标题栏（frame 的 padding-top 对它无效）
+    'html[data-windows-titlebar] .zf-topbar{',
+    '  top:var(--dsh-windows-titlebar-height, 40px);',
     '}',
     // 顶栏**只占左半**：Windows 标题栏那一条被原生 chrome 占满了
     //   · 左 0–40px   系统窗口图标
@@ -475,28 +480,37 @@ export function structureStyle () {
     /* ══════════════════════════════════════════════════════════════════
      * 右侧观测栏
      *
-     * 同样挂在 `shell.overlay`，坐标系与顶栏一致（标题栏下方）。
-     * **不调用 `ctx.layout.openRightbar()`** —— 那是文件 / 终端 / 文档预览等
-     * 插件共用的原生面板，抢过来会与它们打架。这里独立渲染，并在原生右栏
-     * 展开时自动隐藏（见客户端 `mountSkin`）。
+     * **必须用 `position:fixed`** —— 这是修一个实测 bug（面板顶端出现在
+     * 画面中部 y≈572，上面 500px 全是空白）。
      *
-     * ── 与系统侧栏的关系（用户反馈的「冲突」）──────────────────────────
+     * 原因：`shell.overlay` 是 AppFrame（CSS Grid）的**第 4 个子元素**：
      *
-     * 原生的 `rightbarCol` 是一条**独立的 grid 轨道**（`grid-template-columns`
-     * 的第三列），展开时会把中栏挤窄。我的右栏是 `shell.overlay` 上的浮层，
-     * 不占轨道，所以两者会**叠在同一个位置** —— 这就是「冲突」。
+     *   .BynINW_frame{ display:grid; grid-template-rows:100% }
+     *   [data-windows-titlebar] .BynINW_frame{
+     *     padding-top:40px; grid-template-rows:minmax(0,1fr)   ← 只有 1 行
+     *   }
      *
-     * 处理：检测到原生右栏展开时（`data-rightbar-collapsed` 不存在）
-     * 由客户端把 `data-zf-rail` 设为 `off` 整体隐藏，让位给原生面板。
+     * 三个列 + overlay 都没写 `grid-area`，全靠自动放置。三列填满第 1 行的
+     * 三个列后，**overlay 溢出到隐式第 2 行** —— 它的包含块整体下移了将近
+     * 一屏高度，所以 `position:absolute; top:40px` 实际落在画面中部。
+     *
+     * 改用 `position:fixed`：相对**视口**定位，彻底绕开 grid 自动放置。
+     * 代价是 frame 的 `padding-top`（标题栏）对它不再生效，所以要自己让开 ——
+     * 见下面的 `html[data-windows-titlebar]` 规则。
      * ══════════════════════════════════════════════════════════════════ */
     '.zf-rail{',
-    '  position:absolute;top:var(--zf-topbar-height);bottom:0;right:0;',
+    '  position:fixed;top:var(--zf-topbar-height);bottom:0;right:0;',
     '  width:var(--zf-rail-width);box-sizing:border-box;',
     '  display:flex;flex-direction:column;gap:14px;padding:16px 14px;overflow-y:auto;',
     '  background:color-mix(in srgb, var(--dsw-alias-bg-layer-1) 82%, transparent);',
     '  border-left:1px solid var(--dsw-alias-border-l2);',
     '  backdrop-filter:blur(10px);',
     '  font-size:12px;color:var(--dsw-alias-label-primary);',
+    '  z-index:11;',
+    '}',
+    // fixed 定位不吃 frame 的 padding-top，Windows 下要自己加上标题栏高度
+    'html[data-windows-titlebar] .zf-rail{',
+    '  top:calc(var(--dsh-windows-titlebar-height, 40px) + var(--zf-topbar-height));',
     '}',
     'body[data-zf-rail="off"] .zf-rail{ display:none; }',
     // 中栏让位：只在本插件右栏可见时加内边距，否则会白白留一条空白

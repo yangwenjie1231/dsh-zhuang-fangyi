@@ -1231,6 +1231,34 @@ function shellDom (opts = {}) {
   ok('CSS 大括号平衡',
     (css.match(/\{/g) ?? []).length === (css.match(/\}/g) ?? []).length)
 }
+// 用例 34：顶栏/右栏必须用 fixed（overlay 被 grid 自动放置挤到第二行）
+{
+  console.log('\n--- overlay 的 grid 偏移 ---')
+  const { structureStyle } = await import('../index.js')
+  const css = structureStyle()
+
+  // 外壳结构（实测 + 源码）：
+  //   .frame{ display:grid; grid-template-rows:100% }
+  //   Windows: .frame{ padding-top:40px; grid-template-rows:minmax(0,1fr) }  ← 只 1 行
+  //   子元素：sidebarCol / centerCol / rightbarCol / overlayLayer —— 都没写 grid-area
+  // 三列占满第 1 行后，overlay **溢出到隐式第 2 行**，包含块整体下移约一屏。
+  // 用 absolute 就会跟着偏（实测面板顶端落在 y≈572，上面 500px 空白）。
+  ok('顶栏用 position:fixed', /\.zf-topbar\{[^}]*position:fixed/.test(css))
+  ok('右栏用 position:fixed', /\.zf-rail\{[^}]*position:fixed/.test(css))
+
+  // 反向断言：不能再出现 absolute（这就是那个 bug）
+  ok('顶栏不再用 absolute', !/\.zf-topbar\{[^}]*position:absolute/.test(css))
+  ok('右栏不再用 absolute', !/\.zf-rail\{[^}]*position:absolute/.test(css))
+
+  // fixed 相对视口，不吃 frame 的 padding-top → 必须自己让开 Windows 标题栏
+  ok('Windows 顶栏让开标题栏', /html\[data-windows-titlebar\] \.zf-topbar\{[^}]*top:var\(--dsh-windows-titlebar-height/.test(css))
+  ok('Windows 右栏让开标题栏+顶栏',
+    /html\[data-windows-titlebar\] \.zf-rail\{[^}]*top:calc\(var\(--dsh-windows-titlebar-height[^)]*\) \+ var\(--zf-topbar-height\)\)/.test(css))
+
+  // 层级：右栏在顶栏之下（否则会盖住顶栏）
+  ok('右栏 z-index 低于顶栏',
+    /\.zf-rail\{[^}]*z-index:11/.test(css) && /\.zf-topbar\{[^}]*z-index:12/.test(css))
+}
 
 console.log(`\n合计 ${pass + fail} 项，通过 ${pass}，失败 ${fail}`)
 if (fail > 0) {
