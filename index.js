@@ -412,49 +412,49 @@ export function structureStyle () {
     '}',
 
     /* ══════════════════════════════════════════════════════════════════
-     * 顶栏（40px，并入 Windows 标题栏带）
+     * 顶栏（40px）与右侧观测栏
      *
-     * 挂在 `shell.overlay` 插槽里 —— 外壳原生渲染的浮动层
-     * （`absolute; inset:0; z-index:20; pointer-events:none`，子元素自动恢复
-     * pointer-events）。不硬贴 DOM 的原因：overlay 由 React 管理，
-     * 重渲染不会掉，也不与其它插件抢位置。
+     * 两者都挂在 `shell.overlay` 插槽里 —— 外壳原生渲染的浮动层：
+     *   `.BynINW_overlayLayer{ z-index:20; pointer-events:none;
+     *                          position:absolute; inset:0 }`
+     * 子元素自动恢复 `pointer-events`。不硬贴 DOM 的原因：overlay 由 React
+     * 管理，重渲染不会掉，也不与其它插件抢位置。
      *
-     * ── Windows 上必须避开原生 chrome（实测踩过，用户反馈「左上角这啥玩意儿」）
+     * ── 坐标基准（这里踩过坑：整体下移 40px）────────────────────────────
      *
-     * 标题栏带**已经被占满**，不是空的：
-     *   · 左：系统窗口图标（约 0–40px）
-     *   · 左：Desktop 自带的「应用 / 编辑」菜单栏 —— Shadow DOM，
-     *     `position:fixed; top:0; left:var(--dsh-windows-menu-start, 48px); z-index:1100`
-     *   · 右：最小化 / 最大化 / 关闭（约 138px）
+     * `overlayLayer` 是 frame 的**子元素**（`className: overlayLayer` 在
+     * frame 的 children 里），而 frame 在 Windows 下是：
      *
-     * 最初顶栏用 `padding:0 14px` 全宽铺开，结果：头像压在窗口图标上、
-     * 文字与「应用 / 编辑」叠字、按钮压在窗口按钮下。
+     *   [data-windows-titlebar] .BynINW_frame{
+     *     box-sizing:border-box;
+     *     padding-top: var(--dsh-windows-titlebar-height);   (40px)
+     *   }
      *
-     * 修法：左右各让出原生 chrome 的宽度。菜单宽度按「应用 + 编辑 + 间距」
-     * 估为 116px，起点用 `--dsh-windows-menu-start`（展开 48px / 收起 84px）。
+     * `inset:0` 解析的是 padding box（不是 border box），所以 overlay 的坐标系**已经**从
+     * 标题栏下方开始 —— 它不需要再让开标题栏。
+     *
+     * 我最初给顶栏写 `top:0` 又给右栏写 `top: var(--zf-topbar-height)`，
+     * 等于在「已经让开的位置」上再让一次，于是整个界面下移 40px。
+     *
+     * 正确做法：`top:0` 就是标题栏正下方，顶栏占第一条 40px，右栏从
+     * `top: var(--zf-topbar-height)` 开始（紧接顶栏）。
      * ══════════════════════════════════════════════════════════════════ */
     '.zf-topbar{',
     '  position:absolute;top:0;left:0;right:0;height:var(--zf-topbar-height);',
-    '  display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;',
-    '  gap:12px;padding:0 14px;box-sizing:border-box;z-index:12;',
+    '  display:flex;align-items:center;gap:12px;padding:0 14px;box-sizing:border-box;',
+    '  z-index:12;',
     '  background:color-mix(in srgb, var(--dsw-specific-sidebar-fill) 88%, transparent);',
     '  border-bottom:1px solid var(--dsw-alias-border-l1);',
     '  backdrop-filter:blur(10px);',
     '  font-size:13px;color:var(--dsw-alias-label-primary);',
     '}',
-    // Windows：让开左侧窗口图标 + 菜单栏，右侧让开窗口按钮
-    'html[data-windows-titlebar] .zf-topbar{',
-    '  padding-left:calc(var(--dsh-windows-menu-start, 48px) + 116px);',
-    '  padding-right:150px;',
-    '}',
-    // 窗口不够宽时原生 chrome 与顶栏必然打架，直接不显示
-    // （这些信息在侧栏与右栏都有，不算丢功能）
-    '@media (max-width:1400px){',
-    '  html[data-windows-titlebar] .zf-topbar{ display:none; }',
-    '}',
-    // 顶栏本身不吃窗口拖拽（保留壳原生的拖拽条行为），但内部控件必须显式
-    // no-drag，否则点不动。
-    '.zf-topbar *{ -webkit-app-region:no-drag; }',
+    // 顶栏**只占左半**：Windows 标题栏那一条被原生 chrome 占满了
+    //   · 左 0–40px   系统窗口图标
+    //   · 左 48px 起  「应用 / 编辑」菜单栏（Shadow DOM，z-index:1100）
+    //   · 右 138px    最小化 / 最大化 / 关闭
+    // 所以顶栏只放品牌信息、**不放任何按钮**（按钮已移到设置页），
+    // 右侧留白让给窗口按钮。`z-index:12` 低于菜单的 1100，
+    // 万一重叠也不会挡住原生菜单的点击。
     '.zf-topbar__lead{ display:flex;align-items:center;gap:9px;min-width:0; }',
     '.zf-topbar__avatar{',
     '  width:24px;height:24px;border-radius:50%;flex:0 0 auto;object-fit:cover;display:block;',
@@ -465,32 +465,29 @@ export function structureStyle () {
     '  color:var(--dsw-alias-label-tertiary);font-size:11px;white-space:nowrap;',
     '  overflow:hidden;text-overflow:ellipsis;',
     '}',
-    '.zf-topbar__actions{ display:flex;align-items:center;gap:6px;flex:0 0 auto; }',
-    '.zf-topbar__btn{',
-    '  display:inline-flex;align-items:center;justify-content:center;gap:5px;',
-    '  height:26px;padding:0 10px;border-radius:7px;cursor:pointer;',
-    '  border:1px solid var(--dsw-alias-border-l2);',
-    '  background:var(--dsw-alias-button-floating-fill);',
-    '  color:var(--dsw-alias-label-secondary);font-size:12px;',
-    '}',
-    '.zf-topbar__btn:hover{',
-    '  background:var(--dsw-alias-button-floating-hover);',
-    '  color:var(--dsw-alias-label-primary);',
-    '}',
-    '.zf-topbar__btn[aria-pressed="true"]{',
-    '  background:var(--dsw-alias-button-primary-fill);',
-    '  color:var(--dsw-alias-label-primary-foreground);',
-    '  border-color:transparent;',
-    '}',
+    // 顶栏不吃窗口拖拽（保留壳原生的拖拽条），但内容也不该吃掉拖拽 ——
+    // 它整条都是 `pointer-events` 默认值，只有需要点击的元素才显式开启。
+    '.zf-topbar{ -webkit-app-region:drag; }',
+    '.zf-topbar__lead{ -webkit-app-region:no-drag; }',
     // 关闭顶栏
     'body[data-zf-topbar="off"] .zf-topbar{ display:none; }',
 
     /* ══════════════════════════════════════════════════════════════════
      * 右侧观测栏
      *
-     * 同样挂在 `shell.overlay`。**不调用 `ctx.layout.openRightbar()`** ——
-     * 那是文件 / 终端 / 文档预览等插件共用的原生面板，抢过来会与它们打架。
-     * 这里独立渲染，并在原生右栏展开时自动隐藏（见客户端 `refresh()`）。
+     * 同样挂在 `shell.overlay`，坐标系与顶栏一致（标题栏下方）。
+     * **不调用 `ctx.layout.openRightbar()`** —— 那是文件 / 终端 / 文档预览等
+     * 插件共用的原生面板，抢过来会与它们打架。这里独立渲染，并在原生右栏
+     * 展开时自动隐藏（见客户端 `mountSkin`）。
+     *
+     * ── 与系统侧栏的关系（用户反馈的「冲突」）──────────────────────────
+     *
+     * 原生的 `rightbarCol` 是一条**独立的 grid 轨道**（`grid-template-columns`
+     * 的第三列），展开时会把中栏挤窄。我的右栏是 `shell.overlay` 上的浮层，
+     * 不占轨道，所以两者会**叠在同一个位置** —— 这就是「冲突」。
+     *
+     * 处理：检测到原生右栏展开时（`data-rightbar-collapsed` 不存在）
+     * 由客户端把 `data-zf-rail` 设为 `off` 整体隐藏，让位给原生面板。
      * ══════════════════════════════════════════════════════════════════ */
     '.zf-rail{',
     '  position:absolute;top:var(--zf-topbar-height);bottom:0;right:0;',
@@ -504,6 +501,9 @@ export function structureStyle () {
     'body[data-zf-rail="off"] .zf-rail{ display:none; }',
     // 中栏让位：只在本插件右栏可见时加内边距，否则会白白留一条空白
     'body[data-zf-rail="on"] [data-zf-center]{ padding-right:var(--zf-rail-width); }',
+    // 关闭顶栏（`body[data-zf-topbar="off"]` 的规则在顶栏那一段，别重复写）
+
+    /* ── 观测栏内部结构 ─────────────────────────────────────────────── */
     '.zf-rail__head{ display:flex;align-items:center;gap:9px; }',
     '.zf-rail__avatar{ width:32px;height:32px;border-radius:50%;flex:0 0 auto;object-fit:cover; }',
     '.zf-rail__title{ font-weight:600;font-size:13px; }',

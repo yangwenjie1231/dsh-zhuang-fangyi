@@ -1109,14 +1109,24 @@ function shellDom (opts = {}) {
     css.includes('background:transparent !important'))
 }
 
-// 用例 30：Windows 顶栏让开原生 chrome
+// 用例 30：顶栏定位与「不放按钮」（用户反馈驱动的回归）
 {
-  console.log('\n--- Windows 顶栏让位 ---')
+  console.log('\n--- 顶栏定位 ---')
   const { structureStyle } = await import('../index.js')
   const css = structureStyle()
-  ok('左侧让开窗口图标+菜单栏', css.includes('var(--dsh-windows-menu-start, 48px) + 116px'))
-  ok('右侧让开窗口按钮', css.includes('padding-right:150px'))
-  ok('窗口过窄时隐藏顶栏（避免与原生 chrome 打架）', css.includes('max-width:1400px'))
+  // 顶栏不放按钮：观测栏开关与插件开关都移到设置页了
+  // （原先挤在标题栏右侧，与系统的窗口按钮抢位置）
+  ok('顶栏不含按钮容器', !css.includes('zf-topbar__actions'))
+  ok('顶栏不含按钮样式', !css.includes('zf-topbar__btn'))
+  ok('顶栏靠左对齐（flex 而非两列 grid）',
+    /\.zf-topbar\{[^}]*display:flex/.test(css))
+  ok('顶栏整条可拖动窗口', css.includes('-webkit-app-region:drag'))
+  ok('顶栏内容不吃拖拽', css.includes('.zf-topbar__lead{ -webkit-app-region:no-drag; }'))
+  // 坐标系：`overlayLayer` 的 `inset:0` 解析的是 padding box，**已经**在
+  // Windows 标题栏之下。元素再让一次就会整体下移 40px —— 实测就是这个 bug。
+  ok('顶栏锚在 overlay 的 top:0（不再让开标题栏）',
+    /\.zf-topbar\{[^}]*top:0/.test(css))
+  ok('右栏紧接顶栏下方', /\.zf-rail\{[^}]*top:var\(--zf-topbar-height\)/.test(css))
 }
 // 用例 31：品牌位冲突不能中断 apply()（实测事故的回归）
 {

@@ -101,7 +101,6 @@ window.__ModuleLoader__.load({
         brandName: '庄方宜',
         rail: '观测栏',
         railTitle: '庄方宜 · 观测台',
-        railToggle: '显示 / 隐藏右侧观测栏',
         localOnly: '仅本地渲染',
         stats: '会话读数',
         turns: '轮次',
@@ -166,7 +165,6 @@ window.__ModuleLoader__.load({
         brandName: 'Zhuang Fangyi',
         rail: 'Observation rail',
         railTitle: 'Zhuang Fangyi · Observation',
-        railToggle: 'Show / hide the right observation rail',
         localOnly: 'local render only',
         stats: 'Session readout',
         turns: 'Turns',
@@ -1367,22 +1365,12 @@ window.__ModuleLoader__.load({
           h('div', { className: 'zf-topbar__lead' },
             h('img', { className: 'zf-topbar__avatar', src: `${ROUTE}/art/avatar.webp`, alt: '' }),
             h('span', { className: 'zf-topbar__name' }, t('brandName')),
-            h('span', { className: 'zf-topbar__sub' }, `${settings?.preset ? PRESET_LABELS[settings.preset]?.['zh'] ?? '' : ''} · ${stateText}`)),
-          h('div', { className: 'zf-topbar__actions' },
-            h('button', {
-              type: 'button',
-              className: 'zf-topbar__btn',
-              'aria-pressed': settings?.rail === false ? 'false' : 'true',
-              title: t('railToggle'),
-              onClick: () => { void save({ rail: settings?.rail === false }) }
-            }, t('rail')),
-            h('button', {
-              type: 'button',
-              className: 'zf-topbar__btn',
-              'aria-pressed': on ? 'true' : 'false',
-              title: t('sidebarToggle'),
-              onClick: () => { void save({ enabled: !on }) }
-            }, on ? t('on') : t('off'))))
+            h('span', { className: 'zf-topbar__sub' }, `${settings?.preset ? PRESET_LABELS[settings.preset]?.['zh'] ?? '' : ''} · ${stateText}`)))
+        // 顶栏**不放按钮**。
+        //
+        // 用户反馈：观测栏开关与插件开关挤在 Windows 标题栏右侧，与系统的
+        // 最小化/最大化/关闭抢位置，很挤。两个开关都在
+        // 「设置 → 庄方宜 → 皮肤」里（`rail` / 启用），不需要在顶栏重复一份。
       }
 
       /**
