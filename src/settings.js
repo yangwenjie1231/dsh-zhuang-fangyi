@@ -48,8 +48,7 @@ export function defaultSettings () {
     heroAvatar: true,
     titlebarFollow: true,
     accentGlow: false,
-    // v2 新增：皮肤层
-    topbar: true,
+    // v2 新增：皮肤层（顶栏已移除，字段不再使用）
     rail: true,
     railWidth: RAIL_WIDTH.default,
     avatarBubbles: true
@@ -83,8 +82,8 @@ export function normalizeSettings (input) {
   }
   for (const key of [
     'contourBorder', 'potentialDots', 'heroAvatar', 'titlebarFollow', 'accentGlow',
-    // v2 皮肤层
-    'topbar', 'rail', 'avatarBubbles'
+    // v2 皮肤层（`topbar` 已随顶栏移除一并删除）
+    'rail', 'avatarBubbles'
   ]) {
     if (typeof input[key] === 'boolean') out[key] = input[key]
   }

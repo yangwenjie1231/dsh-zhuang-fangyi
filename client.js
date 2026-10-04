@@ -109,8 +109,6 @@ window.__ModuleLoader__.load({
         on: '已开启',
         off: '已关闭',
         groupSkin: '皮肤',
-        topbar: '顶部品牌栏',
-        topbarHint: '桌面端并入系统标题栏（40px），不额外占高度',
         railHint: '原生右侧面板展开时自动让位；视口窄于 1180px 时隐藏',
         railWidth: '观测栏宽度',
         avatarBubbles: '头像与气泡重绘',
@@ -173,8 +171,6 @@ window.__ModuleLoader__.load({
         on: 'On',
         off: 'Off',
         groupSkin: 'Skin',
-        topbar: 'Top brand bar',
-        topbarHint: 'Merges into the native caption on desktop (40px), costing no extra height',
         railHint: 'Yields to the native right panel; hidden below 1180px viewport',
         railWidth: 'Rail width',
         avatarBubbles: 'Avatar and bubble restyle',
@@ -572,10 +568,7 @@ window.__ModuleLoader__.load({
         const s = state.settings
         const on = s?.enabled === true
         const body = doc.body
-        if (body !== null) {
-          if (!on || s.topbar === false) body.setAttribute('data-zf-topbar', 'off')
-          else body.removeAttribute('data-zf-topbar')
-        }
+        // 顶栏已移除，不再写 data-zf-topbar（保留 settings.topbar 字段仅为兼容旧设置文件）
 
         // 右栏只在「插件启用 + 用户开启 + 原生右栏未展开 + 视口够宽」时显示
         const wantRail = on && s.rail !== false &&
@@ -611,7 +604,7 @@ window.__ModuleLoader__.load({
 
       // 只在真正相关的属性变化时重跑：不收窄的话流式输出每帧都会触发
       const observer = new MutationObserver(records => {
-        if (records.some(r => !r.target.closest?.('.zf-topbar, .zf-rail'))) schedule()
+        if (records.some(r => !r.target.closest?.('.zf-rail'))) schedule()
       })
       observer.observe(doc.documentElement, {
         subtree: true,
@@ -640,7 +633,7 @@ window.__ModuleLoader__.load({
           marker.reset()
           const body = doc.body
           if (body !== null) {
-            for (const attr of ['data-zf-topbar', 'data-zf-rail', 'data-zf-avatar', 'data-zf-session-state']) {
+            for (const attr of ['data-zf-rail', 'data-zf-avatar', 'data-zf-session-state']) {
               body.removeAttribute(attr)
             }
           }
@@ -692,7 +685,7 @@ window.__ModuleLoader__.load({
          * 样式表是否已就绪。
          *
          * **顶栏与右栏只在它为 true 时才渲染** —— 这是防呆：这两个组件是
-         * 纯类名驱动的（`.zf-topbar` / `.zf-rail`），一旦 CSS 缺失就会裸渲染，
+         * 纯类名驱动的（`.zf-rail`），一旦 CSS 缺失就会裸渲染，
          * 里面的 `<img>` 会按**原始尺寸 512×512** 铺在界面上，看起来像
          * 「一张巨大的脸盖住了整个 UI」。
          *
@@ -861,7 +854,7 @@ window.__ModuleLoader__.load({
           state.styleReady = true
         } catch (error) {
           // 拿不到样式表只影响外观，配色仍由 token 层生效 —— 不阻断启动。
-          // `styleReady` 保持 false，顶栏/右栏据此**不渲染**（否则会裸渲染）。
+          // `styleReady` 保持 false，右栏据此**不渲染**（否则会裸渲染）。
           console.warn('[zhuang-fangyi] 皮肤样式表加载失败：', error?.message ?? error)
           state.styleReady = false
         }
@@ -879,13 +872,43 @@ window.__ModuleLoader__.load({
        */
       async function reportDiag () {
         try {
+          // 元素的**实测几何**与计算样式 —— 这是最能定位「位置不对」的数据。
+          // 光看 CSS 会漏掉「包含块被挤走」「被 grid 自动放置」这类问题，
+          // 而 getBoundingClientRect 直接给出最终落在屏幕上的位置。
+          const rectOf = sel => {
+            const el = document.querySelector(sel)
+            if (el === null) return null
+            const r = el.getBoundingClientRect()
+            return {
+              x: Math.round(r.x), y: Math.round(r.y),
+              w: Math.round(r.width), h: Math.round(r.height)
+            }
+          }
+          const cssOf = (sel, prop) => {
+            const el = document.querySelector(sel)
+            if (el === null) return null
+            try { return getComputedStyle(el).getPropertyValue(prop).trim() } catch { return null }
+          }
           const body = {
             styleReady: state.styleReady,
             styleElInDom: state.styleEl !== null && state.styleEl.isConnected === true,
             hasShellOverlay: document.querySelector('[data-shell-overlay]') !== null,
             hasWindowsTitlebar: document.documentElement.hasAttribute('data-windows-titlebar'),
-            hasTopbarEl: document.querySelector('.zf-topbar') !== null,
             hasRailEl: document.querySelector('.zf-rail') !== null,
+            // ── 几何：直接回答「在屏幕的哪个位置」 ──
+            geom: {
+              viewport: { w: window.innerWidth, h: window.innerHeight },
+              rail: rectOf('.zf-rail'),
+              railPosition: cssOf('.zf-rail', 'position'),
+              railTop: cssOf('.zf-rail', 'top'),
+              titlebarHeight: cssOf('html', '--dsh-windows-titlebar-height'),
+              railWidthVar: cssOf('html', '--zf-rail-width'),
+              overlay: rectOf('[data-shell-overlay]'),
+              overlayPosition: cssOf('[data-shell-overlay]', 'position'),
+              frame: rectOf('[data-zf-frame], [class*="_frame"]'),
+              sidebarCol: rectOf('[data-zf-sidebar], [class*="_sidebarCol"]'),
+              centerCol: rectOf('[data-zf-center], [class*="_centerCol"]')
+            },
             // 打标结果：能证明定位逻辑是否命中了外壳元素
             marked: {
               frame: document.querySelectorAll('[data-zf-frame]').length,
@@ -908,7 +931,6 @@ window.__ModuleLoader__.load({
                   enabled: state.settings.enabled,
                   preset: state.settings.preset,
                   background: state.settings.background,
-                  topbar: state.settings.topbar,
                   rail: state.settings.rail,
                   avatarBubbles: state.settings.avatarBubbles
                 }
@@ -1264,8 +1286,6 @@ window.__ModuleLoader__.load({
             h(Toggle, { value: settings.titlebarFollow, onChange: v => set({ titlebarFollow: v }) })),
 
           h('div', { style: groupStyle }, t('groupSkin')),
-          h(Row, { label: t('topbar'), hint: t('topbarHint') },
-            h(Toggle, { value: settings.topbar, onChange: v => set({ topbar: v }) })),
           h(Row, { label: t('rail'), hint: t('railHint') },
             h(Toggle, { value: settings.rail, onChange: v => set({ rail: v }) })),
           h(Row, { label: t('railWidth') },
@@ -1343,35 +1363,19 @@ window.__ModuleLoader__.load({
       }
 
       /**
-       * 顶栏。
+       * 顶栏 —— **已按用户要求整体移除**。
        *
-       * 挂在 `shell.overlay` 插槽（外壳原生浮动层），不硬贴 DOM —— overlay
-       * 由 React 管理，重渲染不会掉。
+       * 原先这里渲染 `.zf-topbar`：庄方宜头像 + 品牌名 + 「预设 · 会话状态」。
+       * 用户反馈要去掉左上角这一整块，理由充分：
        *
-       * Windows 上高度 40px 并**并入系统标题栏带**（桌面壳已给 frame 加了
-       * `padding-top: var(--dsh-windows-titlebar-height)` 与一条拖拽条），
-       * 所以不额外占高度。其它平台会自行占位，见 structureStyle 的说明。
+       *   · Windows 标题栏那一条本来就窄（40px），左边被系统窗口图标和
+       *     「应用 / 编辑」菜单占着，再挤一块品牌信息很局促；
+       *   · 里面的信息全是冗余 —— 头像在侧栏品牌位与助手消息旁都有，
+       *     配色预设与配色选择在右栏观测台里有，会话状态也在观测台里。
+       *
+       * 所以不再注册 `zhuang-fangyi-topbar`，右栏观测台直接顶到最上边。
+       * 设置项 `topbar` 保留（旧设置文件里有），但不再产生任何视觉。
        */
-      function TopBar () {
-        const s = useStore()
-        // 样式表没就绪就完全不渲染：本组件的布局全靠 `.zf-topbar*` 类，
-        // CSS 缺失时会裸渲染（`<img>` 按原始尺寸铺开）。见 state.styleReady 注释。
-        if (!state.styleReady) return null
-        const settings = s.settings
-        const on = settings?.enabled === true
-        const stateText = SESSION_TEXT[state.sessionState] ?? SESSION_TEXT.idle
-
-        return h('div', { className: 'zf-topbar', role: 'banner' },
-          h('div', { className: 'zf-topbar__lead' },
-            h('img', { className: 'zf-topbar__avatar', src: `${ROUTE}/art/avatar.webp`, alt: '' }),
-            h('span', { className: 'zf-topbar__name' }, t('brandName')),
-            h('span', { className: 'zf-topbar__sub' }, `${settings?.preset ? PRESET_LABELS[settings.preset]?.['zh'] ?? '' : ''} · ${stateText}`)))
-        // 顶栏**不放按钮**。
-        //
-        // 用户反馈：观测栏开关与插件开关挤在 Windows 标题栏右侧，与系统的
-        // 最小化/最大化/关闭抢位置，很挤。两个开关都在
-        // 「设置 → 庄方宜 → 皮肤」里（`rail` / 启用），不需要在顶栏重复一份。
-      }
 
       /**
        * 右侧观测栏。
@@ -1475,14 +1479,12 @@ window.__ModuleLoader__.load({
         id: 'zhuang-fangyi-toggle', order: 60, locale: NS
       }, SidebarAction)
 
-      // 顶栏与右侧观测栏都进 `shell.overlay` —— 外壳原生渲染的浮动层
+      // 右侧观测栏进 `shell.overlay` —— 外壳原生渲染的浮动层
       // （`absolute; inset:0; z-index:20`，子元素自动恢复 pointer-events）。
       // 用插槽而不是硬贴 DOM：React 管理生命周期，重渲染不会掉。
       // `shell.overlay` 是 list 槽，按 `id` 区分，不会与别人冲突。
-      safeInject('shell.overlay', {
-        id: 'zhuang-fangyi-topbar', order: 40, locale: NS
-      }, TopBar)
-
+      //
+      // 顶栏已移除（见 TopBar 处的说明），所以这里只注册一个条目。
       safeInject('shell.overlay', {
         id: 'zhuang-fangyi-rail', order: 50, locale: NS
       }, Rail)

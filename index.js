@@ -328,7 +328,6 @@ export function structureStyle () {
     // 头像图（客户端也可覆盖）。助手消息头像与顶栏/右栏共用这一张。
     '  --zf-avatar-image:none;',
     // 顶栏高度：Windows 上并入系统标题栏带（不额外占高度），其它平台自行占位。
-    '  --zf-topbar-height:40px;',
     '  --zf-rail-width:288px;',
     ...artVars,
     '}',
@@ -412,78 +411,17 @@ export function structureStyle () {
     '}',
 
     /* ══════════════════════════════════════════════════════════════════
-     * 顶栏（40px）与右侧观测栏
+     * 右侧观测栏（顶栏已移除，见下）
      *
-     * 两者都挂在 `shell.overlay` 插槽里 —— 外壳原生渲染的浮动层：
+     * 挂在 `shell.overlay` 插槽里 —— 外壳原生渲染的浮动层：
      *   `.BynINW_overlayLayer{ z-index:20; pointer-events:none;
      *                          position:absolute; inset:0 }`
      * 子元素自动恢复 `pointer-events`。不硬贴 DOM 的原因：overlay 由 React
      * 管理，重渲染不会掉，也不与其它插件抢位置。
      *
-     * ── 坐标基准（这里踩过坑：整体下移 40px）────────────────────────────
+     * ── 用 `position:fixed`，不要用 absolute（踩过，面板掉到画面中部）────
      *
-     * `overlayLayer` 是 frame 的**子元素**（`className: overlayLayer` 在
-     * frame 的 children 里），而 frame 在 Windows 下是：
-     *
-     *   [data-windows-titlebar] .BynINW_frame{
-     *     box-sizing:border-box;
-     *     padding-top: var(--dsh-windows-titlebar-height);   (40px)
-     *   }
-     *
-     * `inset:0` 解析的是 padding box（不是 border box），所以 overlay 的坐标系**已经**从
-     * 标题栏下方开始 —— 它不需要再让开标题栏。
-     *
-     * 我最初给顶栏写 `top:0` 又给右栏写 `top: var(--zf-topbar-height)`，
-     * 等于在「已经让开的位置」上再让一次，于是整个界面下移 40px。
-     *
-     * 正确做法：`top:0` 就是标题栏正下方，顶栏占第一条 40px，右栏从
-     * `top: var(--zf-topbar-height)` 开始（紧接顶栏）。
-     * ══════════════════════════════════════════════════════════════════ */
-    '.zf-topbar{',
-    // 同 `.zf-rail`：必须用 fixed 绕开 overlay 的 grid 自动放置偏移，见下方长注释
-    '  position:fixed;top:0;left:0;right:0;height:var(--zf-topbar-height);',
-    '  display:flex;align-items:center;gap:12px;padding:0 14px;box-sizing:border-box;',
-    '  z-index:12;',
-    '  background:color-mix(in srgb, var(--dsw-specific-sidebar-fill) 88%, transparent);',
-    '  border-bottom:1px solid var(--dsw-alias-border-l1);',
-    '  backdrop-filter:blur(10px);',
-    '  font-size:13px;color:var(--dsw-alias-label-primary);',
-    '}',
-    // Windows：fixed 定位要自己让开原生标题栏（frame 的 padding-top 对它无效）
-    'html[data-windows-titlebar] .zf-topbar{',
-    '  top:var(--dsh-windows-titlebar-height, 40px);',
-    '}',
-    // 顶栏**只占左半**：Windows 标题栏那一条被原生 chrome 占满了
-    //   · 左 0–40px   系统窗口图标
-    //   · 左 48px 起  「应用 / 编辑」菜单栏（Shadow DOM，z-index:1100）
-    //   · 右 138px    最小化 / 最大化 / 关闭
-    // 所以顶栏只放品牌信息、**不放任何按钮**（按钮已移到设置页），
-    // 右侧留白让给窗口按钮。`z-index:12` 低于菜单的 1100，
-    // 万一重叠也不会挡住原生菜单的点击。
-    '.zf-topbar__lead{ display:flex;align-items:center;gap:9px;min-width:0; }',
-    '.zf-topbar__avatar{',
-    '  width:24px;height:24px;border-radius:50%;flex:0 0 auto;object-fit:cover;display:block;',
-    '  box-shadow:0 0 0 1px color-mix(in srgb, var(--dsw-alias-brand-primary) 40%, transparent);',
-    '}',
-    '.zf-topbar__name{ font-weight:600;letter-spacing:.02em;white-space:nowrap; }',
-    '.zf-topbar__sub{',
-    '  color:var(--dsw-alias-label-tertiary);font-size:11px;white-space:nowrap;',
-    '  overflow:hidden;text-overflow:ellipsis;',
-    '}',
-    // 顶栏不吃窗口拖拽（保留壳原生的拖拽条），但内容也不该吃掉拖拽 ——
-    // 它整条都是 `pointer-events` 默认值，只有需要点击的元素才显式开启。
-    '.zf-topbar{ -webkit-app-region:drag; }',
-    '.zf-topbar__lead{ -webkit-app-region:no-drag; }',
-    // 关闭顶栏
-    'body[data-zf-topbar="off"] .zf-topbar{ display:none; }',
-
-    /* ══════════════════════════════════════════════════════════════════
-     * 右侧观测栏
-     *
-     * **必须用 `position:fixed`** —— 这是修一个实测 bug（面板顶端出现在
-     * 画面中部 y≈572，上面 500px 全是空白）。
-     *
-     * 原因：`shell.overlay` 是 AppFrame（CSS Grid）的**第 4 个子元素**：
+     * `overlayLayer` 是 AppFrame（CSS Grid）的**第 4 个子元素**：
      *
      *   .BynINW_frame{ display:grid; grid-template-rows:100% }
      *   [data-windows-titlebar] .BynINW_frame{
@@ -491,15 +429,26 @@ export function structureStyle () {
      *   }
      *
      * 三个列 + overlay 都没写 `grid-area`，全靠自动放置。三列填满第 1 行的
-     * 三个列后，**overlay 溢出到隐式第 2 行** —— 它的包含块整体下移了将近
-     * 一屏高度，所以 `position:absolute; top:40px` 实际落在画面中部。
+     * 三个列后，**overlay 溢出到隐式第 2 行** —— 它的包含块整体下移将近一屏
+     * （实测：面板顶端出现在 y≈572，上面 500px 全是空 base 色）。
      *
-     * 改用 `position:fixed`：相对**视口**定位，彻底绕开 grid 自动放置。
-     * 代价是 frame 的 `padding-top`（标题栏）对它不再生效，所以要自己让开 ——
-     * 见下面的 `html[data-windows-titlebar]` 规则。
+     * `position:absolute` 相对这个错位的包含块定位，所以 `top:40px` 实际落在
+     * 画面中部。改用 `position:fixed` 相对**视口**定位，彻底绕开。
+     *
+     * ── 顶栏已按用户要求整体移除 ────────────────────────────────────────
+     *
+     * 原先另有 `.zf-topbar`（庄方宜头像 + 品牌名 + 预设·状态），已整体删除。
+     * 用户反馈两个问题，都成立：
+     *   · 它 `position:fixed` 浮在中栏上方，**压住了会话标题那一行**（截图可见
+     *     标题被切掉半边）；
+     *   · 内容全是冗余 —— 头像在侧栏品牌位与助手消息旁都有，预设与会话状态
+     *     在右栏观测台里都有。
+     *
+     * 所以顶栏的组件、插槽注册与 CSS 全部删除，观测栏直接顶到最上边。
      * ══════════════════════════════════════════════════════════════════ */
     '.zf-rail{',
-    '  position:fixed;top:var(--zf-topbar-height);bottom:0;right:0;',
+    // 顶栏已移除 → 直接顶到最上边（`top:0` 相对视口）
+    '  position:fixed;top:0;bottom:0;right:0;',
     '  width:var(--zf-rail-width);box-sizing:border-box;',
     '  display:flex;flex-direction:column;gap:14px;padding:16px 14px;overflow-y:auto;',
     '  background:color-mix(in srgb, var(--dsw-alias-bg-layer-1) 82%, transparent);',
@@ -508,14 +457,13 @@ export function structureStyle () {
     '  font-size:12px;color:var(--dsw-alias-label-primary);',
     '  z-index:11;',
     '}',
-    // fixed 定位不吃 frame 的 padding-top，Windows 下要自己加上标题栏高度
+    // fixed 定位不吃 frame 的 padding-top，Windows 下要自己让开原生标题栏
     'html[data-windows-titlebar] .zf-rail{',
-    '  top:calc(var(--dsh-windows-titlebar-height, 40px) + var(--zf-topbar-height));',
+    '  top:var(--dsh-windows-titlebar-height, 40px);',
     '}',
     'body[data-zf-rail="off"] .zf-rail{ display:none; }',
     // 中栏让位：只在本插件右栏可见时加内边距，否则会白白留一条空白
     'body[data-zf-rail="on"] [data-zf-center]{ padding-right:var(--zf-rail-width); }',
-    // 关闭顶栏（`body[data-zf-topbar="off"]` 的规则在顶栏那一段，别重复写）
 
     /* ── 观测栏内部结构 ─────────────────────────────────────────────── */
     '.zf-rail__head{ display:flex;align-items:center;gap:9px; }',
@@ -633,7 +581,7 @@ export function structureStyle () {
     '@media (max-width:1180px){ .zf-rail{ display:none; } }',
     // 尊重系统的减弱动效
     '@media (prefers-reduced-motion:reduce){',
-    '  .zf-topbar,.zf-rail{ transition:none; }',
+    '  .zf-rail{ transition:none; }',
     '}',
     '</style>'
   ].join('\n')

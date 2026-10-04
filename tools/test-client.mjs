@@ -892,14 +892,14 @@ function shellDom (opts = {}) {
 {
   console.log('\n--- v2 设置项 ---')
   const on = await boot({ ...baseSettings, topbar: true, rail: true, railWidth: 320, avatarBubbles: true })
-  ok('顶栏开关默认开（不加 off 标记）', !on.h.dom.body.hasAttribute('data-zf-topbar'))
+  ok('顶栏已移除：无 data-zf-topbar 标记', !on.h.dom.body.hasAttribute('data-zf-topbar'))
   ok('头像气泡标记已加', on.h.dom.body.hasAttribute('data-zf-avatar'))
   ok('右栏宽度写进变量', on.h.dom.html.props.get('--zf-rail-width') === '320px',
     String(on.h.dom.html.props.get('--zf-rail-width')))
   ok('头像图变量已写', String(on.h.dom.html.props.get('--zf-avatar-image') ?? '').includes('avatar.webp'))
 
   const off = await boot({ ...baseSettings, topbar: false, avatarBubbles: false })
-  ok('顶栏关闭时加 off 标记', off.h.dom.body.getAttribute('data-zf-topbar') === 'off')
+  ok('顶栏已移除：不再写 data-zf-topbar', !off.h.dom.body.hasAttribute('data-zf-topbar'))
   ok('头像气泡关闭时移除标记', !off.h.dom.body.hasAttribute('data-zf-avatar'))
 
   const wide = await boot({ ...baseSettings, railWidth: 999 })
@@ -911,8 +911,9 @@ function shellDom (opts = {}) {
 {
   console.log('\n--- v2 插槽注册 ---')
   const { h } = await boot({ ...baseSettings })
-  ok('顶栏注册进 shell.overlay',
-    h.slotRegistrations.some(r => r.meta.name === 'shell.overlay' && r.meta.id === 'zhuang-fangyi-topbar'))
+  // 顶栏已按用户要求整体移除（左上角那块品牌信息压住了中栏会话标题）
+  ok('顶栏不再注册（已移除）',
+    !h.slotRegistrations.some(r => r.meta.id === 'zhuang-fangyi-topbar'))
   ok('右栏注册进 shell.overlay',
     h.slotRegistrations.some(r => r.meta.name === 'shell.overlay' && r.meta.id === 'zhuang-fangyi-rail'))
   ok('侧栏品牌位已注册', h.slotRegistrations.some(r => r.meta.name === 'sidebar.brand.mark'))
@@ -1003,14 +1004,10 @@ function shellDom (opts = {}) {
   ok('styleReady 为 false', module.__test.state.styleReady === false)
   // 关键：顶栏与右栏组件必须返回 null，否则 <img> 会按原始尺寸裸渲染
   const overlay = h.slotRegistrations.filter(r => r.meta.name === 'shell.overlay')
-  ok('顶栏与右栏仍注册（插槽层不隐藏）', overlay.length === 2, `实际 ${overlay.length}`)
-  const topbar = overlay.find(r => r.meta.id === 'zhuang-fangyi-topbar')
+  ok('只有右栏注册进 shell.overlay', overlay.length === 1, `实际 ${overlay.length}`)
   const rail = overlay.find(r => r.meta.id === 'zhuang-fangyi-rail')
-  // 用桩 React 调用组件：createElement 返回 {type, props, children}，
-  // 但组件是函数，这里直接调用它（桩 useState 返回初始值）
-  const topbarOut = topbar?.component?.({})
+  // 用桩 React 调用组件：组件是函数，这里直接调用（桩 useState 返回初始值）
   const railOut = rail?.component?.({})
-  ok('顶栏组件在样式缺失时返回 null', topbarOut === null, String(topbarOut))
   ok('右栏组件在样式缺失时返回 null', railOut === null, String(railOut))
 }
 
@@ -1020,11 +1017,11 @@ function shellDom (opts = {}) {
   const { h, mod } = await boot({ ...baseSettings })
   ok('styleReady 为 true', mod.__test.state.styleReady === true)
   const overlay = h.slotRegistrations.filter(r => r.meta.name === 'shell.overlay')
-  const topbar = overlay.find(r => r.meta.id === 'zhuang-fangyi-topbar')
-  const topbarOut = topbar?.component?.({})
-  ok('顶栏组件返回元素（非 null）', topbarOut !== null && topbarOut !== undefined)
-  ok('顶栏根节点用 .zf-topbar 类', topbarOut?.props?.className === 'zf-topbar',
-    String(topbarOut?.props?.className))
+  const rail = overlay.find(r => r.meta.id === 'zhuang-fangyi-rail')
+  const railOut = rail?.component?.({})
+  ok('右栏组件返回元素（非 null）', railOut !== null && railOut !== undefined)
+  ok('右栏根节点用 .zf-rail 类', railOut?.props?.className === 'zf-rail',
+    String(railOut?.props?.className))
 }
 // 用例 28：中栏内容层打标（壁纸被 ConversationRoot 挡住的回归）
 {
@@ -1109,25 +1106,22 @@ function shellDom (opts = {}) {
     css.includes('background:transparent !important'))
 }
 
-// 用例 30：顶栏定位与「不放按钮」（用户反馈驱动的回归）
+// 用例 30：顶栏已整体移除（它压住了中栏会话标题）
 {
-  console.log('\n--- 顶栏定位 ---')
+  console.log('\n--- 顶栏移除 ---')
   const { structureStyle } = await import('../index.js')
   const css = structureStyle()
-  // 顶栏不放按钮：观测栏开关与插件开关都移到设置页了
-  // （原先挤在标题栏右侧，与系统的窗口按钮抢位置）
-  ok('顶栏不含按钮容器', !css.includes('zf-topbar__actions'))
-  ok('顶栏不含按钮样式', !css.includes('zf-topbar__btn'))
-  ok('顶栏靠左对齐（flex 而非两列 grid）',
-    /\.zf-topbar\{[^}]*display:flex/.test(css))
-  ok('顶栏整条可拖动窗口', css.includes('-webkit-app-region:drag'))
-  ok('顶栏内容不吃拖拽', css.includes('.zf-topbar__lead{ -webkit-app-region:no-drag; }'))
-  // 坐标系：`overlayLayer` 的 `inset:0` 解析的是 padding box，**已经**在
-  // Windows 标题栏之下。元素再让一次就会整体下移 40px —— 实测就是这个 bug。
-  ok('顶栏锚在 overlay 的 top:0（不再让开标题栏）',
-    /\.zf-topbar\{[^}]*top:0/.test(css))
-  ok('右栏紧接顶栏下方', /\.zf-rail\{[^}]*top:var\(--zf-topbar-height\)/.test(css))
+  // 用户反馈：左上角那块（头像 + 庄方宜 + 状态文字）压住了中栏的会话标题，
+  // 而且信息全是冗余（头像在侧栏与消息旁都有，状态在右栏观测台里）。
+  ok('无 .zf-topbar 规则', !/\.zf-topbar\{/.test(css))
+  ok('无 .zf-topbar__ 类', !css.includes('zf-topbar__'))
+  ok('无 data-zf-topbar 规则', !css.includes('data-zf-topbar'))
+  // 顶栏移除后，观测栏必须直接顶到最上边
+  ok('观测栏 top:0（顶格）', /\.zf-rail\{[^}]*position:fixed;top:0/.test(css))
+  ok('Windows 观测栏只让开标题栏（不再叠加顶栏高度）',
+    /html\[data-windows-titlebar\] \.zf-rail\{[^}]*top:var\(--dsh-windows-titlebar-height/.test(css))
 }
+
 // 用例 31：品牌位冲突不能中断 apply()（实测事故的回归）
 {
   console.log('\n--- 品牌位冲突（single 槽）---')
@@ -1166,7 +1160,7 @@ function shellDom (opts = {}) {
 
   // 冲突只影响品牌位，其余功能必须全部照常
   ok('样式表仍注入', h.dom.head.children.some(c => c.getAttribute('id') === 'zf-style'))
-  ok('顶栏仍注册', h.slotRegistrations.some(r => r.meta.id === 'zhuang-fangyi-topbar'))
+  ok('顶栏保持移除状态', !h.slotRegistrations.some(r => r.meta.id === 'zhuang-fangyi-topbar'))
   ok('右栏仍注册', h.slotRegistrations.some(r => r.meta.id === 'zhuang-fangyi-rail'))
   ok('设置页仍注册', h.slotRegistrations.some(r => r.meta.id === 'zhuang-fangyi'))
   ok('侧栏开关仍注册', h.slotRegistrations.some(r => r.meta.id === 'zhuang-fangyi-toggle'))
@@ -1243,21 +1237,12 @@ function shellDom (opts = {}) {
   //   子元素：sidebarCol / centerCol / rightbarCol / overlayLayer —— 都没写 grid-area
   // 三列占满第 1 行后，overlay **溢出到隐式第 2 行**，包含块整体下移约一屏。
   // 用 absolute 就会跟着偏（实测面板顶端落在 y≈572，上面 500px 空白）。
-  ok('顶栏用 position:fixed', /\.zf-topbar\{[^}]*position:fixed/.test(css))
   ok('右栏用 position:fixed', /\.zf-rail\{[^}]*position:fixed/.test(css))
-
   // 反向断言：不能再出现 absolute（这就是那个 bug）
-  ok('顶栏不再用 absolute', !/\.zf-topbar\{[^}]*position:absolute/.test(css))
   ok('右栏不再用 absolute', !/\.zf-rail\{[^}]*position:absolute/.test(css))
-
   // fixed 相对视口，不吃 frame 的 padding-top → 必须自己让开 Windows 标题栏
-  ok('Windows 顶栏让开标题栏', /html\[data-windows-titlebar\] \.zf-topbar\{[^}]*top:var\(--dsh-windows-titlebar-height/.test(css))
-  ok('Windows 右栏让开标题栏+顶栏',
-    /html\[data-windows-titlebar\] \.zf-rail\{[^}]*top:calc\(var\(--dsh-windows-titlebar-height[^)]*\) \+ var\(--zf-topbar-height\)\)/.test(css))
-
-  // 层级：右栏在顶栏之下（否则会盖住顶栏）
-  ok('右栏 z-index 低于顶栏',
-    /\.zf-rail\{[^}]*z-index:11/.test(css) && /\.zf-topbar\{[^}]*z-index:12/.test(css))
+  ok('Windows 右栏让开标题栏',
+    /html\[data-windows-titlebar\] \.zf-rail\{[^}]*top:var\(--dsh-windows-titlebar-height/.test(css))
 }
 
 console.log(`\n合计 ${pass + fail} 项，通过 ${pass}，失败 ${fail}`)
