@@ -1077,6 +1077,55 @@ window.__ModuleLoader__.load({
                   .getPropertyValue('--zf-art-src').trim().slice(0, 120)
               } catch { return null }
             })(),
+            /**
+             * 壁纸渲染探针 —— 逐环报告「画没画」。
+             *
+             * 为什么需要：`artSrc` 只能证明变量被写了，证明不了**画出来**。
+             * 这条链有 5 环，任一环断掉都表现为「背景没反应」：
+             *   ① 属性 `html[data-zf-wallpaper]` 在不在
+             *   ② `--zf-art-src` 有没有值（间接引用 `var(--zf-art-<id>)`）
+             *   ③ 被引用的 `--zf-art-<id>` 有没有解析成 url(...)
+             *   ④ `::before` 的 `background-image` 最终算出来是什么
+             *   ⑤ 上层（frame / 中栏）是否已透明 —— 不透明就会盖住壁纸
+             * 有了这五条，「背景不行」就能一次定位到具体哪环，不用来回猜。
+             */
+            wallpaper: (() => {
+              try {
+                const html = document.documentElement
+                const cs = getComputedStyle(html)
+                const before = getComputedStyle(html, '::before')
+                const frame = document.querySelector('[data-zf-frame], [class*="_frame"]')
+                const center = document.querySelector('[data-zf-center], [class*="_centerCol"]')
+                const bg = el => {
+                  if (el === null) return null
+                  const s = getComputedStyle(el)
+                  return `${s.backgroundColor} / img:${s.backgroundImage.slice(0, 40)}`
+                }
+                return {
+                  attr: html.hasAttribute('data-zf-wallpaper'),
+                  bodyAttr: document.body?.hasAttribute?.('data-zf-wallpaper') ?? null,
+                  veil: cs.getPropertyValue('--zf-veil').trim(),
+                  artSrc: cs.getPropertyValue('--zf-art-src').trim().slice(0, 90),
+                  // ③ 被引用变量的解析结果（写成 url(...) 才算通）
+                  resolvedArtVar: (() => {
+                    const id = state.settings?.background
+                    if (!id || id === 'none') return null
+                    return cs.getPropertyValue(`--zf-art-${id}`).trim().slice(0, 90)
+                  })(),
+                  // ④ 真正绘制层
+                  beforeBgImage: before.backgroundImage.slice(0, 90),
+                  beforeContent: before.content,
+                  beforeZ: before.zIndex,
+                  beforeDisplay: before.display,
+                  htmlBg: cs.backgroundColor,
+                  // ⑤ 上层是否透明
+                  frameBg: bg(frame),
+                  centerBg: bg(center)
+                }
+              } catch (error) {
+                return { error: String(error?.message ?? error) }
+              }
+            })(),
             railShown: state.railShown,
             // 观测台解析出的读数（排障用：统计行格式变了先看这里）
             stats: { ...state.stats },

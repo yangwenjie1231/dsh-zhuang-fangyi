@@ -204,6 +204,44 @@ function makeDom () {
 }
 
 /**
+ * `getComputedStyle` 桩 —— 让「壁纸渲染探针」在无头测试里也走通。
+ *
+ * 只做到**够用且诚实**：自定义属性优先取行内 style（client.js 正是用
+ * `style.setProperty` 写这些变量），取不到再从注入的 `<style>` 文本里扫
+ * `--name:value`。不模拟完整层叠 —— 那是浏览器的事；这里只保证探针读得到
+ * 真实被写过的值，从而「链断在哪一环」在测试里也能被抓到。
+ */
+function installComputedStyleStub (doc) {
+  // El 的行内样式存在 `props` Map 里（见 El.style 的 setProperty 实现）
+  const inlineOf = (el, name) => (el?.props?.has?.(name) ? el.props.get(name) : undefined)
+  const readVar = (el, name) => {
+    const inline = inlineOf(el, name)
+    if (inline !== undefined) return inline
+    const css = (doc.head?.children ?? [])
+      .filter(c => (c.tagName ?? '').toLowerCase() === 'style')
+      .map(c => c.textContent ?? '')
+      .join('\n')
+    const m = new RegExp(name.replace(/-/g, '\\-') + '\\s*:\\s*([^;]+);').exec(css)
+    return m ? m[1].trim() : ''
+  }
+  globalThis.getComputedStyle = (el, pseudo) => {
+    if (pseudo === '::before') {
+      return {
+        backgroundImage: readVar(el, '--zf-art-src') || 'none',
+        content: '""',
+        zIndex: '-1',
+        display: 'block'
+      }
+    }
+    return {
+      backgroundColor: inlineOf(el, 'background-color') ?? 'rgba(0, 0, 0, 0)',
+      backgroundImage: 'none',
+      getPropertyValue: name => readVar(el, name)
+    }
+  }
+}
+
+/**
  * 真实外壳里 kind === "single" 的插槽（本插件会碰到的那些）。
  *
  * `single` 槽同 priority 只能有一个注册，第二个直接抛错 —— 这是
@@ -220,13 +258,17 @@ const SINGLE_SLOTS = new Set([
  * ------------------------------------------------------------------ */
 
 /**
- * 皮肤结构样式表的桩内容。
+ * 桩 `/style.css` 的返回内容。
  *
- * 真实内容由宿主 `structureStyle()` 生成（客户端通过 `/style.css` 取回并
- * 插成 `<style id="zf-style">`）。这里只要一个非空串即可 —— 断言关心的是
- * 「客户端有没有去取、有没有插进 head」，不是 CSS 内容本身。
+ * **用真实的 `structureStyle()` 产物**，而不是占位字符串 —— 壁纸渲染探针要读
+ * `--zf-art-<id>` 这些由样式表定义的变量（客户端只写 `--zf-art-src` 的间接
+ * 引用），占位 CSS 会让「被引用变量解析不出来」而误报。用真产物后，探针的
+ * 每一环都在测试里可验证。
+ *
+ * 顶部 await import：index.js 是 ESM，测试文件也是。
  */
-const DEFAULT_STYLE = '/* stub skin css */\n.zf-topbar{display:grid}\n.zf-rail{position:absolute}\n'
+const { structureStyle: realStructureStyle } = await import('../index.js')
+const DEFAULT_STYLE = realStructureStyle()
 
 /**
  * 默认「存在哪些服务」。
@@ -500,6 +542,9 @@ function makeHarness (settingsPayload, themePayload, stylePayload = DEFAULT_STYL
 function loadClientBundle () {
   const source = fs.readFileSync(path.join(ROOT, 'client.js'), 'utf8')
   let captured = null
+  // 壁纸渲染探针用 getComputedStyle 读计算值；无头环境没有它，
+  // 不装桩的话探针会静默走 catch 分支、永远测不到（探针本身就失去意义）。
+  if (globalThis.document) installComputedStyleStub(globalThis.document)
   const React = {
     createElement: (type, props, ...children) => ({ type, props, children }),
     useState: initial => [typeof initial === 'function' ? initial() : initial, () => {}],
@@ -1049,7 +1094,11 @@ function shellDom (opts = {}) {
   const styleEl = h.dom.head.children.find(c => c.getAttribute('id') === 'zf-style')
   ok('客户端取了 /style.css', h.calls.some(c => c.url.endsWith('/style.css')))
   ok('插入了 <style id="zf-style">', styleEl !== undefined)
-  ok('样式内容已写入', (styleEl?.textContent ?? '').includes('.zf-topbar'))
+  // 桩 CSS 现在就是真实 structureStyle() 产物，所以断言它对得上：
+  // 壁纸 ::before 规则与 art 变量定义都应在（也顺带守住「宿主产物没被改坏」）
+  ok('样式内容已写入（真实产物）',
+    (styleEl?.textContent ?? '').includes('html[data-zf-wallpaper]::before') &&
+    (styleEl?.textContent ?? '').includes('--zf-art-sakura'))
   ok('带 data-plugin 标记', styleEl?.getAttribute('data-plugin') === 'dsh-zhuang-fangyi')
   ok('插在 head 里', h.dom.head.children.includes(styleEl))
 
@@ -1868,6 +1917,66 @@ function shellDom (opts = {}) {
     diagBody.settings?.backgroundBlur === 0 && diagBody.settings?.backgroundPosition === 'cover')
   ok('diag stats 快照含 rate', typeof diagBody.stats?.rate === 'string',
     JSON.stringify(diagBody.stats))
+}
+// 用例 47：壁纸渲染探针 —— 逐环验证「画没画」
+{
+  console.log('\n--- 壁纸渲染探针 ---')
+
+  // 1) 开启壁纸（sakura，浅色）：五环都应为「通」
+  const on = await boot({ ...baseSettings, background: 'sakura', scheme: 'light', backgroundOpacity: 30 })
+  const wpOn = on.h.calls
+    .filter(x => x.url.endsWith('/diag') && x.init?.method === 'POST')
+    .map(x => JSON.parse(x.init.body).wallpaper)
+    .filter(Boolean)
+    .pop()
+  ok('探针有输出（未走 catch）', wpOn !== undefined && wpOn.error === undefined,
+    JSON.stringify(wpOn))
+  ok('① html 有 data-zf-wallpaper', wpOn.attr === true)
+  ok('① body 有 data-zf-wallpaper', wpOn.bodyAttr === true)
+  ok('② --zf-art-src 指向预设变量',
+    typeof wpOn.artSrc === 'string' && wpOn.artSrc.includes('--zf-art-sakura'), wpOn.artSrc)
+  ok('③ 被引用变量解析出 url(...)',
+    typeof wpOn.resolvedArtVar === 'string' && wpOn.resolvedArtVar.includes('/art/wallpaper-sakura.webp'),
+    wpOn.resolvedArtVar)
+  ok('④ ::before 的 background-image 非 none',
+    wpOn.beforeBgImage !== 'none' && wpOn.beforeBgImage.length > 0, wpOn.beforeBgImage)
+  ok('④ ::before 参与绘制（content/z 正常）',
+    wpOn.beforeContent === '""' && wpOn.beforeZ === '-1', `${wpOn.beforeContent} z=${wpOn.beforeZ}`)
+  ok('⑤ html 背景是纱（半透明 rgba）',
+    typeof wpOn.htmlBg === 'string' && wpOn.htmlBg.startsWith('rgba('), wpOn.htmlBg)
+  ok('⑤ --zf-veil 已按不透明度算出',
+    typeof wpOn.veil === 'string' && wpOn.veil.includes('0.7'), wpOn.veil)   // 30% → keep 0.70
+
+  // 2) 关闭壁纸：属性与变量都不该留下
+  const off = await boot({ ...baseSettings, background: 'none' })
+  const wpOff = off.h.calls
+    .filter(x => x.url.endsWith('/diag') && x.init?.method === 'POST')
+    .map(x => JSON.parse(x.init.body).wallpaper)
+    .filter(Boolean)
+    .pop()
+  ok('关闭壁纸时无 data-zf-wallpaper', wpOff.attr === false && wpOff.bodyAttr === false,
+    JSON.stringify(wpOff))
+  ok('关闭壁纸时不解析 art 变量', wpOff.resolvedArtVar === null, String(wpOff.resolvedArtVar))
+
+  // 3) 深色方案 → 引用 -dark 版
+  const dark = await boot({ ...baseSettings, background: 'sakura', scheme: 'dark' })
+  const wpDark = dark.h.calls
+    .filter(x => x.url.endsWith('/diag') && x.init?.method === 'POST')
+    .map(x => JSON.parse(x.init.body).wallpaper)
+    .filter(Boolean)
+    .pop()
+  ok('深色引用 -dark 变量',
+    typeof wpDark.artSrc === 'string' && wpDark.artSrc.includes('--zf-art-sakura-dark'), wpDark.artSrc)
+
+  // 4) 不透明度直接决定纱的 alpha（这条把「壁纸看不见」量化为可断言的值）
+  const strong = await boot({ ...baseSettings, background: 'sakura', backgroundOpacity: 45 })
+  const wpStrong = strong.h.calls
+    .filter(x => x.url.endsWith('/diag') && x.init?.method === 'POST')
+    .map(x => JSON.parse(x.init.body).wallpaper)
+    .filter(Boolean)
+    .pop()
+  ok('45% 不透明度 → 纱 alpha 0.55',
+    typeof wpStrong.veil === 'string' && wpStrong.veil.includes('0.55'), wpStrong.veil)
 }
 
 console.log(`\n合计 ${pass + fail} 项，通过 ${pass}，失败 ${fail}`)
