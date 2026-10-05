@@ -109,7 +109,7 @@ window.__ModuleLoader__.load({
         on: '已开启',
         off: '已关闭',
         groupSkin: '皮肤',
-        railHint: '原生右侧面板展开时自动让位；视口窄于 1180px 时隐藏',
+        railHint: '右栏展开时作为官方标签页显示，收起时为右侧浮层；原生面板展开时让位；窄于 1180px 隐藏',
         railWidth: '观测栏宽度',
         avatarBubbles: '头像与气泡重绘',
         avatarBubblesHint: '助手消息旁显示头像，并重绘用户气泡与输入框'
@@ -171,7 +171,7 @@ window.__ModuleLoader__.load({
         on: 'On',
         off: 'Off',
         groupSkin: 'Skin',
-        railHint: 'Yields to the native right panel; hidden below 1180px viewport',
+        railHint: 'Official tab when the right panel is open, side overlay when collapsed; yields to native panels; hidden below 1180px',
         railWidth: 'Rail width',
         avatarBubbles: 'Avatar and bubble restyle',
         avatarBubblesHint: 'Show an avatar beside assistant messages and restyle user bubbles and the composer'
@@ -666,6 +666,13 @@ window.__ModuleLoader__.load({
         }, 'zhuang-fangyi: resync listeners')
       }
 
+      // 外壳明暗切换（「外观」里切、或跟随系统时 OS 切换）→ 重渲染。
+      // 设置页的壁纸缩略图按当前明暗选文件名，不通知的话切完会停留在旧图上。
+      try {
+        const offTheme = ctx.on?.('theme/change', emit)
+        ctx.effect(() => () => offTheme?.(), 'zhuang-fangyi: theme change')
+      } catch { /* 没有事件服务的宿主：缩略图晚一次交互才刷新，无害 */ }
+
       /** 文案读取器。 */
       const t = key => {
         try {
@@ -1084,6 +1091,30 @@ window.__ModuleLoader__.load({
         } catch { /* 同步失败不打断任何功能，下次焦点再试 */ }
       }
 
+      /**
+       * 恢复默认设置。
+       *
+       * 设置页的「恢复默认」原先只是 `load()`（把宿主的当前值**重新读一遍**）——
+       * 按钮写着「恢复默认」，实际什么也没恢复（实测发现的假按钮）。
+       * 现在 POST `{"reset": true}`，由宿主显式写入 `defaultSettings()`，
+       * 返回生效后的设置并立即应用。
+       */
+      async function resetToDefaults () {
+        try {
+          const payload = await api('/settings', {
+            method: 'POST',
+            body: JSON.stringify({ reset: true })
+          })
+          if (payload?.settings !== undefined) state.settings = payload.settings
+          state.lastError = null
+          applySettings()
+        } catch (error) {
+          state.lastError = String(error?.message ?? error)
+          console.warn('[zhuang-fangyi] 恢复默认失败：', state.lastError)
+        }
+        emit()
+      }
+
       async function save (patch) {
         const next = { ...(state.settings ?? {}), ...patch }
         state.settings = next
@@ -1376,11 +1407,40 @@ window.__ModuleLoader__.load({
 
           h('div', { style: groupStyle }, t('groupWallpaper')),
           h(Row, { label: t('background') },
-            h(Select, {
-              value: settings.background,
-              options: BACKGROUNDS.map(b => ({ value: b, label: t(BG_LABELS[b]) })),
-              onChange: v => set({ background: v })
-            })),
+            // 缩略图条（对标 Mornye 的所见即所得）：8 张 +「无」，点即选。
+            // 文件名不另存映射 —— 壁纸命名是规则的 `wallpaper-<id>.webp`
+            // （测试锁这个约定），明暗版加 `-dark`。
+            h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6, justifyContent: 'flex-end', maxWidth: 300 } },
+              ...BACKGROUNDS.map(b => {
+                const pressed = settings.background === b
+                const dark = settings.scheme === 'dark' ||
+                  (settings.scheme === 'system' &&
+                    document.body?.getAttribute?.('data-ds-dark-theme') != null)
+                const file = b === 'none' ? null : `wallpaper-${b}${dark ? '-dark' : ''}.webp`
+                return h('button', {
+                  key: b, type: 'button',
+                  title: t(BG_LABELS[b]),
+                  'aria-pressed': pressed ? 'true' : 'false',
+                  onClick: () => set({ background: b }),
+                  style: {
+                    padding: 0, width: 64, height: 40, borderRadius: 7, overflow: 'hidden',
+                    cursor: 'pointer', boxSizing: 'border-box',
+                    border: pressed
+                      ? '2px solid var(--dsw-alias-brand-primary)'
+                      : '1px solid var(--dsw-alias-border-l2)',
+                    background: 'var(--dsw-alias-bg-layer-1)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center'
+                  }
+                },
+                file === null
+                  ? h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-tertiary)' } }, t('bgNone'))
+                  : h('img', {
+                      src: `${ROUTE}/art/thumbs/${file}`,
+                      alt: t(BG_LABELS[b]),
+                      loading: 'lazy',
+                      style: { width: '100%', height: '100%', objectFit: 'cover', display: 'block' }
+                    }))
+              }))),
           h(Row, { label: t('opacity') },
             h(Slider, {
               value: settings.backgroundOpacity, min: 0, max: 45, step: 1, suffix: '%',
@@ -1426,7 +1486,7 @@ window.__ModuleLoader__.load({
           h('div', { style: { display: 'flex', gap: 8, marginTop: 18 } },
             h('button', {
               type: 'button',
-              onClick: () => { void load() },
+              onClick: () => { void resetToDefaults() },
               style: buttonStyle(false)
             }, t('reset')),
             h('button', {
@@ -1963,7 +2023,7 @@ window.__ModuleLoader__.load({
         // 供无头测试直接验证定位/打标逻辑
         makeModuleClass, makeMarker, readSessionState, readStats, nativeRightbarOpen,
         // 观测台路径裁决与设置同步（用例 41/42），以及官方 tab 的自动打开（用例 44）
-        railOwner, resyncSettings, maybeOpenRailTab,
+        railOwner, resyncSettings, maybeOpenRailTab, resetToDefaults,
         // 让测试能模拟「宿主设置被外部改动」：stub fetch 下一次 /settings 的返回
         setNextSettings (next) {
           globalThis.__zfNextSettings = next

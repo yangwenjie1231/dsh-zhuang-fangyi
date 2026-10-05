@@ -451,7 +451,12 @@ function makeHarness (settingsPayload, themePayload, stylePayload = DEFAULT_STYL
     if (url.endsWith('/settings')) {
       if (init?.method === 'POST') {
         const parsed = JSON.parse(init.body)
-        settingsPayload = { settings: parsed.settings }
+        // 宿主的真实行为：`{"reset": true}` → 写入 defaultSettings()
+        settingsPayload = {
+          settings: parsed.reset === true
+            ? (await import('../src/settings.js')).defaultSettings()
+            : parsed.settings
+        }
       }
       // 用例 42：模拟「宿主设置被外部改动」—— 一次性替换 GET 的返回
       const queued = globalThis.__zfNextSettings
@@ -1660,6 +1665,87 @@ function shellDom (opts = {}) {
     mod.__test.maybeOpenRailTab(doc)
     ok('rail 关闭时不 openTab', opened.length === 0, JSON.stringify(opened))
   }
+}
+// 用例 45：观感深化（P1-A）—— 缩略图条 / 真恢复默认 / 文案对齐 / 白名单
+{
+  console.log('\n--- 壁纸缩略图与恢复默认 ---')
+  const { BACKGROUNDS: BG_FILES, defaultSettings } = await import('../src/settings.js')
+
+  // 1) 命名约定：客户端推导 `wallpaper-<id>.webp`，必须与 settings.js 的映射一致
+  const idList = Object.keys(BG_FILES).filter(b => b !== 'none')
+  const mismatch = idList.filter(b => BG_FILES[b] !== `wallpaper-${b}.webp`)
+  ok('壁纸文件名规则：BACKGROUNDS[id] === wallpaper-<id>.webp', mismatch.length === 0,
+    mismatch.join(','))
+  ok('背景预设 8 张（含 none）', idList.length === 8, String(idList.length))
+
+  // 2) 缩略图真的生成了（prepare-art 产出 16 张）
+  const thumbDir = path.join(ROOT, 'art', 'thumbs')
+  const missing = []
+  for (const b of idList) {
+    for (const dark of ['', '-dark']) {
+      const f = path.join(thumbDir, `wallpaper-${b}${dark}.webp`)
+      if (!fs.existsSync(f)) missing.push(`wallpaper-${b}${dark}.webp`)
+    }
+  }
+  ok('缩略图 16 张已生成', fs.existsSync(thumbDir) && missing.length === 0, missing.join(','))
+
+  // 3) 宿主白名单覆盖 thumbs/（否则路由 404）
+  const hostSrc = fs.readFileSync(path.join(ROOT, 'index.js'), 'utf8')
+  ok('宿主白名单含 thumbs/ 条目', hostSrc.includes('thumbs/${file}'))
+  // 宿主支持 {"reset": true}
+  ok('宿主 /settings 支持 reset', hostSrc.includes('parsed?.reset === true'))
+
+  // 4) 设置页缩略条渲染（固定浅色 → 亮图 8 张）
+  const a = await boot({ ...baseSettings, background: 'pool', scheme: 'light' })
+  const sectionReg = a.h.slotRegistrations.find(r => r.meta.name === 'settings.section')
+  ok('设置区已注册', sectionReg !== undefined)
+  const collect = (node, out = []) => {
+    if (node === null || node === undefined) return out
+    if (Array.isArray(node)) { for (const c of node) collect(c, out); return out }
+    if (typeof node !== 'object') return out
+    if (node.type === 'img' && typeof node.props?.src === 'string') out.push(node.props.src)
+    collect(node.children, out)
+    return out
+  }
+  const sectionTree = sectionReg.component({})
+  const thumbs = collect(sectionTree, []).filter(s => s.includes('/art/thumbs/'))
+  ok('缩略条渲染 8 张图', thumbs.length === 8, `实际 ${thumbs.length}`)
+  // 用**集合比对**而不是子串：预设 id 里有 `dark`（暗调水面月影），
+  // 它的亮图 `wallpaper-dark.webp` 本身就含 `-dark.webp` 子串 —— 子串判断会误判
+  const lightFiles = new Set(idList.map(b => `wallpaper-${b}.webp`))
+  const darkFiles = new Set(idList.map(b => `wallpaper-${b}-dark.webp`))
+  const nameOf = s => s.split('/art/thumbs/')[1]
+  ok('浅色 scheme 用亮图', thumbs.every(s => lightFiles.has(nameOf(s))),
+    thumbs.filter(s => !lightFiles.has(nameOf(s))).map(nameOf).join(','))
+  ok('含所选 wallpaper-pool', thumbs.some(s => s.endsWith('/wallpaper-pool.webp')))
+
+  // 5) 固定深色 → 8 张暗图文件名（每张 = 亮图名 + -dark）
+  const b2 = await boot({ ...baseSettings, scheme: 'dark' })
+  const thumbsDark = collect(
+    b2.h.slotRegistrations.find(r => r.meta.name === 'settings.section').component({}), []
+  ).filter(s => s.includes('/art/thumbs/'))
+  ok('深色 scheme 用暗图',
+    thumbsDark.length === 8 && thumbsDark.every(s => darkFiles.has(nameOf(s))),
+    thumbsDark.filter(s => !darkFiles.has(nameOf(s))).map(nameOf).join(','))
+
+  // 6) 文案对齐实际行为（顶栏移除后的双路径）
+  ok('railHint 提到官方标签页', a.mod.__test.DICT.zh.railHint.includes('标签页'))
+  ok('railHint 提到浮层', a.mod.__test.DICT.zh.railHint.includes('浮层'))
+  ok('en railHint 同步', a.mod.__test.DICT.en.railHint.includes('overlay'))
+
+  // 7) 真·恢复默认：POST {reset:true} → 宿主返回 defaultSettings
+  const c = await boot({ ...baseSettings, background: 'contour', backgroundOpacity: 45, preset: 'wine' })
+  ok('前置：设置被改过', c.mod.__test.state.settings.background === 'contour')
+  await c.mod.__test.resetToDefaults()
+  const post = c.h.calls.find(x =>
+    x.url.endsWith('/settings') && x.init?.method === 'POST' &&
+    String(x.init.body).includes('"reset":true'))
+  ok('恢复默认 POST {reset:true}', post !== undefined, JSON.stringify(c.h.calls.slice(-2)))
+  const st = c.mod.__test.state.settings
+  ok('background 回到默认 sakura', st.background === 'sakura', String(st.background))
+  ok('opacity 回到默认', st.backgroundOpacity === defaultSettings().backgroundOpacity,
+    String(st.backgroundOpacity))
+  ok('preset 回到默认', st.preset === defaultSettings().preset, String(st.preset))
 }
 
 console.log(`\n合计 ${pass + fail} 项，通过 ${pass}，失败 ${fail}`)

@@ -136,6 +136,25 @@ def save_webp(im, name, quality=86):
     return path, os.path.getsize(path)
 
 
+def save_thumb(im, name, size=(128, 80), quality=70):
+    """设置页壁纸缩略图 → `art/thumbs/<name>`。
+
+    中心 cover 裁剪到 `size`（UI 里显示 64×40，这里给 2x 保证高 DPI 不糊）。
+    只有十几 KB，可以随包分发、也可以提交进 git（与大图不同，不靠生成）。
+    """
+    tw, th = size
+    w, h = im.size
+    scale = max(tw / w, th / h)
+    nw, nh = max(tw, int(w * scale + 0.5)), max(th, int(h * scale + 0.5))
+    im2 = im.resize((nw, nh), Image.LANCZOS)
+    left, top = (nw - tw) // 2, (nh - th) // 2
+    im2 = im2.crop((left, top, left + tw, top + th))
+    os.makedirs(os.path.join(ART, 'thumbs'), exist_ok=True)
+    path = os.path.join(ART, 'thumbs', name)
+    im2.convert('RGB').save(path, 'WEBP', quality=quality, method=6)
+    return path, os.path.getsize(path)
+
+
 def trim_halo(im, lum_threshold=185, sat_threshold=0.18, alpha_keep=0.55, solid=0.92):
     """去掉透明边缘上的白色/浅色残留。
 
@@ -246,10 +265,16 @@ def main():
             skipped.append((key, rel))
             continue
         base = fit_width(flatten(im))
+        dark = darken(base)                       # 只压暗一次，全图与缩略图共用
         p1, s1 = save_webp(base, 'wallpaper-%s.webp' % key, args.quality)
-        p2, s2 = save_webp(darken(base), 'wallpaper-%s-dark.webp' % key, args.quality)
+        p2, s2 = save_webp(dark, 'wallpaper-%s-dark.webp' % key, args.quality)
         made.append(('wallpaper-%s.webp' % key, base.size, s1, note))
-        made.append(('wallpaper-%s-dark.webp' % key, base.size, s2, '暗色版'))
+        made.append(('wallpaper-%s-dark.webp' % key, dark.size, s2, '暗色版'))
+        # 设置页缩略图（明暗两版各一张）
+        tp1, ts1 = save_thumb(base, 'wallpaper-%s.webp' % key)
+        tp2, ts2 = save_thumb(dark, 'wallpaper-%s-dark.webp' % key)
+        made.append(('thumbs/wallpaper-%s.webp' % key, (128, 80), ts1, '缩略图'))
+        made.append(('thumbs/wallpaper-%s-dark.webp' % key, (128, 80), ts2, '缩略图·暗'))
 
     # ── 头像 ──────────────────────────────────────────────────────────────
     if not args.only or args.only == 'avatar':

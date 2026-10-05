@@ -173,7 +173,11 @@ function artWhitelist () {
     if (file === null) continue
     out.add(file)
     // 明暗两版：`x.webp` / `x-dark.webp`
-    out.add(file.replace(/\.webp$/, '-dark.webp'))
+    const darkFile = file.replace(/\.webp$/, '-dark.webp')
+    out.add(darkFile)
+    // 设置页缩略图：`thumbs/x.webp` / `thumbs/x-dark.webp`（prepare-art 产出）
+    out.add(`thumbs/${file}`)
+    out.add(`thumbs/${darkFile}`)
   }
   out.add('contour.webp')
   out.add('avatar.webp')
@@ -703,7 +707,12 @@ export function apply (ctx, config) {
             sendJson(res, 400, { error: 'invalid json' })
             return
           }
-          const next = settings.replace(parsed?.settings ?? parsed)
+          // `{"reset": true}` = 恢复默认（设置页「恢复默认」按钮）。
+          // 显式走 `defaultSettings()` 而不是靠「未知键被 normalize 忽略」的副作用，
+          // 语义要写在脸上。
+          const next = parsed?.reset === true
+            ? settings.replace(defaultSettings())
+            : settings.replace(parsed?.settings ?? parsed)
           settings.flush()
           sendJson(res, 200, { settings: next })
           return
