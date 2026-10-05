@@ -12,6 +12,7 @@
  */
 
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -1437,8 +1438,10 @@ function shellDom (opts = {}) {
   console.log('\n--- 头像描边与正圆 ---')
   const { structureStyle } = await import('../index.js')
   const css = structureStyle()
-  const before = css.match(/assistant-step"\]:not\(\[data-turn-process-hidden\]\):not\(:empty\):not\(:has\(>\[data-slot="conversation\.chat\.node"\]:empty\)\)::before\{[^}]*\}/)
-  ok('找到助手头像规则（且排除折叠态）', before !== null)
+  // 选择器必须同时排除**三类折叠**（见用例 58 的说明）：
+  // 空行 / 子节点空 / 整段过程折叠 / 推理组
+  const before = css.match(/assistant-step"\]:not\(\[data-chat-group-part="reasoning"\]\):not\(\[data-turn-process-hidden\]\):not\(:empty\):not\(:has\(>\[data-slot="conversation\.chat\.node"\]:empty\)\)::before\{[^}]*\}/)
+  ok('找到助手头像规则（四类排除齐全）', before !== null)
 
   // 用户反馈：头像外面那圈黄绿描边难看
   ok('助手头像无 border 描边', before !== null && !/border:1px/.test(before[0]))
@@ -2768,18 +2771,32 @@ function shellDom (opts = {}) {
 
   // 1) 三条并列判据必须都在「加头像」的选择器上
   const avatarSel = 'body[data-zf-avatar][data-chat-flow-kind="assistant-step"]'
-  ok('加头像的规则含 :not([data-turn-process-hidden])',
-    flat.includes('assistant-step"]:not([data-turn-process-hidden]):not(:empty)'),
+  // 分别断言两个 :not 都在，不依赖它们的先后顺序
+  // （reasoning 约束插在中间后，原先的「紧邻」匹配会失效）
+  ok('加头像的规则排除整段过程折叠（data-turn-process-hidden）',
+    flat.includes(':not([data-turn-process-hidden])'),
     '选择器里没有排除折叠态')
+  ok('加头像的规则排除推理组（data-chat-group-part="reasoning"）',
+    flat.includes(':not([data-chat-group-part="reasoning"])'),
+    '缺这条会让折叠的「思考」行挤头像')
   ok('左内距规则同样排除折叠态',
     (flat.match(/not\(\[data-turn-process-hidden\]\):not\(:empty\)/g) ?? []).length >= 2,
     `实测 ${(flat.match(/not\(\[data-turn-process-hidden\]\):not\(:empty\)/g) ?? []).length} 处`)
 
   // 2) 折叠行要显式清零（不能只靠「不加」—— 还要压掉可能继承的占位）
   ok('折叠行显式清零（padding-left:0;min-height:0）',
-    /assistant-step"\]\[data-turn-process-hidden\]\{padding-left:0;min-height:0;\}/.test(flat))
-  ok('折叠行的头像伪元素被关掉（content:none）',
-    /\[data-turn-process-hidden\]::before\{content:none/.test(flat))
+    /assistant-step"\]\[data-turn-process-hidden\]\{padding-left:0;min-height:0;\}/.test(flat) ||
+    /assistant-step"\]\[data-turn-process-hidden\],/.test(flat))
+  // 清零组现在把三类折叠并列写在一个选择器列表里（逗号分组），
+  // 所以不能再要求 `[data-turn-process-hidden]::before{` 紧邻。
+  // 改为断言：存在一组 `...::before{content:none`，且其中包含
+  // data-turn-process-hidden 与 reasoning 两个条件。
+  const zeroGroup = /\{[^}]*content:none[^}]*\}/.test(flat)
+  ok('存在头像伪元素清零规则', zeroGroup)
+  ok('清零组覆盖 data-turn-process-hidden 与 reasoning',
+    flat.includes('[data-turn-process-hidden]::before') ||
+    (flat.includes('content:none') && flat.includes('"reasoning"')),
+    '清零组没覆盖全部折叠类型')
 
   // 3) 与外壳折叠语义严格互补：三条件取反 vs 三条件
   //    外壳折叠 = 空 或 子节点空 或 折叠中的过程块
@@ -3231,6 +3248,85 @@ function shellDom (opts = {}) {
   ok('无 DOM 标记时按 settings.scheme 兜底',
     dark({ scheme: 'dark' }) === true && dark({ scheme: 'light' }) === false &&
     dark({ scheme: 'system' }) === false)
+}
+
+
+// 用例 58b：折叠行头像 —— 用**用户给的真实 HTML** 在真实引擎里实测
+//
+// 只看「CSS 里有那条规则」证明不了真实引擎会算出什么（shiki 那个 bug 就是
+// 靠实测才定位的）。这里用 Edge headless 读计算值，复现用户第三次截图的结构：
+//   data-chat-flow-kind="assistant-step"
+//   data-chat-group-part="reasoning"        ← 推理组
+//   data-turn-process-member="true"
+//   （没有 data-turn-process-hidden）        ← 这是"单行内折叠"，不是整段折叠
+//     └─ _3GBCTG_root:not([data-expanded]) → 外壳锁死 24px
+{
+  console.log('\n--- 折叠行头像（真实引擎实测）---')
+  const { execFileSync } = await import('node:child_process')
+  const { structureCss } = await import('../index.js')
+
+  const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
+  const edgeOk = fs.existsSync(EDGE)
+  ok('Edge 可用（真实引擎验证的前提）', edgeOk, '无 Edge 时该组自动跳过（CI 是 Linux）')
+
+  if (edgeOk) {
+    const html = `<!DOCTYPE html><html><head><style>
+      ._3GBCTG_root:not([data-expanded]){contain:size layout;height:24px}
+      .flowItem:is(:empty,:has(>[data-slot="conversation.chat.node"]:empty)){height:0}
+      body[data-zf-avatar]{--zf-avatar-image:linear-gradient(#8ab,#467)}
+      ${structureCss()}
+    </style></head><body data-zf-avatar="" data-zf-wallpaper="">
+    <div class="flowItem" id="r" data-chat-flow-kind="assistant-step"
+         data-chat-group-part="reasoning" data-turn-process-member="true">
+      <div data-slot="conversation.chat.node" style="display:contents"><div>
+        <div class="_3GBCTG_root" data-variant="think" data-preview="true">
+          <div class="_3GBCTG_row" aria-expanded="false">思考 · 摘要</div>
+        </div>
+      </div></div>
+    </div>
+    <div class="flowItem" id="p" data-chat-flow-kind="assistant-step" data-chat-group-part="response">
+      <div data-slot="conversation.chat.node" style="display:contents"><div style="height:80px">正文</div></div>
+    </div>
+    <div class="flowItem" id="u" data-chat-flow-kind="assistant-step">
+      <div data-slot="conversation.chat.node" style="display:contents"><div style="height:80px">未分组</div></div>
+    </div>
+    <script>
+      const probe = id => {
+        const el = document.getElementById(id)
+        return {
+          pad: getComputedStyle(el).paddingLeft,
+          h: Math.round(el.getBoundingClientRect().height),
+          before: getComputedStyle(el, '::before').content
+        }
+      }
+      document.title = JSON.stringify({ r: probe('r'), p: probe('p'), u: probe('u') })
+    <\/script></body></html>`
+
+    const f = path.join(os.tmpdir(), 'zf-avatar-e2e.html')
+    fs.writeFileSync(f, html, 'utf8')
+    let res = null
+    try {
+      const dom = execFileSync(EDGE, [
+        '--headless=new', '--disable-gpu', '--no-sandbox', '--virtual-time-budget=1500',
+        '--dump-dom', `file:///${f.replace(/\\/g, '/')}`
+      ], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] })
+      const m = /<title>([^<]*)<\/title>/.exec(dom)
+      if (m) res = JSON.parse(m[1].replace(/&quot;/g, '"'))
+    } catch { res = null }
+
+    ok('拿到真实引擎的计算值', res !== null)
+    if (res !== null) {
+      ok('reasoning 行无左内距（不挤头像）', res.r.pad === '0px', res.r.pad)
+      ok('reasoning 行不渲染头像伪元素',
+        res.r.before === 'none' || res.r.before === 'normal', res.r.before)
+      ok('reasoning 行保持 24px（未被撑开）', res.r.h === 24, String(res.r.h))
+      ok('response 行有左内距（给头像留位）', res.p.pad === '44px', res.p.pad)
+      ok('response 行渲染头像伪元素',
+        res.p.before !== 'none' && res.p.before !== 'normal', res.p.before)
+      // 外壳把 undefined 视同 response，且那时不渲染该属性 —— 差点漏掉的一类
+      ok('未分组行也有头像（undefined 视同 response）', res.u.pad === '44px', res.u.pad)
+    }
+  }
 }
 
 console.log(`\n合计 ${pass + fail} 项，通过 ${pass}，失败 ${fail}`)

@@ -714,16 +714,44 @@ export function structureCss () {
      *   "data-turn-process-hidden": processHidden || void 0,
      *
      * 折叠时该属性**存在**（`true`），展开时不存在（`void 0` → 不渲染属性）。
-     * 所以正确判据是**三条并列排除**：行非空 **且** 子节点非空 **且**
-     * 不是折叠中的过程块。
+     *
+     * **第三次踩坑**（用户又贴 HTML 反馈「显示效果还是不太好」）：
+     * 上面三条**仍然不够**。用户给的那行长这样：
+     *
+     *   data-chat-flow-kind="assistant-step"
+     *   data-chat-group-part="reasoning"        ← ★ 推理组
+     *   data-turn-process-member="true"
+     *   （**没有** data-turn-process-hidden）    ← 所以三条判据全通过
+     *     └─ 内部 _3GBCTG_root[data-variant=think]（无 data-expanded）
+     *          → 外壳锁死 height:calc(24px + delta)
+     *
+     * 也就是说：**单行内的折叠**（那行自己的 `aria-expanded="false"`）与
+     * **整段过程的折叠**（`data-turn-process-hidden`）是两回事。前者不受
+     * 后者约束，于是 28px 头像又被塞进 24px 行。
+     *
+     * 外壳文档把 `groupPart` 的语义写得很清楚：
+     *   「`groupPart` selects **reasoning or response** in the Assistant renderer」
+     * 所以**只有 `response` 组是助手正文**，才该配头像；
+     * `reasoning` 组是思考过程，一律不加 —— 这与「头像代表助手发言」
+     * 的语义一致（思考不是发言）。
+     *
+     * 最终判据**四条并列**：行非空 **且** 子节点非空 **且** 不是折叠中的
+     * 过程块 **且** **不是 reasoning 组**。
+     *
+     * ⚠️ 这里必须用 `:not([data-chat-group-part="reasoning"])`，**不能**用
+     * `[data-chat-group-part="response"]` 正向匹配 —— 外壳把
+     * `groupPart === undefined` 与 `"response"` **同等对待**（源码：
+     * `flowKey = groupPart === void 0 || groupPart === "response" ? …`），
+     * 而 `undefined` 时外壳**根本不渲染该属性**。正向匹配会漏掉那一类，
+     * 结果是「有时有头像、有时没有」。
      *
      * 另外**不加 `min-height`**：行高由内容决定，我只在一旁放头像。
      * ══════════════════════════════════════════════════════════════════ */
-    // 「未折叠」= 非空 且 slot 子节点非空 —— 与外壳的折叠条件严格取反
-    'body[data-zf-avatar] [data-chat-flow-kind="assistant-step"]:not([data-turn-process-hidden]):not(:empty):not(:has(>[data-slot="conversation.chat.node"]:empty)){',
+    // 「助手正文」= 四条并列：非空 + 子节点非空 + 非折叠过程块 + 非 reasoning 组
+    'body[data-zf-avatar] [data-chat-flow-kind="assistant-step"]:not([data-chat-group-part="reasoning"]):not([data-turn-process-hidden]):not(:empty):not(:has(>[data-slot="conversation.chat.node"]:empty)){',
     '  position:relative;padding-left:44px;',
     '}',
-    'body[data-zf-avatar] [data-chat-flow-kind="assistant-step"]:not([data-turn-process-hidden]):not(:empty):not(:has(>[data-slot="conversation.chat.node"]:empty))::before{',
+    'body[data-zf-avatar] [data-chat-flow-kind="assistant-step"]:not([data-chat-group-part="reasoning"]):not([data-turn-process-hidden]):not(:empty):not(:has(>[data-slot="conversation.chat.node"]:empty))::before{',
     '  content:"";position:absolute;top:2px;left:0;width:28px;height:28px;',
     // 去掉边框：用户反馈头像外面那圈黄绿描边难看（截图确认）。
     //
@@ -739,15 +767,20 @@ export function structureCss () {
     '  background-position:center;background-size:cover;',
     '  pointer-events:none;',
     '}',
-    // 折叠行 / 空行：完全不加任何占位，交给外壳的 height:0
+    // 折叠行 / 空行 / 推理组：完全不加任何占位，交给外壳自己的高度约束
+    //
+    // ⚠️ `reasoning` 组必须在这里显式清零 —— 否则它会继承上面那条
+    // 「加 44px 左内距」的规则（两者选择器不完全互补时会漏）。
     'body[data-zf-avatar] [data-chat-flow-kind="assistant-step"]:empty,',
     'body[data-zf-avatar] [data-chat-flow-kind="assistant-step"]:has(>[data-slot="conversation.chat.node"]:empty),',
-    'body[data-zf-avatar] [data-chat-flow-kind="assistant-step"][data-turn-process-hidden]{',
+    'body[data-zf-avatar] [data-chat-flow-kind="assistant-step"][data-turn-process-hidden],',
+    'body[data-zf-avatar] [data-chat-flow-kind="assistant-step"][data-chat-group-part="reasoning"]{',
     '  padding-left:0;min-height:0;',
     '}',
     'body[data-zf-avatar] [data-chat-flow-kind="assistant-step"]:empty::before,',
     'body[data-zf-avatar] [data-chat-flow-kind="assistant-step"]:has(>[data-slot="conversation.chat.node"]:empty)::before,',
-    'body[data-zf-avatar] [data-chat-flow-kind="assistant-step"][data-turn-process-hidden]::before{',
+    'body[data-zf-avatar] [data-chat-flow-kind="assistant-step"][data-turn-process-hidden]::before,',
+    'body[data-zf-avatar] [data-chat-flow-kind="assistant-step"][data-chat-group-part="reasoning"]::before{',
     '  content:none;display:none;',
     '}',
     /* ── 代码块底色（修官方的变量作用域 bug）─────────────────────────────
@@ -862,8 +895,8 @@ export function structureCss () {
     'body[data-zf-avatar] [data-composer-seat]{ padding-bottom:14px; }',
     // 窄屏降级
     '@media (max-width:520px){',
-    '  body[data-zf-avatar] [data-chat-flow-kind="assistant-step"]:not([data-turn-process-hidden]):not(:empty):not(:has(>[data-slot="conversation.chat.node"]:empty)){ padding-left:34px; }',
-    '  body[data-zf-avatar] [data-chat-flow-kind="assistant-step"]:not([data-turn-process-hidden]):not(:empty):not(:has(>[data-slot="conversation.chat.node"]:empty))::before{ width:22px;height:22px; }',
+    '  body[data-zf-avatar] [data-chat-flow-kind="assistant-step"]:not([data-chat-group-part="reasoning"]):not([data-turn-process-hidden]):not(:empty):not(:has(>[data-slot="conversation.chat.node"]:empty)){ padding-left:34px; }',
+    '  body[data-zf-avatar] [data-chat-flow-kind="assistant-step"]:not([data-chat-group-part="reasoning"]):not([data-turn-process-hidden]):not(:empty):not(:has(>[data-slot="conversation.chat.node"]:empty))::before{ width:22px;height:22px; }',
     '}',
     // 视口过窄时藏掉右栏，避免挤压中栏
     '@media (max-width:1180px){ .zf-rail{ display:none; } }',
