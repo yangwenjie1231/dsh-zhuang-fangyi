@@ -866,6 +866,17 @@ function shellDom (opts = {}) {
     center.appendChild(row)
   }
 
+  // 「已停止」信号：外壳在当前回合渲染的叶子 `<span>已停止</span>`
+  // （i18n `message.stopped`，interrupted 时挂在过程栏/正文里）
+  if (opts.stopped) {
+    const row = new El('div')
+    row.setAttribute('data-chat-flow-kind', 'turn-process')
+    const span = new El('span')
+    span.textContent = opts.stoppedText ?? '已停止'
+    row.appendChild(span)
+    center.appendChild(row)
+  }
+
   return { document, html, head, body, frame, sidebar, center, rightbar, style }
 }
 
@@ -1746,6 +1757,117 @@ function shellDom (opts = {}) {
   ok('opacity 回到默认', st.backgroundOpacity === defaultSettings().backgroundOpacity,
     String(st.backgroundOpacity))
   ok('preset 回到默认', st.preset === defaultSettings().preset, String(st.preset))
+}
+// 用例 46：观测台读数增强（P1-B）—— 扩展解析 / stopped / 运行耗时 / diag 字段
+{
+  console.log('\n--- 读数扩展 / stopped / 运行耗时 ---')
+  const mod = SHARED_MOD
+
+  // 1) readStats 新字段（实测样本：桌面端底部统计行）
+  const rich = shellDom({ stats: '38轮 · 1079步 · 206 tok/s · 328M tok · 缓存命中 77% · 58%' })
+  const r1 = mod.__test.readStats(rich.document)
+  ok('解析 tok/s', r1.rate === '206', r1.rate)
+  ok('解析 token 总量', r1.tokens === '328M', r1.tokens)
+  ok('解析上下文占比', r1.context === '58%', r1.context)
+  ok('轮/步/缓存仍正确',
+    r1.turns === '38' && r1.steps === '1079' && r1.cache === '77%', JSON.stringify(r1))
+
+  // 英文样本
+  const en = shellDom({ stats: '12 turns · 34 steps · 95 tok/s · 1.2G tok · Cache hit 87.5% · 42%' })
+  const r2 = mod.__test.readStats(en.document)
+  ok('英文样本全解析',
+    r2.turns === '12' && r2.steps === '34' && r2.cache === '87.5%' &&
+    r2.rate === '95' && r2.tokens === '1.2G' && r2.context === '42%', JSON.stringify(r2))
+
+  // 旧格式（只有一个百分数）→ 新字段回落 —，不把缓存命中冒充上下文
+  const old = shellDom({ stats: '12 轮 · 34 步 · 缓存命中 87.5%' })
+  const r3 = mod.__test.readStats(old.document)
+  ok('旧格式新字段回落 —',
+    r3.turns === '12' && r3.cache === '87.5%' &&
+    r3.rate === '—' && r3.tokens === '—' && r3.context === '—', JSON.stringify(r3))
+
+  // tok/s 负向前瞻：`tok/s` 不会被当成 token 总量
+  ok('tok/s 不误判为 token 总量', r2.tokens === '1.2G', r2.tokens)
+
+  // 2) stopped 状态（外壳叶子 span「已停止」）
+  ok('有「已停止」叶子 span → stopped',
+    mod.__test.readSessionState(
+      shellDom({ kinds: ['user', 'assistant-step'], stopped: true }).document) === 'stopped')
+  ok('英文 Stopped 同样识别',
+    mod.__test.readSessionState(
+      shellDom({ kinds: ['user'], stopped: true, stoppedText: 'Stopped' }).document) === 'stopped')
+  ok('stopped 优先于 done',
+    mod.__test.readSessionState(
+      shellDom({ kinds: ['user', 'turn-tail'], stopped: true }).document) === 'stopped')
+  ok('error 优先于 stopped',
+    mod.__test.readSessionState(
+      shellDom({ kinds: ['user', 'turn-error'], stopped: true }).document) === 'error')
+
+  // 3) formatElapsed
+  ok('0ms → 00:00', mod.__test.formatElapsed(0) === '00:00')
+  ok('65s → 01:05', mod.__test.formatElapsed(65000) === '01:05')
+  ok('1h → 1:00:00', mod.__test.formatElapsed(3600000) === '1:00:00')
+  ok('非法输入 → 00:00',
+    mod.__test.formatElapsed(NaN) === '00:00' && mod.__test.formatElapsed(-5) === '00:00')
+
+  // 4) trackSessionSince 迁移规则
+  const st = { sessionState: 'ready', sessionSince: null }
+  mod.__test.trackSessionSince(st, 'running')
+  ok('ready→running 记起点', st.sessionSince !== null && st.sessionState === 'running')
+  const started = st.sessionSince
+  mod.__test.trackSessionSince(st, 'tool')
+  ok('running→tool 不重置计时', st.sessionSince === started)
+  mod.__test.trackSessionSince(st, 'done')
+  ok('→done 清零', st.sessionSince === null)
+  const st2 = { sessionState: 'tool', sessionSince: 123 }
+  mod.__test.trackSessionSince(st2, 'running')
+  ok('tool→running 不重置计时', st2.sessionSince === 123)
+
+  // 5) 观测台渲染 6 张读数卡 + 运行中显示耗时
+  const boot2 = await boot({ ...baseSettings })
+  const overlay = boot2.h.slotRegistrations.filter(r => r.meta.name === 'shell.overlay')
+  const rail = overlay.find(r => r.meta.id === 'zhuang-fangyi-rail')
+  ok('浮层已注册（默认无官方 tab）', rail !== undefined)
+  // 递归渲染：函数型子节点直接调用（桩 useEffect 无副作用，不会起定时器）
+  const renderTree = (node, out = []) => {
+    if (node === null || node === undefined) return out
+    if (Array.isArray(node)) { for (const c of node) renderTree(c, out); return out }
+    if (typeof node !== 'object') return out
+    const el = typeof node.type === 'function' ? node.type(node.props ?? {}) : node
+    if (el && typeof el === 'object' && !Array.isArray(el)) {
+      out.push(el)
+      renderTree(el.children, out)
+    }
+    return out
+  }
+  const nodes1 = renderTree(rail.component({}))
+  const bNodes = nodes1.filter(n => n.type === 'b')
+  ok('渲染 6 张读数卡', bNodes.length === 6, `实际 ${bNodes.length}`)
+  const capOf = nodes => nodes.find(n => n.props?.className === 'zf-rail__caption')
+  const cap1 = capOf(nodes1)
+  ok('非活跃态无耗时', typeof cap1?.children?.[0] === 'string' &&
+    cap1.children[0] === '待机 · 仅本地渲染', String(cap1?.children?.[0]))
+
+  // 模拟运行中：手动置状态（桩不跑 effect，只验渲染内容）
+  boot2.mod.__test.state.sessionState = 'running'
+  boot2.mod.__test.state.sessionSince = Date.now() - 65000
+  const nodes2 = renderTree(rail.component({}))
+  const cap2 = capOf(nodes2)
+  ok('运行中显示耗时 01:05 与「生成中」',
+    typeof cap2?.children?.[0] === 'string' && cap2.children[0].includes('01:05') &&
+    cap2.children[0].includes('生成中'), String(cap2?.children?.[0]))
+
+  // 6) /diag 自检字段补齐（settings 全字段 + stats 快照）
+  const diagCall = boot2.h.calls.find(x => x.url.endsWith('/diag') && x.init?.method === 'POST')
+  ok('diag 已上报', diagCall !== undefined)
+  const diagBody = diagCall ? JSON.parse(diagCall.init.body) : {}
+  ok('diag settings 含 backgroundOpacity', diagBody.settings?.backgroundOpacity === 14,
+    JSON.stringify(diagBody.settings))
+  ok('diag settings 含 scheme', diagBody.settings?.scheme === 'system')
+  ok('diag settings 含 backgroundBlur/position',
+    diagBody.settings?.backgroundBlur === 0 && diagBody.settings?.backgroundPosition === 'cover')
+  ok('diag stats 快照含 rate', typeof diagBody.stats?.rate === 'string',
+    JSON.stringify(diagBody.stats))
 }
 
 console.log(`\n合计 ${pass + fail} 项，通过 ${pass}，失败 ${fail}`)

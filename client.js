@@ -105,7 +105,10 @@ window.__ModuleLoader__.load({
         stats: '会话读数',
         turns: '轮次',
         steps: '步数',
+        rate: '速率',
+        tokenTotal: 'token 总量',
         cache: '缓存命中',
+        contextPct: '上下文',
         on: '已开启',
         off: '已关闭',
         groupSkin: '皮肤',
@@ -167,7 +170,10 @@ window.__ModuleLoader__.load({
         stats: 'Session readout',
         turns: 'Turns',
         steps: 'Steps',
+        rate: 'Rate',
+        tokenTotal: 'Tokens',
         cache: 'Cache hit',
+        contextPct: 'Context',
         on: 'On',
         off: 'Off',
         groupSkin: 'Skin',
@@ -435,7 +441,12 @@ window.__ModuleLoader__.load({
      * 从聊天区推导会话状态。
      *
      * 判定顺序照抄 Mornye 已验证的优先级（它处理了「历史错误不该覆盖当前
-     * 回合」这类坑）：tool > running > error > done > ready > idle。
+     * 回合」这类坑）：tool > running > error > stopped > done > ready > idle。
+     *
+     * `stopped` 的信号：用户按过「停止生成」后，外壳会在**当前回合**里渲染
+     * 一个叶子 `<span>已停止</span>`（i18n `message.stopped`，interrupted 时
+     * 挂在 AssistantMarkdown/过程栏里）。注意这是**叶子节点**且**按文本精确
+     * 匹配**（中英两版），并用 `visible()` 过滤隐藏副本。
      */
     function readSessionState (doc) {
       const rows = [...doc.querySelectorAll('[data-chat-flow-kind]')]
@@ -452,25 +463,80 @@ window.__ModuleLoader__.load({
         .some(visible)
       if (streaming || stop) return 'running'
       if (turn.some(row => ['turn-error', 'turn-max-tokens'].includes(row.dataset.chatFlowKind))) return 'error'
+      const stopped = turn.some(row => [...row.querySelectorAll('span')].some(el =>
+        el.children.length === 0 && visible(el) &&
+        (el.textContent === '已停止' || el.textContent === 'Stopped')))
+      if (stopped) return 'stopped'
       if (turn.some(row => row.dataset.chatFlowKind === 'turn-tail')) return 'done'
       return 'ready'
     }
 
     /**
-     * 从统计行解析轮次 / 步数 / 缓存命中。
+     * 从统计行解析轮次 / 步数 / 缓存命中 / tok/s / token 总量 / 上下文占比。
      *
      * 只读外壳已渲染的文字（`[data-composer-stats]`），**不遍历消息正文** ——
      * 本插件是皮肤，不该读取会话内容。
+     *
+     * 实测样本（桌面端底部统计行）：
+     *   `38轮 · 1079步 · 206 tok/s · 328M tok · 缓存命中 77% · 58%`
+     *   `12 轮 · 34 步 · 缓存命中 87.5%`（旧格式，字段少）
+     *
+     * 上下文占比取**最后一个**百分数（缓存命中是第一个被锚定的）——
+     * 只有出现 ≥2 个百分数才认定，宁缺勿错。
      */
     function readStats (doc) {
       const text = doc.querySelector('[data-composer-stats]')?.textContent ?? ''
       const counts = text.match(/(\d+)\s*(?:轮|turns?)\s*(?:[·&]\s*)?(\d+)\s*(?:步|steps?)/i)
       const cache = text.match(/(?:缓存命中|Cache hit)\s*(\d+(?:\.\d+)?)%/i)
+      const rate = text.match(/(\d+(?:\.\d+)?)\s*tok\s*\/\s*s/i)
+      const total = text.match(/([\d.]+)\s*([KMGT]?)\s*tok(?!\s*\/)/i)
+      const percents = [...text.matchAll(/(\d+(?:\.\d+)?)%/g)].map(m => m[1])
+      const context = percents.length >= 2 ? percents[percents.length - 1] : null
       return {
         turns: counts?.[1] ?? '—',
         steps: counts?.[2] ?? '—',
-        cache: cache ? `${cache[1]}%` : '—'
+        cache: cache ? `${cache[1]}%` : '—',
+        rate: rate ? rate[1] : '—',
+        tokens: total ? `${total[1]}${total[2]}` : '—',
+        context: context !== null ? `${context}%` : '—'
       }
+    }
+
+    /** 活跃状态集合：`sessionSince` 计时只在这两种状态下走。 */
+    const ACTIVE_STATES = ['running', 'tool']
+
+    /**
+     * 格式化运行耗时：`mm:ss`（≥1 小时为 `h:mm:ss`）。
+     * 输入毫秒；非法输入回落 `00:00`。
+     */
+    function formatElapsed (ms) {
+      if (!Number.isFinite(ms) || ms < 0) return '00:00'
+      const total = Math.floor(ms / 1000)
+      const h = Math.floor(total / 3600)
+      const m = Math.floor((total % 3600) / 60)
+      const s = total % 60
+      const mm = String(m).padStart(2, '0')
+      const ss = String(s).padStart(2, '0')
+      return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`
+    }
+
+    /**
+     * 会话状态迁移 —— 维护 `state.sessionSince`（运行起始时刻）。
+     *
+     * 规则（对标 Mornye 的「运行耗时」）：
+     *   · 非活跃 → 活跃（ready/done/error/idle → running/tool）：记当前时刻；
+     *   · 活跃 → 非活跃（停/完成/出错）：清零；
+     *   · running ↔ tool 之间：**不重置** —— 同一次运行里的工具调用只是
+     *     状态细节，不该把计时打断。
+     * 说明：计时在内存里，刷新页面后重新开始（Mornye 从原生过程栏读，
+     * 我们刻意不碰 DOM 时间，换稳定性和零依赖）。
+     */
+    function trackSessionSince (state, next) {
+      const was = ACTIVE_STATES.includes(state.sessionState)
+      const now = ACTIVE_STATES.includes(next)
+      if (!was && now) state.sessionSince = Date.now()
+      else if (was && !now) state.sessionSince = null
+      state.sessionState = next
     }
 
     /**
@@ -590,8 +656,8 @@ window.__ModuleLoader__.load({
         doc.documentElement.style.setProperty(
           '--zf-avatar-image', `url("${ROUTE}/art/avatar.webp")`)
 
-        // 会话状态（右栏状态点与读数）
-        state.sessionState = readSessionState(doc)
+        // 会话状态（右栏状态点与读数）—— 经 trackSessionSince 维护运行计时
+        trackSessionSince(state, readSessionState(doc))
         state.stats = readStats(doc)
         if (body !== null) body.setAttribute('data-zf-session-state', state.sessionState)
 
@@ -717,7 +783,9 @@ window.__ModuleLoader__.load({
         frame: 0,
         railShown: false,
         sessionState: 'idle',
-        stats: { turns: '—', steps: '—', cache: '—' },
+        /** 运行起始时刻（ms）。活跃状态下为 Date.now()，非活跃为 null。 */
+        sessionSince: null,
+        stats: { turns: '—', steps: '—', cache: '—', rate: '—', tokens: '—', context: '—' },
         /**
          * 渲染计数（诊断用）。
          *
@@ -1010,13 +1078,20 @@ window.__ModuleLoader__.load({
               } catch { return null }
             })(),
             railShown: state.railShown,
+            // 观测台解析出的读数（排障用：统计行格式变了先看这里）
+            stats: { ...state.stats },
             settings: state.settings === null
               ? null
               : {
                   enabled: state.settings.enabled,
                   preset: state.settings.preset,
+                  scheme: state.settings.scheme,
                   background: state.settings.background,
+                  backgroundOpacity: state.settings.backgroundOpacity,
+                  backgroundBlur: state.settings.backgroundBlur,
+                  backgroundPosition: state.settings.backgroundPosition,
                   rail: state.settings.rail,
+                  railWidth: state.settings.railWidth,
                   avatarBubbles: state.settings.avatarBubbles
                 }
           }
@@ -1542,7 +1617,7 @@ window.__ModuleLoader__.load({
       /** 会话状态显示文案。 */
       const SESSION_TEXT = {
         idle: '待机', ready: '就绪', running: '生成中',
-        tool: '调用工具', error: '出错', done: '已完成'
+        tool: '调用工具', error: '出错', stopped: '已停止', done: '已完成'
       }
 
       /**
@@ -1577,18 +1652,39 @@ window.__ModuleLoader__.load({
         const set = patch => { void save(patch) }
         const stateText = SESSION_TEXT[state.sessionState] ?? SESSION_TEXT.idle
 
+        // ── 运行耗时走字（对标 Mornye 状态区）─────────────────────────────
+        // 只在活跃状态挂 1s 定时器；非活跃/暂停时不烧 CPU。
+        // 计时源是内存里的 `sessionSince`（trackSessionSince 维护），
+        // 刻意不读 DOM 时间戳 —— 稳定、零依赖、不碰会话内容。
+        const [, setTick] = useState(0)
+        const active = state.sessionState === 'running' || state.sessionState === 'tool'
+        useEffect(() => {
+          if (!active || state.sessionSince === null) return undefined
+          const id = setInterval(() => setTick(v => v + 1), 1000)
+          return () => clearInterval(id)
+        }, [active])
+        const elapsed = state.sessionSince === null
+          ? null
+          : formatElapsed(Date.now() - state.sessionSince)
+        const caption = elapsed === null
+          ? `${stateText} · ${t('localOnly')}`
+          : `${stateText} · ${elapsed} · ${t('localOnly')}`
+
         return h('div', { className: 'zf-rail__body' },
           h('div', { className: 'zf-rail__head' },
             h('img', { className: 'zf-rail__avatar', src: `${ROUTE}/art/avatar.webp`, alt: '' }),
             h('div', { style: { minWidth: 0 } },
               h('div', { className: 'zf-rail__title' }, t('railTitle')),
-              h('div', { className: 'zf-rail__caption' }, `${stateText} · ${t('localOnly')}`))),
+              h('div', { className: 'zf-rail__caption' }, caption))),
           h('div', { className: 'zf-rail__group' },
             h('div', { className: 'zf-rail__label' }, t('stats')),
             h('div', { className: 'zf-rail__stats' },
               h('div', { className: 'zf-rail__stat' }, h('b', null, st.turns), h('span', null, t('turns'))),
               h('div', { className: 'zf-rail__stat' }, h('b', null, st.steps), h('span', null, t('steps'))),
-              h('div', { className: 'zf-rail__stat' }, h('b', null, st.cache), h('span', null, t('cache'))))),
+              h('div', { className: 'zf-rail__stat' }, h('b', null, st.rate), h('span', null, t('rate'))),
+              h('div', { className: 'zf-rail__stat' }, h('b', null, st.tokens), h('span', null, t('tokenTotal'))),
+              h('div', { className: 'zf-rail__stat' }, h('b', null, st.cache), h('span', null, t('cache'))),
+              h('div', { className: 'zf-rail__stat' }, h('b', null, st.context), h('span', null, t('contextPct'))))),
           h('div', { className: 'zf-rail__group' },
             h('div', { className: 'zf-rail__label' }, t('groupTheme')),
             h('div', { className: 'zf-rail__swatches' },
@@ -2024,6 +2120,7 @@ window.__ModuleLoader__.load({
         makeModuleClass, makeMarker, readSessionState, readStats, nativeRightbarOpen,
         // 观测台路径裁决与设置同步（用例 41/42），以及官方 tab 的自动打开（用例 44）
         railOwner, resyncSettings, maybeOpenRailTab, resetToDefaults,
+        formatElapsed, trackSessionSince,
         // 让测试能模拟「宿主设置被外部改动」：stub fetch 下一次 /settings 的返回
         setNextSettings (next) {
           globalThis.__zfNextSettings = next

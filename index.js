@@ -501,7 +501,8 @@ export function structureStyle () {
     '  font-family:Consolas,"Cascadia Mono",monospace;font-size:12px;',
     '  color:var(--dsw-alias-brand-primary);font-weight:600;',
     '}',
-    '.zf-rail__stats{ display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px; }',
+    // auto-fit：观测栏 240~380px 都能排（2~3 列自适应），6 张卡不溢出
+    '.zf-rail__stats{ display:grid;grid-template-columns:repeat(auto-fit,minmax(76px,1fr));gap:8px; }',
     '.zf-rail__stat{',
     '  display:flex;flex-direction:column;gap:3px;padding:9px 8px;border-radius:9px;',
     '  background:var(--dsw-alias-bg-layer-2);',
@@ -521,6 +522,7 @@ export function structureStyle () {
     '[data-zf-session-state="tool"] .zf-rail__dot{ background:var(--dsw-alias-state-warn-primary); }',
     '[data-zf-session-state="error"] .zf-rail__dot{ background:var(--dsw-alias-state-error-primary); }',
     '[data-zf-session-state="done"] .zf-rail__dot{ background:var(--dsw-alias-state-success-primary); }',
+    '[data-zf-session-state="stopped"] .zf-rail__dot{ background:var(--dsw-alias-state-warn-primary); }',
     '.zf-rail__swatches{ display:flex;flex-direction:column;gap:6px; }',
     '.zf-rail__swatch{',
     '  width:100%;height:28px;border-radius:7px;cursor:pointer;padding:0 9px;box-sizing:border-box;',
