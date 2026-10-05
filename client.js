@@ -238,7 +238,17 @@ window.__ModuleLoader__.load({
       return 'light'
     }
 
-    function applyStyleVars (settings, roles, theme) {
+    /**
+     * 把设置写进 CSS 自定义属性与装饰属性。
+     *
+     * @param {object} settings 当前设置
+     * @param {object} roles 预设角色表（算纱色）
+     * @param {object} theme ctx.theme
+     * @param {object} [meta] 壁纸清单（`{ "wallpaper-x.webp": {fit} }`）——
+     *   竖图判据。**必须由调用方传入**：本函数在模块作用域，看不到 `apply()`
+     *   里的 `state`（实测踩过：直接用 `state.wallpaperMeta` 会 ReferenceError）。
+     */
+    function applyStyleVars (settings, roles, theme, meta) {
       const root = document.documentElement
       const body = document.body
       if (root === null || body === null) return
@@ -254,7 +264,7 @@ window.__ModuleLoader__.load({
       const hasWallpaper = settings.background !== 'none'
       if (hasWallpaper) {
         // 上限 45 与 settings.js 的 BG_OPACITY_MAX 一致（client 是手写 bundle 不能 import）
-          const alpha = Math.max(0, Math.min(45, settings.backgroundOpacity)) / 100
+        const alpha = Math.max(0, Math.min(45, settings.backgroundOpacity)) / 100
         const blur = Math.max(0, Math.min(16, settings.backgroundBlur))
         const pos = POSITIONS.includes(settings.backgroundPosition) ? settings.backgroundPosition : 'cover'
 
@@ -267,18 +277,39 @@ window.__ModuleLoader__.load({
           root.style.setProperty('--zf-veil-sidebar', toRgba(preset.sidebar, keep))
         }
 
-        root.style.setProperty('--zf-art-src', `var(--zf-art-${settings.background}${scheme === 'dark' ? '-dark' : ''})`)
+        // ── 竖图用 contain + 模糊垫底（见 index.js 的 `::after` 层）────────
+        //
+        // 判断来自宿主下发的 `wallpapers.json` 清单（生成器按宽高比算好），
+        // 客户端**不猜**：1080×1920 这类竖图在横屏用 cover 只剩中间 40%，
+        // 必须 contain 完整显示，两侧由同图重模糊的垫底层补上。
+        const artId = `${settings.background}${scheme === 'dark' ? '-dark' : ''}`
+        const artFile = `wallpaper-${artId}.webp`
+        const fit = meta?.[artFile]?.fit === 'contain' ? 'contain' : 'cover'
+        // 用户显式选了「平铺」就尊重他（平铺本身不裁切，不需要垫底）
+        const tiled = pos === 'tile'
+        const effectiveFit = tiled ? 'auto' : fit
+
+        root.style.setProperty('--zf-art-src', `var(--zf-art-${artId})`)
         root.style.setProperty('--zf-blur', `${blur}px`)
         // 模糊会把四边糊出去，轻微放大补上；不模糊时不放大，避免无谓重采样
         root.style.setProperty('--zf-art-scale', blur > 0 ? '1.04' : '1')
-        root.style.setProperty('--zf-art-size', pos === 'tile' ? 'auto' : 'cover')
+        root.style.setProperty('--zf-art-size', effectiveFit)
         root.style.setProperty('--zf-art-position',
-          pos === 'tile' ? '0 0' : pos === 'right' ? 'right center' : 'center')
-        root.style.setProperty('--zf-art-repeat', pos === 'tile' ? 'repeat' : 'no-repeat')
+          tiled ? '0 0'
+            : fit === 'contain' ? 'center 22%'   // 竖图取景偏上，保住头部
+              : pos === 'right' ? 'right center' : 'center')
+        root.style.setProperty('--zf-art-repeat', tiled ? 'repeat' : 'no-repeat')
+        // 垫底层：只有 contain 时才需要（横图铺满，没有空隙）
+        root.style.setProperty('--zf-art-backdrop',
+          !tiled && fit === 'contain' ? `var(--zf-art-${artId})` : 'none')
+        // 垫底亮度：深色主题下压得更暗，避免两侧比前景还亮
+        root.style.setProperty('--zf-backdrop-lum', scheme === 'dark' ? '0.5' : '0.72')
+        root.setAttribute('data-zf-art-fit', !tiled && fit === 'contain' ? 'contain' : 'cover')
         root.setAttribute('data-zf-wallpaper', '')
         body.setAttribute('data-zf-wallpaper', '')
       } else {
         root.removeAttribute('data-zf-wallpaper')
+        root.removeAttribute('data-zf-art-fit')
         body.removeAttribute('data-zf-wallpaper')
       }
 
@@ -304,12 +335,27 @@ window.__ModuleLoader__.load({
      * 明暗分流：壁纸与纱都要按 body 的暗色属性切到对应版本。
      * 由 `theme/change` 触发（外壳切换明暗时会 emit）。
      */
-    function syncSchemeWallpaper (settings, roles, theme) {
+    /**
+     * 明暗切换时把壁纸（前景 + 垫底）与纱切到对应版本。
+     *
+     * @param {object} [meta] 壁纸清单 —— 同 `applyStyleVars`，必须由调用方传入。
+     */
+    function syncSchemeWallpaper (settings, roles, theme, meta) {
       if (settings?.enabled !== true) return
       const scheme = currentScheme(theme)
       if (settings.background !== 'none') {
-        document.documentElement.style.setProperty(
-          '--zf-art-src', `var(--zf-art-${settings.background}${scheme === 'dark' ? '-dark' : ''})`)
+        const artId = `${settings.background}${scheme === 'dark' ? '-dark' : ''}`
+        const artFile = `wallpaper-${artId}.webp`
+        const fit = meta?.[artFile]?.fit === 'contain' ? 'contain' : 'cover'
+        const tiled = settings.backgroundPosition === 'tile'
+        document.documentElement.style.setProperty('--zf-art-src', `var(--zf-art-${artId})`)
+        // 明暗切换时前景与垫底一起切（暗版是另一张图，不能沿用亮版 url）
+        document.documentElement.style.setProperty('--zf-art-backdrop',
+          !tiled && fit === 'contain' ? `var(--zf-art-${artId})` : 'none')
+        document.documentElement.style.setProperty('--zf-backdrop-lum',
+          scheme === 'dark' ? '0.5' : '0.72')
+        document.documentElement.setAttribute('data-zf-art-fit',
+          !tiled && fit === 'contain' ? 'contain' : 'cover')
       }
       const preset = roles?.[settings.preset]?.[scheme]
       if (preset !== undefined && settings.background !== 'none') {
@@ -754,6 +800,8 @@ window.__ModuleLoader__.load({
         themes: [],
         overrides: {},
         themeRoles: {},
+        /** 壁纸清单（宿主下发）：`{ "wallpaper-x.webp": { fit, width, height } }`。 */
+        wallpaperMeta: {},
         layerDispose: null,
         registered: new Map(),
         heroDispose: null,
@@ -905,7 +953,7 @@ window.__ModuleLoader__.load({
         if (s === null) return
         teardown()
         if (s.enabled !== true) {
-          applyStyleVars(s, state.themeRoles, theme)
+          applyStyleVars(s, state.themeRoles, theme, state.wallpaperMeta)
           syncHeroMark()
           emit()
           return
@@ -931,8 +979,8 @@ window.__ModuleLoader__.load({
           }
         }
 
-        applyStyleVars(s, state.themeRoles, theme)
-        syncSchemeWallpaper(s, state.themeRoles, theme)
+        applyStyleVars(s, state.themeRoles, theme, state.wallpaperMeta)
+        syncSchemeWallpaper(s, state.themeRoles, theme, state.wallpaperMeta)
         syncHeroMark()
         // 打标运行时：设置变了要立刻重算（顶栏/右栏开关、宽度、头像）
         state.skin?.refresh()
@@ -1104,6 +1152,11 @@ window.__ModuleLoader__.load({
                 return {
                   attr: html.hasAttribute('data-zf-wallpaper'),
                   bodyAttr: document.body?.hasAttribute?.('data-zf-wallpaper') ?? null,
+                  // 竖图 contain 链路：fit 标记、前景 size、垫底 url
+                  fit: html.getAttribute('data-zf-art-fit'),
+                  size: cs.getPropertyValue('--zf-art-size').trim(),
+                  position: cs.getPropertyValue('--zf-art-position').trim(),
+                  backdrop: cs.getPropertyValue('--zf-art-backdrop').trim().slice(0, 60),
                   veil: cs.getPropertyValue('--zf-veil').trim(),
                   artSrc: cs.getPropertyValue('--zf-art-src').trim().slice(0, 90),
                   // ③ 被引用变量的解析结果（写成 url(...) 才算通）
@@ -1164,6 +1217,8 @@ window.__ModuleLoader__.load({
           state.themes = themePayload.themes ?? []
           state.overrides = themePayload.overrides ?? {}
           state.themeRoles = themePayload.roles ?? {}
+          // 壁纸清单：竖图用 contain 的依据（宿主从 art/wallpapers.json 读）
+          state.wallpaperMeta = themePayload.wallpaperMeta ?? {}
           state.lastError = null
           registerThemes()
           applySettings()
@@ -1279,7 +1334,7 @@ window.__ModuleLoader__.load({
       // 壁纸明暗两版由 CSS 分流；这里只在外壳切换后把变量指向对应的暗色图，
       // 保证不支持 :has() 的引擎也能跟随。
       ctx.effect(() => ctx.on('theme/change', () => {
-        syncSchemeWallpaper(state.settings, state.themeRoles, theme)
+        syncSchemeWallpaper(state.settings, state.themeRoles, theme, state.wallpaperMeta)
       }), 'zhuang-fangyi: theme sync')
 
       /* ---------------- 空白页头像 ---------------- */

@@ -23,6 +23,7 @@
 """
 
 import argparse
+import json
 import os
 import sys
 from PIL import Image, ImageEnhance
@@ -312,6 +313,42 @@ def main():
     print('产出 %d 个文件到 art/' % len(made))
     for name, size, nbytes, note in made:
         print('  %-34s %5dx%-5d %7.0f KB  %s' % (name, size[0], size[1], nbytes / 1024, note))
+
+    # ── 清单：记录每张壁纸的尺寸与「该用 cover 还是 contain」────────────────
+    #
+    # 为什么让生成器算，而不是在插件代码里硬编码图名：
+    # 竖图（宽高比 < 0.87）用 `cover` 铺横屏会把人物裁成一条 —— 1080×1920 的
+    # 立绘在 1337×947 里只剩中间 40% 的高度（实测）。这类图必须 `contain`
+    # 完整显示，两侧用同图模糊垫底（见 index.js 的 `::after` 层）。
+    # 把判断写进清单后，**以后新增任何图都自动正确**，不用回来改代码。
+    manifest = {
+        'version': 1,
+        'wallpapers': {},
+    }
+    for name, size, nbytes, note in made:
+        base = os.path.basename(name)
+        if not base.startswith('wallpaper-') or not base.endswith('.webp'):
+            continue
+        if '/thumbs/' in name or name.startswith('thumbs/'):
+            continue
+        w, h = size
+        ratio = w / h if h else 1.0
+        manifest['wallpapers'][base] = {
+            'width': w,
+            'height': h,
+            'ratio': round(ratio, 3),
+            # 竖图/近方图用 contain（完整显示），横图用 cover（铺满）
+            'fit': 'contain' if ratio < 0.87 else 'cover',
+        }
+    mpath = os.path.join(ART, 'wallpapers.json')
+    with open(mpath, 'w', encoding='utf-8') as fh:
+        json.dump(manifest, fh, ensure_ascii=False, indent=2, sort_keys=True)
+        fh.write('\n')
+    print('\n清单 art/wallpapers.json：%d 张（竖图用 contain）' % len(manifest['wallpapers']))
+    for k, v in sorted(manifest['wallpapers'].items()):
+        if v['fit'] == 'contain':
+            print('  contain  %-32s %dx%d' % (k, v['width'], v['height']))
+
     if skipped:
         print('\n跳过 %d 个（源文件缺失）：' % len(skipped))
         for key, rel in skipped:

@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "wallpapers": {
+    "wallpaper-contour-dark.webp": {
+      "fit": "cover",
+      "height": 1440,
+      "ratio": 1.778,
+      "width": 2560
+    },
+    "wallpaper-contour.webp": {
+      "fit": "cover",
+      "height": 1440,
+      "ratio": 1.778,
+      "width": 2560
+    },
+    "wallpaper-dark-dark.webp": {
+      "fit": "cover",
+      "height": 1440,
+      "ratio": 1.778,
+      "width": 2560
+    },
+    "wallpaper-dark.webp": {
+      "fit": "cover",
+      "height": 1440,
+      "ratio": 1.778,
+      "width": 2560
+    },
+    "wallpaper-pool-dark.webp": {
+      "fit": "cover",
+      "height": 1440,
+      "ratio": 1.778,
+      "width": 2560
+    },
+    "wallpaper-pool.webp": {
+      "fit": "cover",
+      "height": 1440,
+      "ratio": 1.778,
+      "width": 2560
+    },
+    "wallpaper-portrait-dark.webp": {
+      "fit": "contain",
+      "height": 1920,
+      "ratio": 0.562,
+      "width": 1080
+    },
+    "wallpaper-portrait.webp": {
+      "fit": "contain",
+      "height": 1920,
+      "ratio": 0.562,
+      "width": 1080
+    },
+    "wallpaper-promo-dark.webp": {
+      "fit": "cover",
+      "height": 1440,
+      "ratio": 1.778,
+      "width": 2560
+    },
+    "wallpaper-promo.webp": {
+      "fit": "cover",
+      "height": 1440,
+      "ratio": 1.778,
+      "width": 2560
+    },
+    "wallpaper-sakura-dark.webp": {
+      "fit": "cover",
+      "height": 1072,
+      "ratio": 2.388,
+      "width": 2560
+    },
+    "wallpaper-sakura.webp": {
+      "fit": "cover",
+      "height": 1072,
+      "ratio": 2.388,
+      "width": 2560
+    },
+    "wallpaper-ultrawide-dark.webp": {
+      "fit": "cover",
+      "height": 744,
+      "ratio": 3.441,
+      "width": 2560
+    },
+    "wallpaper-ultrawide.webp": {
+      "fit": "cover",
+      "height": 744,
+      "ratio": 3.441,
+      "width": 2560
+    },
+    "wallpaper-vertical-dark.webp": {
+      "fit": "contain",
+      "height": 2560,
+      "ratio": 0.562,
+      "width": 1440
+    },
+    "wallpaper-vertical.webp": {
+      "fit": "contain",
+      "height": 2560,
+      "ratio": 0.562,
+      "width": 1440
+    }
+  }
+}

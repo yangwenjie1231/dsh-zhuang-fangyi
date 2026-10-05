@@ -2012,6 +2012,90 @@ function shellDom (opts = {}) {
   ok('html{} 块内定义了 --zf-art-sakura',
     (htmlBlock?.[1] ?? '').includes('--zf-art-sakura:'))
 }
+// 用例 49：竖图用 contain + 模糊垫底（B 方案）
+{
+  console.log('\n--- 竖图 contain 与垫底层 ---')
+  const { structureCss } = await import('../index.js')
+  const css = structureCss()
+
+  // ① 垫底层存在，且用 --zf-art-backdrop（不是硬编码 url）
+  ok('CSS 含 ::after 垫底层', css.includes('html[data-zf-wallpaper]::after'))
+  ok('垫底层用 --zf-art-backdrop', /::after\{[^}]*background-image:var\(--zf-art-backdrop/.test(css))
+  ok('垫底层重模糊（blur 64px）', /::after\{[^}]*filter:blur\(64px\)/.test(css))
+  ok('垫底层在更下层（z-index:-2）', /::after\{[^}]*z-index:-2/.test(css))
+  ok('前景层仍在 -1（盖在垫底之上）', /::before\{[^}]*z-index:-1/.test(css))
+  ok('垫底层默认 none（横图零开销）', css.includes('--zf-art-backdrop:none'))
+  ok('含 contain 取景规则', css.includes('[data-zf-art-fit="contain"]::before'))
+  ok('垫底亮度变量可调', css.includes('--zf-backdrop-lum'))
+
+  // ② 清单：竖图必须是 contain（这是 B 方案的依据）
+  const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'art', 'wallpapers.json'), 'utf8'))
+  const items = manifest.wallpapers
+  ok('清单存在且非空', Object.keys(items).length === 16, String(Object.keys(items).length))
+  const portrait = Object.entries(items).filter(([k]) => k.includes('portrait') || k.includes('vertical'))
+  ok('竖图 4 张（portrait/vertical × 明暗）', portrait.length === 4, String(portrait.length))
+  ok('竖图全部标 contain', portrait.every(([, v]) => v.fit === 'contain'),
+    portrait.filter(([, v]) => v.fit !== 'contain').map(([k]) => k).join(','))
+  const landscape = Object.entries(items).filter(([k]) => !(k.includes('portrait') || k.includes('vertical')))
+  ok('横图全部标 cover', landscape.every(([, v]) => v.fit === 'cover'),
+    landscape.filter(([, v]) => v.fit !== 'cover').map(([k]) => k).join(','))
+  ok('竖图宽高比 < 0.87', portrait.every(([, v]) => v.ratio < 0.87),
+    portrait.map(([, v]) => v.ratio).join(','))
+
+  // ③ 客户端行为：竖图 → contain + 垫底；横图 → cover + 无垫底
+  const vert = await boot(
+    { ...baseSettings, background: 'portrait', scheme: 'light' },
+    { wallpaperMeta: items }
+  )
+  const htmlV = vert.h.dom.html
+  const propsV = htmlV.props
+  ok('竖图 background-size=contain', propsV.get('--zf-art-size') === 'contain',
+    String(propsV.get('--zf-art-size')))
+  ok('竖图取景偏上（center 22%）', propsV.get('--zf-art-position') === 'center 22%',
+    String(propsV.get('--zf-art-position')))
+  ok('竖图垫底指向同一张图',
+    String(propsV.get('--zf-art-backdrop')).includes('--zf-art-portrait'),
+    String(propsV.get('--zf-art-backdrop')))
+  ok('竖图打上 data-zf-art-fit=contain',
+    htmlV.getAttribute('data-zf-art-fit') === 'contain')
+
+  const land = await boot(
+    { ...baseSettings, background: 'sakura', scheme: 'light' },
+    { wallpaperMeta: items }
+  )
+  const propsL = land.h.dom.html.props
+  ok('横图 background-size=cover', propsL.get('--zf-art-size') === 'cover',
+    String(propsL.get('--zf-art-size')))
+  ok('横图不挂垫底（none）', propsL.get('--zf-art-backdrop') === 'none',
+    String(propsL.get('--zf-art-backdrop')))
+  ok('横图 fit 标记为 cover',
+    land.h.dom.html.getAttribute('data-zf-art-fit') === 'cover')
+
+  // ④ 用户显式选「平铺」时不该被 contain 覆盖（尊重用户）
+  const tiled = await boot(
+    { ...baseSettings, background: 'portrait', backgroundPosition: 'tile' },
+    { wallpaperMeta: items }
+  )
+  const propsT = tiled.h.dom.html.props
+  ok('平铺优先：size=auto', propsT.get('--zf-art-size') === 'auto', String(propsT.get('--zf-art-size')))
+  ok('平铺优先：repeat=repeat', propsT.get('--zf-art-repeat') === 'repeat')
+  ok('平铺时不挂垫底', propsT.get('--zf-art-backdrop') === 'none')
+
+  // ⑤ 清单缺失 → 回落 cover（旧行为），不能抛
+  const noMeta = await boot({ ...baseSettings, background: 'portrait', scheme: 'light' })
+  ok('无清单时回落 cover（不坏）',
+    noMeta.h.dom.html.props.get('--zf-art-size') === 'cover',
+    String(noMeta.h.dom.html.props.get('--zf-art-size')))
+
+  // ⑥ 明暗切换时垫底跟着切到 -dark 版
+  const darkVert = await boot(
+    { ...baseSettings, background: 'portrait', scheme: 'dark' },
+    { wallpaperMeta: items }
+  )
+  ok('深色竖图垫底指向 -dark 版',
+    String(darkVert.h.dom.html.props.get('--zf-art-backdrop')).includes('--zf-art-portrait-dark'),
+    String(darkVert.h.dom.html.props.get('--zf-art-backdrop')))
+}
 
 console.log(`\n合计 ${pass + fail} 项，通过 ${pass}，失败 ${fail}`)
 if (fail > 0) {

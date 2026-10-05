@@ -204,6 +204,29 @@ function readArt (rel) {
   }
 }
 
+/**
+ * 每张壁纸的尺寸与 `fit`（cover / contain）。
+ *
+ * 来源是 `art/wallpapers.json` —— 由 `tools/prepare-art.py` 在生成时写出，
+ * 里面已按宽高比判好「竖图用 contain」。**不在插件代码里硬编码图名**：
+ * 以后加新图，生成器一跑就正确。
+ *
+ * 读不到清单时返回空对象 —— 客户端回落到 `cover`（旧行为，即竖图裁切），
+ * 不会因此坏掉。
+ */
+let wallpaperMetaCache = null
+function wallpaperMeta () {
+  if (wallpaperMetaCache !== null) return wallpaperMetaCache
+  try {
+    const raw = fs.readFileSync(path.join(ART_DIR, 'wallpapers.json'), 'utf8')
+    const parsed = JSON.parse(raw)
+    wallpaperMetaCache = parsed?.wallpapers ?? {}
+  } catch {
+    wallpaperMetaCache = {}
+  }
+  return wallpaperMetaCache
+}
+
 /* ------------------------------------------------------------------ *
  * 首帧样式
  * ------------------------------------------------------------------ */
@@ -345,6 +368,9 @@ export function structureCss () {
     '  --zf-art-size:cover;',
     '  --zf-art-position:center;',
     '  --zf-art-repeat:no-repeat;',
+    // 垫底层（竖图用）：`none` 时不画，横图零开销
+    '  --zf-art-backdrop:none;',
+    '  --zf-backdrop-lum:0.62;',
     '  --zf-blur:0px;',
     // 模糊会糊掉四边，轻微放大避免露出底色边
     '  --zf-art-scale:1;',
@@ -364,6 +390,28 @@ export function structureCss () {
     // body 及其后代之下」—— 这正是我们要的位置（body 已透明）。
     // 同时给 html 一个不透明背景色兜底，避免壁纸没加载时露白。
     'html[data-zf-wallpaper]{ background-color:var(--zf-veil,Canvas); }',
+    /* ── 模糊垫底层（竖图专用，`fit=contain` 时才出现）────────────────────
+     *
+     * 问题：竖图（1080×1920，宽高比 0.56）用 `cover` 铺横屏，只能看到中间
+     * 约 40% 的高度 —— 人物被裁成一条、脸被放大 1.24 倍（实测）。
+     *
+     * 方案：前景层改用 `contain` 完整显示整张竖图（不裁人），两侧留出的
+     * 空隙由这一层填 —— 同一张图 `cover` 铺满 + 重模糊 + 压暗，
+     * 形成「磨砂延伸」而不是生硬的纯色边。
+     *
+     * 层级：`::after` 用 z-index:-2，落在 `::before`（-1）**更下面**，
+     * 所以前景永远盖在垫底之上。两者都在 html 根层叠上下文里，
+     * 仍位于 body 内容之下。
+     */
+    'html[data-zf-wallpaper]::after{',
+    '  content:"";position:fixed;inset:0;z-index:-2;pointer-events:none;',
+    '  background-image:var(--zf-art-backdrop,none);',
+    '  background-size:cover;background-position:center;background-repeat:no-repeat;',
+    // 重模糊 + 压暗：只做气氛，不抢前景；brightness 让深色主题下不过亮
+    '  filter:blur(64px) saturate(1.15) brightness(var(--zf-backdrop-lum,0.62));',
+    // 放大 1.15 避免 blur 在四边露白
+    '  transform:scale(1.15);',
+    '}',
     'html[data-zf-wallpaper]::before{',
     '  content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;',
     '  background-image:var(--zf-art-src);',
@@ -373,6 +421,11 @@ export function structureCss () {
     // 模糊会糊掉边缘，放大一点点避免露出白边
     '  filter:blur(var(--zf-blur));',
     '  transform:scale(var(--zf-art-scale,1));',
+    '}',
+    /* 竖图（contain）时前景的取景：`center 22%` 让头部/上半身落在可视区，
+     * 而不是正中被裁。仅当 `--zf-art-fit` 为 contain 时由客户端写这个值。 */
+    'html[data-zf-wallpaper][data-zf-art-fit="contain"]::before{',
+    '  background-position:var(--zf-art-position,center 22%);',
     '}',
     // ── 纱的层次（这里最容易做错，值得说清）────────────────────────────
     //
@@ -765,7 +818,10 @@ export function apply (ctx, config) {
           overrides: Object.fromEntries(PRESET_IDS.map(id => [id, overridesFor(id)])),
           roles: Object.fromEntries(PRESET_IDS.map(id => [id, PRESETS[id].light !== undefined
             ? { light: PRESETS[id].light, dark: PRESETS[id].dark }
-            : null]))
+            : null])),
+          // 每张壁纸的尺寸与「该 cover 还是 contain」（由 prepare-art.py 产出）。
+          // 竖图必须 contain，否则横屏下只看到中间 40% 的高度。
+          wallpaperMeta: wallpaperMeta()
         })
         return
       }
