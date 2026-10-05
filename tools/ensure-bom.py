@@ -21,18 +21,22 @@ import os
 import sys
 
 BOM = b"\xef\xbb\xbf"
-TOOLS = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # 仓库根
+TOOLS = os.path.join(ROOT, "tools")
 
 
 def main() -> int:
     check_only = "--check" in sys.argv
-    targets = sorted(
-        os.path.join(TOOLS, n)
-        for n in os.listdir(TOOLS)
-        if n.lower().endswith(".ps1")
-    )
+    # 仓库根（install.ps1 / uninstall.ps1 等用户面脚本）与 tools/ 都扫
+    targets = []
+    for directory in (ROOT, TOOLS):
+        targets += sorted(
+            os.path.join(directory, n)
+            for n in os.listdir(directory)
+            if n.lower().endswith(".ps1") and os.path.isfile(os.path.join(directory, n))
+        )
     if not targets:
-        print("  tools/ 下没有 .ps1 文件")
+        print("  没有 .ps1 文件")
         return 0
 
     missing = []

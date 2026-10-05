@@ -47,7 +47,7 @@ $DshHome = if ($env:DSH_HOME) { $env:DSH_HOME } else { Join-Path $HOME '.dsh' }
 $Dst = Join-Path $DshHome "profiles\$Profile\node_modules\dsh-zhuang-fangyi"
 
 # 顶层文件与目录（与 package.json 的 files 字段一致）
-$Files = @('index.js', 'client.js', 'package.json', 'cordis.patch.yml', 'README.md')
+$Files = @('index.js', 'client.js', 'package.json', 'cordis.patch.yml', 'README.md', 'PRIVACY.md', 'ASSETS-NOTICE.md')
 $Dirs = @('src', 'tools', 'docs', 'art')
 
 Write-Host "源:   $Src"
