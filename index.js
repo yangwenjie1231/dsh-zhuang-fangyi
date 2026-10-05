@@ -300,7 +300,30 @@ export function tokenStyle (settings) {
  * 压根不存在 —— 而 token 是由浏览器半边 `overrideTokens` 独立生效的，
  * 所以只有配色变了。
  */
-export function structureStyle () {
+/**
+ * 皮肤结构的**纯 CSS**（不含 `<style>` 标签）。
+ *
+ * ── 为什么必须区分「纯 CSS」与「带标签」两种形态（实测踩过，代价很大）──
+ *
+ * 客户端通过 `/style.css` 取回内容后是这样用的：
+ *
+ *     el.textContent = css      // el 是客户端自己建的 <style id="zf-style">
+ *
+ * 如果这里返回的字符串**自带 `<style id="zf-boot-css">` 与 `</style>`**，
+ * 浏览器就要把 `<style id=...>` 当成 CSS 解析 —— 这是非法起始 token，
+ * 解析器进入错误恢复，**紧随其后的 `html{...}` 规则块会被整块丢掉**。
+ *
+ * 后果极具迷惑性（实测全部命中）：
+ *   · `--zf-veil` 仍正常 —— 它是 JS 行内写的字面 rgba，不依赖样式表；
+ *   · `--zf-art-src` 计算值为空 —— 行内写的是 `var(--zf-art-<id>)`，
+ *     而被引用变量定义在**被丢掉的那个 `html{}` 块**里 → 整条属性失效；
+ *   · `.zf-rail` 等规则正常 —— 它们在文件后半段，错误恢复后能照常解析。
+ *   → 表现就是「观测栏有样式，但壁纸怎么都出不来」。
+ *
+ * 所以：`/style.css` 发**纯 CSS**；`tapIndex` 那条路才用带标签的
+ * `structureStyle()`（它插进 HTML 需要标签）。
+ */
+export function structureCss () {
   const artVars = []
   for (const [id, file] of Object.entries(BACKGROUNDS)) {
     if (file === null) continue
@@ -316,7 +339,6 @@ export function structureStyle () {
   // 一起模糊（包括正文），因为它是覆盖全屏的独立层。正确做法是把模糊作用在
   // 壁纸那一层：用一张只含壁纸的伪元素，对它自身 filter:blur()。
   return [
-    '<style id="zf-boot-css">',
     '/* 庄方宜主题 · 皮肤结构（客户端只改自定义属性） */',
     'html{',
     '  --zf-art-src:none;',
@@ -613,9 +635,18 @@ export function structureStyle () {
     // 尊重系统的减弱动效
     '@media (prefers-reduced-motion:reduce){',
     '  .zf-rail{ transition:none; }',
-    '}',
-    '</style>'
+    '}'
   ].join('\n')
+}
+
+/**
+ * 供 `tapIndex` 注入的**带标签**形态（Web 端首帧用）。
+ *
+ * 桌面端永远不执行 `tapIndex`，所以这个形态只在 Web 端出现；桌面端走
+ * `/style.css` + 客户端自插 —— 那条路必须用**纯 CSS**（见 `structureCss`）。
+ */
+export function structureStyle () {
+  return `<style id="zf-boot-css">\n${structureCss()}\n</style>`
 }
 /* ------------------------------------------------------------------ *
  * 插件主体
@@ -744,8 +775,12 @@ export function apply (ctx, config) {
         //
         // 桌面端的渲染进程直接从磁盘读 index.html（`dsh-app://` 协议），
         // 不经过 Host 的 HTTP 服务，所以 `tapIndex` 在桌面端永远不执行 ——
-        // 必须让客户端自己取这份 CSS，否则壁纸/顶栏/右栏全都不会出现。
-        const css = structureStyle()
+        // 必须让客户端自己取这份 CSS，否则壁纸/观测台全都不会出现。
+        //
+        // **必须发纯 CSS**：客户端是 `el.textContent = css`，带上 `<style>`
+        // 标签会让浏览器把标签当 CSS 解析，紧跟的 `html{}` 块被整块丢弃，
+        // `--zf-art-*` 全部失效 → 壁纸出不来（实测踩过，见 `structureCss` 注释）。
+        const css = structureCss()
         const body = Buffer.from(css, 'utf8')
         res.writeHead(200, {
           'content-type': 'text/css; charset=utf-8',

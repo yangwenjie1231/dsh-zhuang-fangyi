@@ -1978,6 +1978,40 @@ function shellDom (opts = {}) {
   ok('45% 不透明度 → 纱 alpha 0.55',
     typeof wpStrong.veil === 'string' && wpStrong.veil.includes('0.55'), wpStrong.veil)
 }
+// 用例 48：/style.css 必须是**纯 CSS**（回归：曾因带 <style> 标签导致壁纸全废）
+{
+  console.log('\n--- 样式表形态（纯 CSS vs 带标签）---')
+  const { structureCss, structureStyle } = await import('../index.js')
+  const bare = structureCss()
+  const wrapped = structureStyle()
+
+  // 这条断言如果失效，症状是「观测栏有样式但壁纸怎么都不出来」——
+  // 因为浏览器把 `<style id=...>` 当 CSS 解析，紧跟的 html{} 块被整块丢弃，
+  // 于是 --zf-art-* 全部未定义，而 JS 行内写的 var(--zf-art-<id>) 随之失效。
+  ok('structureCss 不含 <style 标签', !bare.includes('<style'))
+  ok('structureCss 不含 </style>', !bare.includes('</style>'))
+  ok('structureCss 是纯 CSS（含 html{} 与 art 变量）',
+    bare.includes('html{') && bare.includes('--zf-art-sakura') &&
+    bare.includes('html[data-zf-wallpaper]::before'))
+
+  // tapIndex 那条路需要标签包裹
+  ok('structureStyle 带 <style id="zf-boot-css"> 包裹',
+    wrapped.startsWith('<style id="zf-boot-css">') && wrapped.trimEnd().endsWith('</style>'))
+  ok('structureStyle 内含同一份 CSS', wrapped.includes(bare))
+
+  // 关键：客户端把这份文本塞进 textContent，所以绝不能带标签
+  ok('客户端拿到的形态 = 纯 CSS',
+    !wrapped.includes(bare) || !bare.includes('<style'))
+
+  // 变量定义必须落在 html{} 块里（否则行内 var() 引用解析不出来）
+  const htmlBlock = /html\{([\s\S]*?)\n\}/.exec(bare)
+  ok('html{} 块存在', htmlBlock !== null)
+  const artVarsInBlock = (htmlBlock?.[1].match(/--zf-art-[\w-]+\s*:/g) ?? []).length
+  ok('html{} 块内 art 变量齐全（≥17 个：src/size/position/repeat/scale + 8 预设×2）',
+    artVarsInBlock >= 17, String(artVarsInBlock))
+  ok('html{} 块内定义了 --zf-art-sakura',
+    (htmlBlock?.[1] ?? '').includes('--zf-art-sakura:'))
+}
 
 console.log(`\n合计 ${pass + fail} 项，通过 ${pass}，失败 ${fail}`)
 if (fail > 0) {
