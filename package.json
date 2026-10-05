@@ -3,15 +3,16 @@
   "version": "0.3.0",
   "description": "庄方宜主题 for DeepSeek Harness —— 接入官方 ctx.theme 体系（4 套配色 × 浅色/深色完整适配），附皮肤层（观测台官方右栏标签页 + 浮层兜底 / 头像气泡重绘）、官方素材壁纸与强调色色相自选。官方素材量化取色，非官方同人作品。",
   "keywords": [
-    "deepseek-harness",
     "dsh",
     "dsh-plugin",
+    "deepseek-harness",
+    "cordis",
+    "plugin",
     "theme",
     "skin",
-    "zhuang-fangyi",
-    "endfield",
-    "庄方宜",
-    "终末地"
+    "wallpaper",
+    "theme-presets",
+    "web-ui"
   ],
   "license": "MIT",
   "private": true,
@@ -30,7 +31,8 @@
     "art",
     "README.md",
     "PRIVACY.md",
-    "ASSETS-NOTICE.md"
+    "ASSETS-NOTICE.md",
+    "LICENSE"
   ],
   "engines": {
     "node": ">=20"
@@ -46,12 +48,75 @@
         "@deepseek-ai/dsh-client-ui-theme",
         "@deepseek-ai/dsh-client-locale"
       ]
+    },
+    "engines": {
+      "dsh": ">=0.2.0-rc.2"
     }
   },
   "scripts": {
     "check": "node --check index.js && node --check client.js",
     "contrast": "node src/contrast.js",
-    "test": "node --check index.js && node --check client.js && node src/contrast.js && node tools/test-client.mjs",
-    "art": "python tools/prepare-art.py"
+    "test": "node --check index.js && node --check client.js && node src/contrast.js && node tools/test-client.mjs && node tools/check-manifest.mjs",
+    "art": "python tools/prepare-art.py",
+    "manifest": "node tools/check-manifest.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/CHANGE-ME/dsh-zhuang-fangyi.git"
+  },
+  "homepage": "https://github.com/CHANGE-ME/dsh-zhuang-fangyi#readme",
+  "bugs": {
+    "url": "https://github.com/CHANGE-ME/dsh-zhuang-fangyi/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "peerDependencies": {
+    "react": "^18.2.0"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
+  },
+  "dshWorkshop": {
+    "schema": "omdsh-workshop-package/v1",
+    "type": "plugin",
+    "integration": {
+      "protocol": "harness-profile",
+      "artifact": "cordis.patch.yml"
+    },
+    "install": {
+      "mode": "transactional",
+      "adapter": "profile-bundle",
+      "failurePolicy": "generation-rollback",
+      "touchesCurrentBeforeActivation": false
+    },
+    "lifecycle": {
+      "activation": "restart-profile",
+      "dispose": "supported"
+    },
+    "permissions": [
+      "web:index-inject",
+      "web:http-route",
+      "dom:overlay"
+    ],
+    "compatibility": {
+      "dshVersions": [
+        "0.2.0-rc.2"
+      ]
+    },
+    "capability": {
+      "id": "theme-preset-system",
+      "kind": "ui",
+      "invocation": "Boot the profile's Web GUI and open Settings → 庄方宜, then read the document: document.documentElement.getAttribute('data-zf-wallpaper') names the active wallpaper, getAttribute('data-zf-font') the typeface preset, getAttribute('data-zf-font-scale') the text scale, and document.body.getAttribute('data-zf-depth') the material depth. Code blocks resolve --shiki-background to the theme's code-block colour (getComputedStyle(document.querySelector('pre.shiki')).backgroundColor is never transparent). The observation tab registers as 'dsh-zhuang-fangyi-observation' through sidebarRightTabs.",
+      "expected": "The host half registers 4 style presets × 2 schemes = 8 themes into the shell's own theme registry, and injects the first frame (theme tokens for the boot card plus a cover) while the document is still parsing, so the built-in [data-dsh-boot] card renders in theme colours rather than its defaults. Switching a preset changes the surface lightness baseline, chroma, border strength, material depth and typeface together — measurable as a base-colour luminance spread of >=0.03 (light) / >=0.002 (dark) across the four presets. Code blocks, status colours and the boot card all follow the active theme."
+    },
+    "evidence": {
+      "install": null,
+      "failureIsolation": null,
+      "hotReload": null,
+      "remove": null
+    }
   }
 }

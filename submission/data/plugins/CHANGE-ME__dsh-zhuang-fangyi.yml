@@ -1,0 +1,25 @@
+# awesome-dsh-plugin 投稿文件
+#
+# 用法：把本文件复制到列表仓的同名路径
+#     data/plugins/<owner>__dsh-zhuang-fangyi.yml
+# 然后提 PR。文件跟代码放在一起（随仓库版本化），避免与实际能力脱节。
+#
+# ⚠️ entry 允许的键**只有** url / name / category / description / tarball / file。
+#    `npm` **不许写** —— 列表自己从仓库解析 npm 包名。
+#    `tarball` 必须是 GitHub Release 上的 .tgz。
+#
+# 投稿门槛（CI 会自动查）：
+#   1. package.json 里有 dsh.bundle
+#   2. 仓库有 dsh-plugin topic
+#   3. 仓库满 1 天
+
+url: https://github.com/CHANGE-ME/dsh-zhuang-fangyi
+name: 庄方宜主题
+category: ui
+description: >-
+  《明日方舟：终末地》庄方宜主题：4 套风格预设 × 浅色/深色各自完整适配
+  （明度基调 / 色度 / 边框强度 / 材质深度 / 排版五个维度一起变），
+  接入官方 ctx.theme 体系注册 8 个主题；附官方素材壁纸（竖图自动 contain
+  不裁人）、观测台（官方右栏标签页 + 浮层兜底，六卡读数 + 运行耗时）、
+  强调色色相自选（任意色相且明度自动校正保证可读）、动效三态与干员立绘
+  启动动效。顺带修掉官方的 shiki 变量作用域 bug（代码块底色一直是白的）。
