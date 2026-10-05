@@ -47,8 +47,17 @@ export const BG_OPACITY_MAX = 45
  */
 export const SETTINGS_VERSION = 3
 
-/** 静止模式取值。`auto` = 跟随系统 `prefers-reduced-motion`。 */
-export const MOTION_MODES = ['auto', 'reduced']
+/**
+ * 动效模式取值。
+ *
+ *   `on`      强制开启动效（即使系统开了「减少动态效果」）
+ *   `auto`    跟随系统 `prefers-reduced-motion`（默认）
+ *   `reduced` 强制静止
+ *
+ * 用户反馈要「跟随系统和关闭之外还要有一个开启」—— 因为系统层面开了
+ * 减少动效、但希望这个插件仍然有动效时，`auto` 无法表达。
+ */
+export const MOTION_MODES = ['on', 'auto', 'reduced']
 
 /** 右侧观测栏宽度范围（px）。 */
 export const RAIL_WIDTH = { min: 240, max: 380, default: 288 }
@@ -69,9 +78,10 @@ export function defaultSettings () {
     heroAvatar: true,
     titlebarFollow: true,
     accentGlow: false,
-    // v3 新增：强调色色相覆盖（'preset' = 沿用预设自带强调色）+ 静止模式
+    // v3 新增：强调色色相覆盖（'preset' = 沿用预设自带强调色）+ 动效模式 + 启动动效
     accentHue: ACCENT_HUE_PRESET,
     motion: 'auto',
+    splash: true,
     // v2 新增：皮肤层（顶栏已移除，字段不再使用）
     rail: true,
     railWidth: RAIL_WIDTH.default,
@@ -106,7 +116,9 @@ export function normalizeSettings (input) {
   for (const key of [
     'contourBorder', 'potentialDots', 'heroAvatar', 'titlebarFollow', 'accentGlow',
     // v2 皮肤层（`topbar` 已随顶栏移除一并删除）
-    'rail', 'avatarBubbles'
+    'rail', 'avatarBubbles',
+    // v3：启动动效开关
+    'splash'
   ]) {
     if (typeof input[key] === 'boolean') out[key] = input[key]
   }

@@ -1154,7 +1154,10 @@ function shellDom (opts = {}) {
   ok('styleReady 为 false', module.__test.state.styleReady === false)
   // 关键：顶栏与右栏组件必须返回 null，否则 <img> 会按原始尺寸裸渲染
   const overlay = h.slotRegistrations.filter(r => r.meta.name === 'shell.overlay')
-  ok('只有右栏注册进 shell.overlay', overlay.length === 1, `实际 ${overlay.length}`)
+  // shell.overlay 现在有两个条目：启动动效（order 10）+ 右栏浮层（order 50）
+  ok('overlay 注册启动动效与右栏两个条目', overlay.length === 2, `实际 ${overlay.length}`)
+  ok('启动动效条目存在',
+    overlay.some(r => r.meta.id === 'zhuang-fangyi-splash'))
   const rail = overlay.find(r => r.meta.id === 'zhuang-fangyi-rail')
   // 用桩 React 调用组件：组件是函数，这里直接调用（桩 useState 返回初始值）
   const railOut = rail?.component?.({})
@@ -2194,8 +2197,85 @@ function shellDom (opts = {}) {
   const { structureCss } = await import('../index.js')
   const css = structureCss()
   ok('CSS 含 data-zf-motion 规则', css.includes('body[data-zf-motion="reduced"]'))
+  // 判定「不越权」要看**选择器是不是通配符**，而不是文本里有没有 `*`：
+  // `.zf-rail *{...}` 是限定在插件自己元素内的合法写法，
+  // 只有真正的 `*{...}`（前面没有其它选择器）才算越权。
   ok('静止模式不写全局 *{transition:none}（不越权）',
-    !/\*\s*\{[^}]*transition:none/.test(css))
+    !/(^|[,{}])\s*\*\s*\{[^}]*transition:\s*none/.test(css))
+  ok('开启态能压过系统的减少动效',
+    /body\[data-zf-motion="on"\][^{]*\{[^}]*animation:revert/.test(css))
+}
+// 用例 51：启动动效 + 动效三态（用户反馈驱动的两项）
+{
+  console.log('\n--- 启动动效与动效三态 ---')
+  const { structureCss } = await import('../index.js')
+  const css = structureCss()
+
+  // 1) 启动动效 CSS
+  ok('CSS 含 .zf-splash 容器', css.includes('.zf-splash{'))
+  ok('启动动效点击穿透（不挡操作）', /\.zf-splash\{[^}]*pointer-events:none/.test(css))
+  ok('立绘用 mix-blend-mode:screen 融掉黑底',
+    /\.zf-splash__art\{[^}]*mix-blend-mode:screen/.test(css))
+  ok('有一次跑完的关键帧', css.includes('@keyframes zf-splash-in'))
+  ok('动效层级高于 overlay(z-index:20)', /\.zf-splash\{[^}]*z-index:40/.test(css))
+  ok('窄屏有小图规则', css.includes('@media (max-width:900px)'))
+
+  // 2) 素材真的生成了
+  for (const f of ['splash.webp', 'splash-sm.webp']) {
+    ok(`素材 ${f} 已生成`, fs.existsSync(path.join(ROOT, 'art', f)))
+  }
+  // 白名单覆盖（否则路由 404）
+  const hostSrc = fs.readFileSync(path.join(ROOT, 'index.js'), 'utf8')
+  ok('白名单含 splash 素材',
+    hostSrc.includes("out.add('splash.webp')") && hostSrc.includes("out.add('splash-sm.webp')"))
+
+  // 3) 组件行为：注册 + 只在启用时渲染 + 播完自卸
+  const on = await boot({ ...baseSettings, splash: true })
+  const overlay = on.h.slotRegistrations.filter(r => r.meta.name === 'shell.overlay')
+  const splashReg = overlay.find(r => r.meta.id === 'zhuang-fangyi-splash')
+  ok('启动动效已注册到 shell.overlay', splashReg !== undefined)
+  const art = splashReg.component({})
+  ok('启用时渲染立绘元素', art !== null && art !== undefined, String(art))
+  ok('立绘指向 splash.webp 或 splash-sm.webp',
+    /art\/(splash|splash-sm)\.webp/.test(String(art?.children?.[0]?.props?.src)),
+    String(art?.children?.[0]?.props?.src))
+  ok('容器标记 aria-hidden（纯装饰）', art?.props?.['aria-hidden'] === 'true')
+
+  const off = await boot({ ...baseSettings, splash: false })
+  const offReg = off.h.slotRegistrations
+    .filter(r => r.meta.name === 'shell.overlay')
+    .find(r => r.meta.id === 'zhuang-fangyi-splash')
+  ok('关闭时不渲染', offReg.component({}) === null)
+
+  const dis = await boot({ ...baseSettings, splash: true, enabled: false })
+  const disReg = dis.h.slotRegistrations
+    .filter(r => r.meta.name === 'shell.overlay')
+    .find(r => r.meta.id === 'zhuang-fangyi-splash')
+  ok('插件停用时不渲染', disReg.component({}) === null)
+
+  // 4) 一次性标记：避免每次 emit 都重播
+  ok('首次渲染后标记 splashDone', on.mod.__test.state.splashDone === true)
+  ok('已播过则不重复渲染（防滑杆/配色变化时闪动效）',
+    splashReg.component({}) === null)
+
+  // 5) 动效三态
+  const set = await import('../src/settings.js')
+  ok('MOTION_MODES 是三态（on/auto/reduced）',
+    JSON.stringify(set.MOTION_MODES) === JSON.stringify(['on', 'auto', 'reduced']),
+    JSON.stringify(set.MOTION_MODES))
+  const bootOn = await boot({ ...baseSettings, motion: 'on' })
+  ok("motion=on 打 data-zf-motion='on'",
+    bootOn.h.dom.body.getAttribute('data-zf-motion') === 'on',
+    String(bootOn.h.dom.body.getAttribute('data-zf-motion')))
+  ok('非法 motion 回落 auto', set.normalizeSettings({ motion: 'bogus' }).motion === 'auto')
+  ok('v3 迁移补 splash 默认 true',
+    set.normalizeSettings({ version: 2, preset: 'wine' }).splash === true)
+
+  // 6) 滑杆：拖动只改本地、松手才提交（抖动修复的回归）
+  const src = fs.readFileSync(path.join(ROOT, 'client.js'), 'utf8')
+  ok('滑杆用 onInput 做本地即时反馈', /onInput:\s*event\s*=>\s*setLocal/.test(src))
+  ok('滑杆在松手/失焦时提交',
+    /onPointerUp:\s*event\s*=>\s*commit/.test(src) && /onBlur:\s*event\s*=>\s*commit/.test(src))
 }
 
 console.log(`\n合计 ${pass + fail} 项，通过 ${pass}，失败 ${fail}`)

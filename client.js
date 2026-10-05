@@ -88,10 +88,13 @@ window.__ModuleLoader__.load({
         accentHue: '强调色色相',
         accentHueHint: '拖动改变强调色（按钮/链接/选中态）的色相；「预设」= 用配色自带的',
         accentHuePreset: '预设',
-        motion: '静止模式',
-        motionHint: '关闭界面过渡动画（系统已开启「减少动态效果」时自动生效）',
+        splash: '启动动效',
+        splashHint: '页面加载时播放一次干员立绘入场（不拦截点击）',
+        motion: '动效',
+        motionHint: '控制界面过渡动画。「开启」会无视系统的「减少动态效果」设置强制播放',
+        motionOn: '开启',
         motionAuto: '跟随系统',
-        motionReduced: '静止',
+        motionReduced: '关闭',
         accentGlowHint: '聚焦控件时显示一层主题色柔光',
         heroAvatar: '空白页头像',
         titlebarFollow: '标题栏跟随',
@@ -160,10 +163,13 @@ window.__ModuleLoader__.load({
         accentHue: 'Accent hue',
         accentHueHint: 'Rotate the accent hue (buttons / links / selection); "Preset" keeps the palette\'s own',
         accentHuePreset: 'Preset',
-        motion: 'Reduced motion',
-        motionHint: 'Disable UI transitions (also follows the system "reduce motion" setting)',
+        splash: 'Startup animation',
+        splashHint: 'Play the operator artwork entrance once on page load (click-through)',
+        motion: 'Motion',
+        motionHint: '"On" forces transitions even when the system asks to reduce motion',
+        motionOn: 'On',
         motionAuto: 'Follow system',
-        motionReduced: 'Still',
+        motionReduced: 'Off',
         accentGlowHint: 'Show a soft accent glow on focused controls',
         heroAvatar: 'Empty-state avatar',
         titlebarFollow: 'Follow in title bar',
@@ -328,8 +334,12 @@ window.__ModuleLoader__.load({
         body.removeAttribute('data-zf-wallpaper')
       }
 
-      // 静止模式：显式开关（`auto` 交给 CSS 的 prefers-reduced-motion）
-      if (settings.motion === 'reduced') body.setAttribute('data-zf-motion', 'reduced')
+      // 动效模式：三态。
+      //   on      → 打 "on"：CSS 里显式覆盖 prefers-reduced-motion，强制播放
+      //   reduced → 打 "reduced"：关掉本插件的过渡
+      //   auto    → 不打标记，交给 CSS 的 @media (prefers-reduced-motion)
+      if (settings.motion === 'on') body.setAttribute('data-zf-motion', 'on')
+      else if (settings.motion === 'reduced') body.setAttribute('data-zf-motion', 'reduced')
       else body.removeAttribute('data-zf-motion')
 
       // 装饰
@@ -822,6 +832,8 @@ window.__ModuleLoader__.load({
         themeRoles: {},
         /** 壁纸清单（宿主下发）：`{ "wallpaper-x.webp": { fit, width, height } }`。 */
         wallpaperMeta: {},
+        /** 启动动效本次页面会话是否已播过（避免每次 emit 都闪一次）。 */
+        splashDone: false,
         layerDispose: null,
         registered: new Map(),
         heroDispose: null,
@@ -1219,7 +1231,8 @@ window.__ModuleLoader__.load({
                   railWidth: state.settings.railWidth,
                   avatarBubbles: state.settings.avatarBubbles,
                   accentHue: state.settings.accentHue,
-                  motion: state.settings.motion
+                  motion: state.settings.motion,
+                  splash: state.settings.splash !== false
                 }
           }
           await fetch(`${ROUTE}/diag`, {
@@ -1576,16 +1589,42 @@ window.__ModuleLoader__.load({
         }, options.map(opt => h('option', { key: opt.value, value: opt.value }, opt.label)))
       }
 
+      /**
+       * 滑杆。
+       *
+       * ── 为什么不能只用受控 `value` + `onChange`（用户反馈「拖动时抖动」）──
+       *
+       * 原先写的是 `value` + `onChange`，而 `onChange` 走 `save()` → `POST` →
+       * `emit()` 全量重渲染。问题在于 **`save()` 是异步的**（要等 fetch 往返），
+       * 于是「手指已经拖到下一格、但回写的还是上一格」——受控值被拖回原位，
+       * 下一帧又被拖过去，视觉上就是抖动。
+       *
+       * 修法：**拖动期间只更新本地 state**（`onInput` 即时反映，不等网络），
+       * 松手/失焦时才提交（`onChange`/`onPointerUp`/`onKeyUp`）。
+       * 这样受控值始终跟着手指走，且不会每个像素都打一次网络。
+       */
       function Slider ({ value, min, max, step, suffix, onChange }) {
+        const [local, setLocal] = useState(value)
+        // 外部值变化（如「恢复默认」）时要跟上；拖动中不会被外部覆盖，
+        // 因为此时 local 已是最新且外部 value 会跟着它走。
+        useEffect(() => { setLocal(value) }, [value])
+        const shown = typeof local === 'number' ? local : value
+        const commit = v => { if (v !== value) onChange(v) }
         return h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
           h('input', {
-            type: 'range', min, max, step, value,
-            onChange: event => onChange(Number(event.target.value)),
+            type: 'range', min, max, step,
+            value: shown,
+            // 拖动中：只改本地，不发网络
+            onInput: event => setLocal(Number(event.target.value)),
+            // 松手 / 键盘调整 / 失焦：提交
+            onChange: event => commit(Number(event.target.value)),
+            onPointerUp: event => commit(Number(event.target.value)),
+            onBlur: event => commit(Number(event.target.value)),
             style: { width: 130, accentColor: 'var(--dsw-alias-brand-primary)' }
           }),
           h('span', {
             style: { fontSize: 12, width: 44, textAlign: 'right', color: 'var(--dsw-alias-label-secondary)' }
-          }, `${value}${suffix}`)
+          }, `${shown}${suffix}`)
         )
       }
 
@@ -1709,10 +1748,13 @@ window.__ModuleLoader__.load({
                 suffix: '°',
                 onChange: v => set({ accentHue: v })
               }))),
+          h(Row, { label: t('splash'), hint: t('splashHint') },
+            h(Toggle, { value: settings.splash !== false, onChange: v => set({ splash: v }) })),
           h(Row, { label: t('motion'), hint: t('motionHint') },
             h(Segmented, {
               value: settings.motion,
               options: [
+                { value: 'on', label: t('motionOn') },
                 { value: 'auto', label: t('motionAuto') },
                 { value: 'reduced', label: t('motionReduced') }
               ],
@@ -1899,6 +1941,65 @@ window.__ModuleLoader__.load({
               },
               h('span', null, BG_LABELS[b]?.['zh'] ?? b),
               settings.background === b ? h('span', null, '✓') : null)))))
+      }
+
+      /**
+       * 启动动效（干员立绘入场）。
+       *
+       * ── 行为 ───────────────────────────────────────────────────────────
+       *
+       * 页面加载后播放一次：淡入 + 轻微放大 → 停留 → 淡出（CSS `@keyframes`
+       * 一次跑完），动画结束后**组件自行卸载**（不留空壳节点）。
+       *
+       * ── 为什么用 `state.splashDone` 而不是每次渲染都播 ────────────────
+       *
+       * 组件会因为任何 `emit()`（改设置、切配色…）重渲染。若每次都播，
+       * 用户每动一下滑杆就闪一次立绘。所以用一次性标记：本次页面会话里
+       * 只播一次。标记在 `state` 上（内存态），刷新页面才会重置。
+       *
+       * ── 不拦截点击 ────────────────────────────────────────────────────
+       *
+       * 容器 `pointer-events:none` —— 动效是过场，不该挡住用户操作
+       * （与 `shell.overlay` 的「点击穿透」设计一致）。
+       */
+      function Splash () {
+        const s = useStore()
+        const settings = s.settings
+        // 动画时长与 CSS 的 `--zf-splash-duration` 保持一致（默认 2000ms）
+        const DURATION = 2000
+
+        // ── 一次性标记在**渲染期**就置位，而不是放进 useEffect ────────────
+        //
+        // 放 effect 里会有一个真实窗口：首次渲染 → （effect 之前）若因任何
+        // 原因重渲染 → 又判定「还没播过」→ 重播一次。渲染期置位是幂等的，
+        // 这个窗口不存在。同时它让「只播一次」这条不变量在无头测试里也可断言
+        // （测试桩的 useEffect 是空实现，依赖它的话这条根本测不到）。
+        const firstPlay = state.splashDone !== true
+        if (firstPlay) state.splashDone = true
+
+        const [gone, setGone] = useState(false)
+        useEffect(() => {
+          if (!firstPlay) return undefined
+          const timer = setTimeout(() => setGone(true), DURATION + 120)
+          return () => clearTimeout(timer)
+        }, [])
+
+        if (!firstPlay || gone) return null
+        if (!state.styleReady) return null
+        if (settings === null || settings.enabled !== true) return null
+        // 显式关掉时不播；`reduced` 由 CSS 把动画干掉（也会立刻透明），
+        // 所以这里统一让组件在 DURATION 后卸载即可。
+        if (settings.splash === false) return null
+
+        const narrow = typeof window !== 'undefined' && window.innerWidth <= 900
+        const file = narrow ? 'splash-sm.webp' : 'splash.webp'
+        return h('div', { className: 'zf-splash', 'aria-hidden': 'true' },
+          h('img', {
+            className: 'zf-splash__art',
+            src: `${ROUTE}/art/${file}`,
+            alt: '',
+            decoding: 'async'
+          }))
       }
 
       /**
@@ -2230,6 +2331,11 @@ window.__ModuleLoader__.load({
       // 进 `shell.overlay` —— 外壳原生浮动层（`position:absolute; inset:0;
       // z-index:20`，子元素自动恢复 pointer-events）。`shell.overlay` 是 list
       // 槽，按 `id` 区分，不会与官方或其它插件冲突。
+      // 启动动效：叠在最上层（CSS z-index:40），点击穿透，播完自卸
+      safeInject('shell.overlay', {
+        id: 'zhuang-fangyi-splash', order: 10, locale: NS
+      }, Splash)
+
       safeInject('shell.overlay', {
         id: 'zhuang-fangyi-rail', order: 50, locale: NS
       }, Rail)

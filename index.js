@@ -181,6 +181,9 @@ function artWhitelist () {
   }
   out.add('contour.webp')
   out.add('avatar.webp')
+  // 启动动效用的干员立绘（tools/prepare-splash.py 产出）
+  out.add('splash.webp')
+  out.add('splash-sm.webp')
   out.add('icon.svg')
   out.add('favicon.svg')
   for (let i = 1; i <= 8; i += 1) out.add(`icons/spot-${i}.svg`)
@@ -686,19 +689,73 @@ export function structureCss () {
     '}',
     // 视口过窄时藏掉右栏，避免挤压中栏
     '@media (max-width:1180px){ .zf-rail{ display:none; } }',
-    // 尊重系统的减弱动效（自动）
-    '@media (prefers-reduced-motion:reduce){',
-    '  .zf-rail{ transition:none; }',
+    /* ── 启动动效（干员立绘入场）────────────────────────────────────────
+     *
+     * 立绘是**黑底**（源图四角 rgb(0,0,0)），所以用 `mix-blend-mode:screen`
+     * 把黑融进界面 —— 这比抠图干净：边缘的笔触/光效都保留，且不需要 alpha。
+     *
+     * 层级：`z-index:40`，在 overlay(20) 之上、但**不拦截点击**
+     * （`pointer-events:none`）—— 动效只是过场，不该挡住用户操作。
+     *
+     * 动画由 `animation` 一次跑完：淡入 + 轻微放大 → 停留 → 淡出。
+     * `animation-fill-mode:forwards` 保证结束后停在透明态；
+     * 组件随后自行卸载（见 client.js 的 Splash）。
+     */
+    '.zf-splash{',
+    '  position:fixed;inset:0;z-index:40;pointer-events:none;',
+    '  display:flex;align-items:center;justify-content:center;',
+    '  background:transparent;overflow:hidden;',
     '}',
-    // 静止模式（显式开关，对标 Mornye 的「静止模式」）：
-    // 只关本插件自己声明的过渡，不去全局 * { transition:none } ——
-    // 那会连外壳的动画一起干掉，属于越权。
+    '.zf-splash__art{',
+    '  max-width:min(88vw, 1100px);max-height:88vh;object-fit:contain;',
+    '  mix-blend-mode:screen;',      /* 黑底融掉，只留立绘 */
+    '  filter:drop-shadow(0 24px 60px rgba(0,0,0,.55));',
+    '  animation:zf-splash-in var(--zf-splash-duration, 2000ms) ease-out forwards;',
+    '}',
+    '@keyframes zf-splash-in{',
+    '  0%{ opacity:0; transform:scale(1.06); }',
+    '  18%{ opacity:1; transform:scale(1); }',
+    '  72%{ opacity:1; transform:scale(1.01); }',
+    '  100%{ opacity:0; transform:scale(1.03); }',
+    '}',
+    // 窄屏换小图（省解码时间）
+    '@media (max-width:900px){ .zf-splash__art{ max-width:94vw; } }',
+
+    /* ── 动效三态（用户反馈：除了「跟随系统」和「关闭」还要有「开启」）──
+     *
+     *   on      强制开启动效 —— 即使系统开了「减少动态效果」也照常播放
+     *   auto    跟随系统（默认）
+     *   reduced 强制静止
+     *
+     * 三态由 `body[data-zf-motion]` 驱动，**不写全局** `*{transition:none}`
+     * —— 那会连外壳的动画一起干掉，属于越权。只作用于本插件自己的元素。
+     */
+    // ① 静止：关掉本插件声明过的过渡与动画
     'body[data-zf-motion="reduced"] .zf-rail,',
     'body[data-zf-motion="reduced"] .zf-rail *,',
+    'body[data-zf-motion="reduced"] .zf-nav,',
     'body[data-zf-motion="reduced"] .zf-nav *,',
-    'body[data-zf-motion="reduced"] [data-zf-wallpaper]{',
+    'body[data-zf-motion="reduced"] .zf-splash,',
+    'body[data-zf-motion="reduced"] .zf-splash *{',
     '  transition:none !important;',
     '  animation:none !important;',
+    '}',
+    // ② 跟随系统：系统要求减少动效时，同「静止」
+    '@media (prefers-reduced-motion:reduce){',
+    '  .zf-rail, .zf-rail *, .zf-nav, .zf-nav *, .zf-splash, .zf-splash *{',
+    '    transition:none !important;',
+    '    animation:none !important;',
+    '  }',
+    '}',
+    // ③ 开启：显式压过系统的减少动效（放在 @media 之后，靠选择器特异性 + 顺序取胜）
+    'body[data-zf-motion="on"] .zf-rail,',
+    'body[data-zf-motion="on"] .zf-rail *,',
+    'body[data-zf-motion="on"] .zf-nav,',
+    'body[data-zf-motion="on"] .zf-nav *,',
+    'body[data-zf-motion="on"] .zf-splash,',
+    'body[data-zf-motion="on"] .zf-splash *{',
+    '  transition:revert !important;',
+    '  animation:revert !important;',
     '}'
   ].join('\n')
 }
