@@ -90,10 +90,40 @@ def fit_width(im, max_width=MAX_WIDTH):
     return im.resize((max_width, height), Image.LANCZOS)
 
 
+def mean_luma(im):
+    """整图平均亮度（0~1）。用于让暗色版的压暗系数**随图自适应**。
+
+    固定系数 `DARK_BRIGHTNESS=0.62` 的问题（用户评估反馈）：对本身就是暗调
+    的图（如「暗调水面月影」）再乘 0.62 会压得漆黑一片，细节全丢。
+    """
+    small = im.convert('L').resize((64, 64))
+    px = list(small.getdata())
+    return sum(px) / (len(px) * 255.0)
+
+
 def darken(im):
-    """压暗一版，供深色主题使用。"""
-    out = ImageEnhance.Brightness(im).enhance(DARK_BRIGHTNESS)
-    return ImageEnhance.Color(out).enhance(DARK_SATURATION)
+    """压暗一版，供深色主题使用。
+
+    系数按**源图平均亮度**自适应：
+      · 天然暗图（luma ≤ 0.28）→ 基本不压（0.92），只微降饱和；
+      · 中等亮度 → 线性过渡到 0.62；
+      · 亮图（luma ≥ 0.60）→ 全额 0.62。
+    这样每张图暗色版的目标亮度大致落在同一区间，而不是被同一个系数
+    压成深浅不一。
+    """
+    luma = mean_luma(im)
+    lo, hi = 0.28, 0.60
+    if luma <= lo:
+        factor = 0.92
+    elif luma >= hi:
+        factor = DARK_BRIGHTNESS
+    else:
+        t = (luma - lo) / (hi - lo)
+        factor = 0.92 + (DARK_BRIGHTNESS - 0.92) * t
+    out = ImageEnhance.Brightness(im).enhance(factor)
+    # 饱和度也反向自适应：已经很暗的图再降饱和会更脏，轻一点
+    sat = DARK_SATURATION if luma > lo else 0.94
+    return ImageEnhance.Color(out).enhance(sat)
 
 
 def save_webp(im, name, quality=86):

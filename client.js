@@ -247,7 +247,8 @@ window.__ModuleLoader__.load({
 
       const hasWallpaper = settings.background !== 'none'
       if (hasWallpaper) {
-        const alpha = Math.max(0, Math.min(30, settings.backgroundOpacity)) / 100
+        // 上限 45 与 settings.js 的 BG_OPACITY_MAX 一致（client 是手写 bundle 不能 import）
+          const alpha = Math.max(0, Math.min(45, settings.backgroundOpacity)) / 100
         const blur = Math.max(0, Math.min(16, settings.backgroundBlur))
         const pos = POSITIONS.includes(settings.backgroundPosition) ? settings.backgroundPosition : 'cover'
 
@@ -306,7 +307,7 @@ window.__ModuleLoader__.load({
       }
       const preset = roles?.[settings.preset]?.[scheme]
       if (preset !== undefined && settings.background !== 'none') {
-        const keep = 1 - Math.max(0, Math.min(30, settings.backgroundOpacity)) / 100
+        const keep = 1 - Math.max(0, Math.min(45, settings.backgroundOpacity)) / 100
         document.documentElement.style.setProperty('--zf-veil', toRgba(preset.base, keep))
         document.documentElement.style.setProperty('--zf-veil-sidebar', toRgba(preset.sidebar, keep))
       }
@@ -576,6 +577,8 @@ window.__ModuleLoader__.load({
           (typeof window !== 'undefined' ? window.innerWidth : 1600) >= 1180
         state.railShown = wantRail
         if (body !== null) body.setAttribute('data-zf-rail', wantRail ? 'on' : 'off')
+        // 与 `settings.js` 的 RAIL_WIDTH 保持一致（client.js 是手写 bundle、
+        // 不能 import，所以这里用字面量并在测试里断言两边相等）。
         const width = Math.max(240, Math.min(380, Number(s?.railWidth) || 288))
         doc.documentElement.style.setProperty('--zf-rail-width', `${width}px`)
 
@@ -652,6 +655,17 @@ window.__ModuleLoader__.load({
       const slots = ctx.slots
       const locale = ctx.locale
 
+      // 窗口重新获得焦点时重拉设置（见 `resyncSettings` 的说明）。
+      // `focusin` 比 `focus` 更稳：后者在某些 Electron 场景不冒泡。
+      if (typeof window !== 'undefined') {
+        window.addEventListener('focusin', resyncSettings)
+        window.addEventListener('online', resyncSettings)
+        ctx.effect(() => () => {
+          window.removeEventListener('focusin', resyncSettings)
+          window.removeEventListener('online', resyncSettings)
+        }, 'zhuang-fangyi: resync listeners')
+      }
+
       /** 文案读取器。 */
       const t = key => {
         try {
@@ -703,7 +717,10 @@ window.__ModuleLoader__.load({
          * 记「组件被调用几次」与「每次为什么返回 null」，这样自检能直接回答
          * 「为什么观测栏没出现」，不必靠推理 React 时序（踩过这个坑）。
          */
-        renderCounts: { railCalls: 0, railNull: 0, railRendered: 0, lastNullReason: null },
+        renderCounts: {
+          railCalls: 0, railNull: 0, railRendered: 0, lastNullReason: null,
+          tabCalls: 0, tabNull: 0, tabRendered: 0, lastTabNullReason: null
+        },
         /** 官方右栏 tab 是否注册成功（true 时浮层兜底不再渲染）。 */
         tabRegistered: false,
         /** tab 的两个 disposer（阶段一 / 阶段二各一个，卸载时都要释放）。 */
@@ -1011,6 +1028,39 @@ window.__ModuleLoader__.load({
         await reportDiag()
       }
 
+      /**
+       * 重新从宿主拉取设置（**不重建主题注册**，只刷新状态）。
+       *
+       * ── 为什么需要它（实测发现的设计缺陷）──────────────────────────────
+       *
+       * 客户端原先只在启动时 `load()` 一次。之后：
+       *   · 通过**设置页**改 → 客户端自己改 `state.settings` 再 `applySettings()` → 正常；
+       *   · 通过**其它途径**改宿主设置（HTTP 直接 POST、手改 settings.json、
+       *     将来桌宠插件写入）→ **客户端永远不知道**。
+       *
+       * 实测证明：HTTP 把 `background` 改成 `sakura/25%` 返回 200，但客户端
+       * 自检里 `background` 仍是 `none`、`artSrc` 为空 —— 界面上毫无变化。
+       *
+       * 修法：窗口**重新获得焦点**时拉一次。这覆盖了「另一个窗口改了设置」
+       * 这个主要场景，成本极低（一个事件监听 + 一次 GET），且不需要双向通道。
+       *
+       * 刻意**不重建主题注册**（`registerThemes`）—— 主题定义没变，重建会
+       * 触发一次无意义的卸载/重挂，可能闪一下配色。
+       */
+      async function resyncSettings () {
+        if (state.settings === null) return // 首次 load 还没完成，它会自己走完
+        try {
+          const payload = await api('/settings')
+          const incoming = payload?.settings
+          if (incoming === undefined || incoming === null) return
+          // 值没变就不做任何事（避免无谓的 emit 与重渲染）
+          if (JSON.stringify(incoming) === JSON.stringify(state.settings)) return
+          state.settings = incoming
+          applySettings()
+          emit()
+        } catch { /* 同步失败不打断任何功能，下次焦点再试 */ }
+      }
+
       async function save (patch) {
         const next = { ...(state.settings ?? {}), ...patch }
         state.settings = next
@@ -1310,7 +1360,7 @@ window.__ModuleLoader__.load({
             })),
           h(Row, { label: t('opacity') },
             h(Slider, {
-              value: settings.backgroundOpacity, min: 0, max: 30, step: 1, suffix: '%',
+              value: settings.backgroundOpacity, min: 0, max: 45, step: 1, suffix: '%',
               onChange: v => set({ backgroundOpacity: v })
             })),
           h(Row, { label: t('blur') },
@@ -1497,11 +1547,43 @@ window.__ModuleLoader__.load({
        */
       function RailTab () {
         const s = useStore()
-        if (!state.styleReady) return null
-        if (s.settings === null || s.settings.enabled !== true || s.settings.rail === false) return null
-        // 官方 tab 已经提供了容器（边框/背景/滚动），所以这里只要内容，
+        // 与浮层问**同一个** `railOwner()` —— 两条路径不可能同时让位
+        // （实测踩过：各自判断导致两边都不渲染，界面全黑）
+        const rc = state.renderCounts
+        const owner = railOwner()
+        if (owner !== 'tab') {
+          rc.tabNull += 1; rc.lastTabNullReason = owner
+          return null
+        }
+        rc.tabRendered += 1
+        // 官方 tab 已经提供了容器（背景/边框/滚动），所以这里只要内容。
         // 用 `zf-rail__body` 而不是 `.zf-rail`（后者带 fixed 定位与面板背景）。
         return h(RailContent)
+      }
+
+      /**
+       * 观测台该由哪条路径渲染。
+       *
+       * ── 为什么需要这个函数（实测踩过：两条路径互相让位，结果都不渲染）──
+       *
+       * 原先是各自判断：浮层看 `state.tabRegistered` 决定要不要让位，官方 tab
+       * 由外壳决定。问题出在**状态不一致**：`tabRegistered` 会在卸载时被重置为
+       * false，而浮层组件的 `lastNullReason` 还停在 `official-tab-active` ——
+       * 于是浮层以为 tab 在干活、tab 其实没注册，**两边都不渲染，界面全黑**。
+       *
+       * 修法：把「谁渲染」收敛成**一个纯函数**，两条路径都问它，不可能同时让位。
+       * 判定依据是**当下的事实**（tabRegistered 且 disposer 都还在），不是历史。
+       *
+       * @returns {'tab'|'overlay'|'none'}
+       */
+      function railOwner () {
+        const s = state.settings
+        if (s === null || s.enabled !== true || s.rail === false) return 'none'
+        if (!state.styleReady) return 'none'
+        // 官方 tab 真正活着才算接管（两个 disposer 都在）
+        const tabAlive = state.tabRegistered === true &&
+          state.tabTypeDispose !== null && state.tabBodyDispose !== null
+        return tabAlive ? 'tab' : 'overlay'
       }
 
       /**
@@ -1512,29 +1594,17 @@ window.__ModuleLoader__.load({
        */
       function Rail () {
         const s = useStore()
-        // 渲染诊断：自检里直接看这三个数就知道卡在哪一步
+        // 渲染诊断：自检里直接看这几个数就知道卡在哪一步
         const rc = state.renderCounts
         rc.railCalls += 1
-        if (!state.styleReady) {
-          rc.railNull += 1; rc.lastNullReason = 'styleReady=false'
-          return null
-        }
-        // 官方 tab 已接管 → 浮层不再渲染（避免两份内容同时出现）
-        if (state.tabRegistered === true) {
-          rc.railNull += 1; rc.lastNullReason = 'official-tab-active'
+        const owner = railOwner()
+        if (owner !== 'overlay') {
+          rc.railNull += 1; rc.lastNullReason = owner === 'tab' ? 'official-tab-active' : 'rail-off'
           return null
         }
         const settings = s.settings
         if (settings === null) {
           rc.railNull += 1; rc.lastNullReason = 'settings=null'
-          return null
-        }
-        if (settings.enabled !== true) {
-          rc.railNull += 1; rc.lastNullReason = 'enabled=false'
-          return null
-        }
-        if (settings.rail === false) {
-          rc.railNull += 1; rc.lastNullReason = 'rail=false'
           return null
         }
         rc.railRendered += 1
@@ -1734,6 +1804,11 @@ window.__ModuleLoader__.load({
           }
         }
         state.tabRegistered = false
+        // `tabDiag` 是**诊断快照**，卸载时也要复位，否则自检会同时报出
+        // `ok:true` 与 `registered:false` 这种自相矛盾的结果（实测遇到过：
+        // HMR 重载后旧实例的 ok 残留，让我误判成「注册成功又失效」）。
+        state.tabDiag.ok = false
+        state.tabDiag.error = null
         state.listeners.clear()
       }, 'zhuang-fangyi: teardown')
 
@@ -1743,6 +1818,12 @@ window.__ModuleLoader__.load({
         DICT, PRESETS, SCHEMES, BACKGROUNDS, POSITIONS,
         // 供无头测试直接验证定位/打标逻辑
         makeModuleClass, makeMarker, readSessionState, readStats, nativeRightbarOpen,
+        // 观测台路径裁决与设置同步（用例 41/42）
+        railOwner, resyncSettings,
+        // 让测试能模拟「宿主设置被外部改动」：stub fetch 下一次 /settings 的返回
+        setNextSettings (next) {
+          globalThis.__zfNextSettings = next
+        },
         // 运行时状态：用于断言 styleReady 等门控（样式表失败时顶栏/右栏不渲染）
         state
       }

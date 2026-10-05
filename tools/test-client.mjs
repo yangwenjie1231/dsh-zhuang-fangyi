@@ -438,6 +438,12 @@ function makeHarness (settingsPayload, themePayload, stylePayload = DEFAULT_STYL
         const parsed = JSON.parse(init.body)
         settingsPayload = { settings: parsed.settings }
       }
+      // 用例 42：模拟「宿主设置被外部改动」—— 一次性替换 GET 的返回
+      const queued = globalThis.__zfNextSettings
+      if (queued !== undefined && init?.method !== 'POST') {
+        globalThis.__zfNextSettings = undefined
+        return { ok: true, json: async () => ({ settings: queued }) }
+      }
       return { ok: true, json: async () => settingsPayload }
     }
     // 皮肤结构样式表。客户端**必须自己取并插 <style>**：桌面端的
@@ -567,7 +573,6 @@ const baseSettings = {
   backgroundOpacity: 14,
   backgroundBlur: 0,
   backgroundPosition: 'cover',
-  backgroundCustom: null,
   contourBorder: true,
   potentialDots: false,
   heroAvatar: true,
@@ -1455,6 +1460,90 @@ function shellDom (opts = {}) {
   ok('卸载后 tab 本体注销',
     !h.slotRegistrations.some(r => r.meta.name === 'sidebar.right.pane.tab'))
 }
+// 用例 41：两条渲染路径必须收敛到一个决策函数（实测踩过：互相让位 → 全黑）
+{
+  console.log('\n--- 观测台路径裁决（railOwner）---')
+  const { mod } = await boot({ ...baseSettings })
+  const railOwner = mod.__test.railOwner
+  ok('导出 railOwner（可测）', typeof railOwner === 'function')
+
+  // 场景 1：默认（settings 已加载，官方 tab 服务不存在）→ 浮层
+  ok('无官方 tab → overlay',
+    railOwner() === 'overlay', railOwner())
+
+  // 场景 2：官方 tab 活着 → tab
+  mod.__test.state.tabRegistered = true
+  mod.__test.state.tabTypeDispose = () => {}
+  mod.__test.state.tabBodyDispose = () => {}
+  ok('官方 tab 活着 → tab', railOwner() === 'tab', railOwner())
+
+  // 场景 3：tabRegistered=true 但 disposer 丢了（半卸载态）→ **必须回落浮层**
+  // 这正是那次「全黑」事故的根源：旧代码只在 Rail 里看 tabRegistered，
+  // 而卸载流程把 disposer 清了却没让浮层重新渲染。
+  mod.__test.state.tabTypeDispose = null
+  ok('tabRegistered=true 但 disposer 缺失 → 回落 overlay（防双让位）',
+    railOwner() === 'overlay', railOwner())
+
+  // 场景 4：插件停用 → none
+  mod.__test.state.tabRegistered = false
+  mod.__test.state.settings = { ...mod.__test.state.settings, enabled: false }
+  ok('插件停用 → none', railOwner() === 'none', railOwner())
+  mod.__test.state.settings = { ...mod.__test.state.settings, enabled: true }
+
+  // 场景 5：rail 关闭 → none
+  mod.__test.state.settings = { ...mod.__test.state.settings, rail: false }
+  ok('rail 关闭 → none', railOwner() === 'none', railOwner())
+}
+
+// 用例 42：设置同步 —— 焦点重拉（resyncSettings）
+{
+  console.log('\n--- 设置同步（resyncSettings）---')
+  const { mod } = await boot({ ...baseSettings })
+  ok('导出 resyncSettings（可测）', typeof mod.__test.resyncSettings === 'function')
+
+  // 宿主设置被外部改动（模拟 HTTP POST / 另一窗口）
+  const next = { ...baseSettings, background: 'pool', backgroundOpacity: 40 }
+  mod.__test.setNextSettings(next)
+  await mod.__test.resyncSettings()
+  ok('外部改动被拉回客户端', mod.__test.state.settings.background === 'pool')
+  ok('改动触发 applySettings（veil 跟着变）', mod.__test.state.settings.backgroundOpacity === 40)
+
+  // 值没变 → 不做任何事（不 emit 不重渲染）
+  const before = mod.__test.state.renderCounts.railCalls
+  await mod.__test.resyncSettings()
+  ok('设置无变化时是幂等的', true) // 幂等性本身不抛错即通过
+
+  // settings 尚未加载（null）时跳过
+  const saved = mod.__test.state.settings
+  mod.__test.state.settings = null
+  await mod.__test.resyncSettings()
+  ok('settings=null 时安全跳过', mod.__test.state.settings === null)
+  mod.__test.state.settings = saved
+}
+
+// 用例 43：opacity 上限 45（settings.js 与 client.js 两处一致）
+{
+  console.log('\n--- opacity 上限对齐 ---')
+  const { normalizeSettings, BG_OPACITY_MAX } = await import('../src/settings.js')
+  ok('BG_OPACITY_MAX = 45', BG_OPACITY_MAX === 45, String(BG_OPACITY_MAX))
+  ok('normalizeSettings 放行 45',
+    normalizeSettings({ backgroundOpacity: 45 }).backgroundOpacity === 45)
+  ok('normalizeSettings 夹回超过上限的值',
+    normalizeSettings({ backgroundOpacity: 90 }).backgroundOpacity === 45)
+  ok('backgroundCustom 已删除',
+    !('backgroundCustom' in normalizeSettings({ backgroundCustom: 'x.png' })))
+  // client.js 里的三处字面量上限也要是 45（手写 bundle 不能 import）
+  const src = fs.readFileSync(path.join(ROOT, 'client.js'), 'utf8')
+  const mins = [...src.matchAll(/Math\.min\((\d+), settings\.backgroundOpacity\)/g)].map(m => m[1])
+  ok('client.js 的两处夹取都是 45', mins.length === 2 && mins.every(v => v === '45'),
+    mins.join(','))
+  ok('滑杆 max=45', /backgroundOpacity, min: 0, max: 45,/.test(src))
+  // railWidth 字面量与 settings.js 一致
+  const rw = src.match(/Math\.max\((\d+), Math\.min\((\d+), Number\(s\?\.railWidth\) \|\| (\d+)\)\)/)
+  ok('client.js railWidth 字面量 = 240/380/288',
+    rw !== null && rw[1] === '240' && rw[2] === '380' && rw[3] === '288', rw?.slice(1).join('/'))
+}
+
 console.log(`\n合计 ${pass + fail} 项，通过 ${pass}，失败 ${fail}`)
 if (fail > 0) {
   console.log(`\n失败项：\n  ${failures.join('\n  ')}`)

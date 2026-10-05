@@ -25,7 +25,16 @@ export const BACKGROUNDS = {
 /** 背景定位方式。 */
 export const POSITIONS = ['cover', 'right', 'tile']
 
-/** 设置结构版本。v2 加入顶栏 / 右侧观测栏 / 头像气泡重绘。 */
+/**
+ * 背景不透明度上限。
+ *
+ * 原 30% 是在「alpha 连乘」bug 未修时的保守值 —— 那时纱层叠了好几层，
+ * 30% 之外的都看不清正文。连乘修掉后（body/frame/content 全透明、
+ * 纱只上一次），30% 就成了无谓的天花板：实测 45% 在亮色下正文依然清晰。
+ */
+export const BG_OPACITY_MAX = 45
+
+/** 设置结构版本。v2 加入观测栏 / 头像气泡重绘（顶栏已移除）。 */
 export const SETTINGS_VERSION = 2
 
 /** 右侧观测栏宽度范围（px）。 */
@@ -42,7 +51,6 @@ export function defaultSettings () {
     backgroundOpacity: 14,
     backgroundBlur: 0,
     backgroundPosition: 'cover',
-    backgroundCustom: null,
     contourBorder: true,
     potentialDots: false,
     heroAvatar: true,
@@ -74,12 +82,11 @@ export function normalizeSettings (input) {
   if (typeof input.background === 'string' && input.background in BACKGROUNDS) {
     out.background = input.background
   }
-  out.backgroundOpacity = clamp(input.backgroundOpacity, 0, 30, base.backgroundOpacity)
+  out.backgroundOpacity = clamp(input.backgroundOpacity, 0, BG_OPACITY_MAX, base.backgroundOpacity)
   out.backgroundBlur = clamp(input.backgroundBlur, 0, 16, base.backgroundBlur)
   if (POSITIONS.includes(input.backgroundPosition)) out.backgroundPosition = input.backgroundPosition
-  if (typeof input.backgroundCustom === 'string' && input.backgroundCustom.length > 0) {
-    out.backgroundCustom = input.backgroundCustom
-  }
+  // `backgroundCustom` 已删除：它是个从未实现的死字段 —— 白名单只认固定
+  // 16 张图，没有任何代码读它。旧设置文件里若有，会在归一化时被安全丢弃。
   for (const key of [
     'contourBorder', 'potentialDots', 'heroAvatar', 'titlebarFollow', 'accentGlow',
     // v2 皮肤层（`topbar` 已随顶栏移除一并删除）
