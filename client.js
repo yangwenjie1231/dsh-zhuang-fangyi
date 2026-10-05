@@ -673,6 +673,31 @@ window.__ModuleLoader__.load({
     const FONT_SCALES = [0.95, 1, 1.05]
 
     /**
+     * 当前生效的明暗**是否深色**。
+     *
+     * ── 为什么从 DOM 读，而不是「算好存进 state」──────────────────────
+     *
+     * 第一版想的是「在 `applyStyleVars` 里算好存进 `state.scheme`，组件读它」。
+     * 那**不可行**：`applyStyleVars` 位于模块作用域，`state` 定义在 `apply()`
+     * 内 —— 直接写会得到 `state is not defined`（同一类错误在这个文件里
+     * 已经踩过两次：`syncSchemeWallpaper` 的 `state`、`presetDepth`）。
+     *
+     * 正确的判据其实**已经在 DOM 上**：外壳 presenter 把当前配色方案投成
+     * `body[data-ds-dark-theme]`，而 `currentScheme(theme)` 的**第一个判据
+     * 就是它**（源码实测）。在组件里读同一个属性，结果与实际渲染的壁纸
+     * 必然一致，还免去拿 theme 服务与处理 `system` 档的麻烦。
+     *
+     * @param {object} settings
+     * @returns {boolean}
+     */
+    function isDarkActive (settings) {
+      try {
+        if (document.body?.hasAttribute?.('data-ds-dark-theme') === true) return true
+      } catch { /* 无 DOM：走兜底 */ }
+      return settings?.scheme === 'dark'
+    }
+
+    /**
      * 从设置算出要写的两个排版属性。
      *
      * ⚠️ 必须是**模块作用域**：`applyStyleVars`（也在模块作用域）要用它。
@@ -1841,10 +1866,9 @@ window.__ModuleLoader__.load({
             h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6, justifyContent: 'flex-end', maxWidth: 300 } },
               ...BACKGROUNDS.map(b => {
                 const pressed = settings.background === b
-                const dark = settings.scheme === 'dark' ||
-                  (settings.scheme === 'system' &&
-                    document.body?.getAttribute?.('data-ds-dark-theme') != null)
-                const file = b === 'none' ? null : `wallpaper-${b}${dark ? '-dark' : ''}.webp`
+                const file = b === 'none'
+                  ? null
+                  : `wallpaper-${b}${isDarkActive(settings) ? '-dark' : ''}.webp`
                 // 本预设的推荐壁纸 —— **只标记，不自动应用**。
                 // 用户明确要求：配套壁纸仅作推荐，切换预设不改 settings.background。
                 const recommended = isRecommendedArt(state.presetStyles, settings.preset, b)
@@ -2116,24 +2140,45 @@ window.__ModuleLoader__.load({
           h('div', { className: 'zf-rail__group' },
             h('div', { className: 'zf-rail__label' }, t('groupWallpaper')),
             h('div', { className: 'zf-rail__row' },
-              h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } }, t('bgOpacity')),
+              // ⚠️ 键名是 `opacity` 不是 `bgOpacity` —— 写错时 `t()` 会原样
+              // 返回键名，界面上直接显示 "bgOpacity"（用户截图里就是这样）。
+              h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } }, t('opacity')),
               h('span', { className: 'zf-rail__value' }, `${settings.backgroundOpacity}%`)),
-            h('div', { className: 'zf-rail__swatches' },
-              ...BACKGROUNDS.filter(b => b !== 'none').map(b => h('button', {
-                key: b,
+            // ── 壁纸选择：**缩略图网格**（取代原先的全宽文字列表）──────
+            //
+            // 原先每张壁纸占一整行、只显示名字 —— 8 张就是 8 行，把观测栏撑得
+            // 又长又空，而且**看不出壁纸长什么样**（用户截图反馈「有点丑」）。
+            // 设置页早就用了缩略图网格（64×40，直接可见），这里保持一致：
+            // 3 列网格一屏放得下，同时修掉「显示原始 id」那个 bug。
+            h('div', { className: 'zf-rail__artgrid' },
+              ...BACKGROUNDS.filter(b => b !== 'none').map(b => {
+                const pressed = settings.background === b
+                // 明暗从 DOM 读（与壁纸同步同一判据，必然一致）
+                const file = `wallpaper-${b}${isDarkActive(settings) ? '-dark' : ''}.webp`
+                const recommended = isRecommendedArt(state.presetStyles, settings.preset, b)
+                const label = t(BG_LABELS[b])
+                return h('button', {
+                  key: b,
+                  type: 'button',
+                  className: recommended ? 'zf-rail__art zf-art-recommended' : 'zf-rail__art',
+                  'data-zf-recommended': recommended ? 'true' : undefined,
+                  title: recommended ? `${label}${t('presetRecommend')}` : label,
+                  'aria-label': recommended ? `${label}${t('presetRecommend')}` : label,
+                  'aria-pressed': pressed ? 'true' : 'false',
+                  onClick: () => set({ background: pressed ? 'none' : b })
+                },
+                h('img', { src: `${ROUTE}/art/thumbs/${file}`, alt: '', loading: 'lazy' }))
+              }),
+              // 「无」（清空壁纸）：与其它项同尺寸，保持网格整齐
+              h('button', {
+                key: 'none',
                 type: 'button',
-                // 与设置页一致：推荐项加圆点标记（纯提示，不自动切换）
-                className: isRecommendedArt(state.presetStyles, settings.preset, b)
-                  ? 'zf-rail__swatch zf-art-recommended'
-                  : 'zf-rail__swatch',
-                'data-zf-recommended': isRecommendedArt(state.presetStyles, settings.preset, b)
-                  ? 'true'
-                  : undefined,
-                'aria-pressed': settings.background === b ? 'true' : 'false',
-                onClick: () => set({ background: settings.background === b ? 'none' : b })
-              },
-              h('span', null, BG_LABELS[b]?.['zh'] ?? b),
-              settings.background === b ? h('span', null, '✓') : null)))))
+                className: 'zf-rail__art zf-rail__art--none',
+                'aria-pressed': settings.background === 'none' ? 'true' : 'false',
+                'aria-label': t('bgNone'),
+                title: t('bgNone'),
+                onClick: () => set({ background: 'none' })
+              }, h('span', null, t('bgNone'))))))
       }
 
       /**
@@ -2688,7 +2733,7 @@ window.__ModuleLoader__.load({
         // 观测台路径裁决与设置同步（用例 41/42），以及官方 tab 的自动打开（用例 44）
         railOwner, resyncSettings, maybeOpenRailTab, resetToDefaults, reloadThemes, save,
         formatElapsed, trackSessionSince, bootScreenGone, presetDepth, isRecommendedArt,
-        fontAttrsFor, FONT_FAMILIES, FONT_SCALES,
+        fontAttrsFor, FONT_FAMILIES, FONT_SCALES, isDarkActive,
         // 让测试能模拟「宿主设置被外部改动」：stub fetch 下一次 /settings 的返回
         setNextSettings (next) {
           globalThis.__zfNextSettings = next

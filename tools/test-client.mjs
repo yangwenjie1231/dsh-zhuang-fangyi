@@ -2726,8 +2726,11 @@ function shellDom (opts = {}) {
   const csrc = fs.readFileSync(path.join(ROOT, 'client.js'), 'utf8')
   const dup = (csrc.match(/presetStyles\?\.\[settings\.preset\]\?\.background/g) ?? []).length
   ok('组件里不再重复写判定表达式（已收敛到纯函数）', dup === 0, `仍有 ${dup} 处`)
-  ok('isRecommendedArt 有 3 处调用（设置页 1 + 观测栏 2）',
-    (csrc.match(/isRecommendedArt\(/g) ?? []).length >= 3)
+  // 每个使用点**调一次、结果复用**（原先观测栏对同一判断调了两次：一次给
+  // className、一次给 data-*）。所以是 2 处（设置页 1 + 观测栏 1）。
+  ok('isRecommendedArt 每个使用点只调一次（结果复用，不重复求值）',
+    (csrc.match(/isRecommendedArt\(/g) ?? []).length === 2,
+    `实测 ${(csrc.match(/isRecommendedArt\(/g) ?? []).length} 处`)
 
   // 8) CSS 侧：推荐标记的小圆点必须还原 corner-shape
   //    外壳全局给 *,:before,:after 设了 superellipse(1.5)，不还原会变方圆角
@@ -3151,6 +3154,83 @@ function shellDom (opts = {}) {
     .filter(f => !fs.existsSync(path.join(ROOT, 'art', f)))
   ok('CSS 引用的每个素材文件都存在',
     badRefs.length === 0, badRefs.slice(0, 4).join(', '))
+}
+// 用例 64：文案映射的两种结构不能混用（用户截图发现的真 bug）
+//
+// 截图里观测栏显示了一排原始 id（`sakura` / `promo` / `pool` …）和一个
+// 原始键名（`bgOpacity`）。两个根因：
+//
+//   ① `BG_LABELS` 的值是 **DICT 键**（`sakura: 'bgSakura'`），必须走 `t()`；
+//      而 `PRESET_LABELS` 才是 `{zh, en}` 结构。混用后 `BG_LABELS[b]?.['zh']`
+//      取到 undefined → 回落到原始 id。
+//   ② `t('bgOpacity')` 的键不存在（DICT 里是 `opacity`）—— `t()` 在键缺失时
+//      **原样返回键名**，于是界面直接显示 "bgOpacity"。
+//
+// 这类 bug 不会报错、不会崩，只是**显示错的内容** —— 只能靠断言抓。
+{
+  console.log('\n--- 文案映射（结构混用 / 键名写错）---')
+  const probe = await boot(baseSettings)
+  const T = probe.mod.__test
+  const csrc = fs.readFileSync(path.join(ROOT, 'client.js'), 'utf8')
+  const zh = T.DICT.zh
+
+  // 1) 所有 t('literal') 的键都必须存在
+  const used = new Set([...csrc.matchAll(/\bt\('([a-zA-Z_][a-zA-Z0-9_]*)'\)/g)].map(m => m[1]))
+  const missing = [...used].filter(k => zh[k] === undefined).sort()
+  ok('所有 t(\'literal\') 的键都存在于 DICT',
+    missing.length === 0,
+    `缺失: ${missing.join(', ')}（t() 会原样显示键名）`)
+
+  // 2) BG_LABELS 的值必须是 DICT 键，且该键存在
+  const bgBlock = /const BG_LABELS = \{([\s\S]*?)\n      \}/.exec(csrc)
+  ok('找到 BG_LABELS 定义', bgBlock !== null)
+  const bgPairs = [...(bgBlock?.[1] ?? '').matchAll(/(\w+):\s*'(\w+)'/g)].map(m => [m[1], m[2]])
+  ok('BG_LABELS 条目数 ≥ 9', bgPairs.length >= 9, `实测 ${bgPairs.length}`)
+  const badBg = bgPairs.filter(([, key]) => zh[key] === undefined)
+  ok('BG_LABELS 的每个值都是存在的 DICT 键',
+    badBg.length === 0, badBg.map(([id, k]) => `${id}→${k}`).join(', '))
+
+  // 3) BG_LABELS 是「id → DICT 键」，**不是** {zh, en} —— 断言源码里没有误用
+  ok('BG_LABELS 没有被当成 {zh,en} 用（`BG_LABELS[...]?.[\'zh\']`）',
+    !/BG_LABELS\[[^\]]+\]\?\.\['zh'\]/.test(csrc),
+    '这会让界面回落到原始 id（用户截图里的 sakura/promo/pool）')
+
+  // 4) PRESET_LABELS 反过来是 {zh, en}，断言它没有被 t() 包（那样会显示键名）
+  const presetBlock = /const PRESET_LABELS = \{([\s\S]*?)\n      \}/.exec(csrc)
+  ok('PRESET_LABELS 是 {zh,en} 结构',
+    /\{\s*zh:\s*'/.test(presetBlock?.[1] ?? ''))
+  ok('PRESET_LABELS 没有被 t() 包着用（它不是 DICT 键）',
+    !/t\(PRESET_LABELS/.test(csrc))
+
+  // 5) DICT 值等于键名 = 漏翻（界面会显示英文键）
+  //    例外：**单位与符号**类文案本就该相同（`px: 'px'`、`percent: '%'`），
+  //    它们不是翻译对象。用白名单排除，而不是放宽整条断言。
+  const UNIT_KEYS = new Set(['px', 'percent'])
+  const selfNamed = Object.keys(zh).filter(k => zh[k] === k && !UNIT_KEYS.has(k))
+  ok('DICT 里没有「值等于键名」的漏翻项（单位类除外）',
+    selfNamed.length === 0, selfNamed.join(', '))
+
+  // 6) 观测栏壁纸选择器已改成缩略图网格（不再是全宽文字列表）
+  ok('观测栏壁纸用缩略图网格（zf-rail__artgrid）',
+    csrc.includes('zf-rail__artgrid'))
+  // 从 artgrid 起切到该段结尾（不靠固定字符窗口 —— 900 太小，
+  // 中间夹着注释与 map 体，实测会误判）
+  const gridStart = csrc.indexOf('zf-rail__artgrid')
+  const gridBlock = gridStart < 0 ? '' : csrc.slice(gridStart, gridStart + 2600)
+  ok('缩略图指向 thumbs/ 下的图',
+    gridBlock.includes('art/thumbs/'),
+    gridBlock.includes('art/thumbs/') ? '' : '没找到 thumbs 路径')
+  ok('缩略图按明暗取对应版本（-dark）',
+    gridBlock.includes("-dark") && gridBlock.includes('isDarkActive'))
+  ok('观测栏有「无」选项（与其它项同尺寸保持网格整齐）',
+    csrc.includes('zf-rail__art--none'))
+
+  // 7) isDarkActive：DOM 判据 + 兜底
+  const dark = T.isDarkActive
+  ok('isDarkActive 已导出', typeof dark === 'function')
+  ok('无 DOM 标记时按 settings.scheme 兜底',
+    dark({ scheme: 'dark' }) === true && dark({ scheme: 'light' }) === false &&
+    dark({ scheme: 'system' }) === false)
 }
 
 console.log(`\n合计 ${pass + fail} 项，通过 ${pass}，失败 ${fail}`)

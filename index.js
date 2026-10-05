@@ -643,6 +643,35 @@ export function structureCss () {
     '  color:var(--dsw-alias-label-secondary);font-size:11px;',
     '}',
     '.zf-rail__swatch:hover{ border-color:var(--dsw-alias-border-l4);color:var(--dsw-alias-label-primary); }',
+    /* ── 观测栏壁纸缩略图网格 ────────────────────────────────────────────
+     *
+     * 取代原先的「全宽文字列表」：8 张壁纸占 8 行、只显示名字、把观测栏
+     * 撑得又长又空，而且看不出壁纸长什么样（用户截图反馈「有点丑」）。
+     * 3 列网格一屏放得下，与设置页的缩略图条视觉一致。
+     *
+     * 缩略图是 128×80 的 WebP（`prepare-art.py` 产出），比例 1.6:1；
+     * 这里用 `aspect-ratio:8/5` 对齐，`object-fit:cover` 裁齐。
+     */
+    '.zf-rail__artgrid{',
+    '  display:grid;grid-template-columns:repeat(3, 1fr);gap:6px;',
+    '}',
+    '.zf-rail__art{',
+    '  position:relative;padding:0;cursor:pointer;overflow:hidden;',
+    '  aspect-ratio:8 / 5;box-sizing:border-box;',
+    '  border:1px solid var(--dsw-alias-border-l2);border-radius:6px;',
+    '  background:var(--dsw-alias-bg-layer-2);',
+    '}',
+    '.zf-rail__art img{ width:100%;height:100%;object-fit:cover;display:block; }',
+    '.zf-rail__art:hover{ border-color:var(--dsw-alias-border-l4); }',
+    // 选中态：主题色描边 + 轻微提亮（不靠 ✓ 也能看出选了哪个）
+    '.zf-rail__art[aria-pressed="true"]{',
+    '  border:2px solid var(--dsw-alias-brand-primary);',
+    '}',
+    // 「无」项：居中文字，与缩略图同尺寸保持网格整齐
+    '.zf-rail__art--none{',
+    '  display:flex;align-items:center;justify-content:center;',
+    '  color:var(--dsw-alias-label-tertiary);font-size:11px;',
+    '}',
     '.zf-rail__swatch[aria-pressed="true"]{',
     '  border-color:var(--dsw-alias-brand-primary);',
     '  background:color-mix(in srgb, var(--dsw-alias-brand-primary) 14%, var(--dsw-alias-bg-layer-2));',
