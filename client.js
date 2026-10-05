@@ -721,13 +721,29 @@ window.__ModuleLoader__.load({
           railCalls: 0, railNull: 0, railRendered: 0, lastNullReason: null,
           tabCalls: 0, tabNull: 0, tabRendered: 0, lastTabNullReason: null
         },
-        /** 官方右栏 tab 是否注册成功（true 时浮层兜底不再渲染）。 */
+        /** 官方右栏 tab 是否注册成功（**注册 ≠ 打开**，仅供自检）。 */
         tabRegistered: false,
+        /**
+         * 我们那个官方 tab **当前挂着几个内容实例**。
+         *
+         * 这是「tab 真的可见」的唯一可信信号 —— `tabRegistered` 只说明类型
+         * 声明成功，tab 可能根本没被用户打开（实测踩过：据此让位导致右边全空）。
+         * 由 `RailTab` 的 effect 按 `rendered` 增减。
+         */
+        tabMounted: 0,
+        /** 官方右栏导航控制器（`ctx.sidebarRight`），无该服务的平台为 null。 */
+        sidebarRight: null,
+        /**
+         * 「这一个右栏展开周期内是否已尝试打开过我们的 tab」。
+         * 面板收起时清空 → 下次展开重新出现；明确非 null 时不再打扰
+         * （尊重用户手动关闭）。
+         */
+        railTabOpenedFor: null,
         /** tab 的两个 disposer（阶段一 / 阶段二各一个，卸载时都要释放）。 */
         tabTypeDispose: null,
         tabBodyDispose: null,
         /** tab 相关的诊断信息（自检里看）。 */
-        tabDiag: { attempted: false, ok: false, error: null, kind: null }
+        tabDiag: { attempted: false, ok: false, error: null, kind: null, opened: false, openError: null }
       }
 
       const emit = () => {
@@ -937,7 +953,14 @@ window.__ModuleLoader__.load({
             // 每次 `Rail()` 被调用都计数并记录返回类型，避免再靠推理猜时序。
             render: { ...state.renderCounts },
             // 官方右栏 tab 的注册结果（主路径是否走通）
-            officialTab: { ...state.tabDiag, registered: state.tabRegistered },
+            officialTab: {
+              ...state.tabDiag,
+              registered: state.tabRegistered,
+              // 「真的挂着内容」才代表 tab 可见 —— 注册成功但 tabMounted=0
+              // 就是「类型声明好了但用户没打开」的状态
+              mounted: state.tabMounted,
+              owner: railOwner()
+            },
             // 订阅者数量：`useStore` 在 useEffect 里注册，为 0 说明
             // 组件从未真正挂载（返回 null 的组件 React 仍会跑 effect，
             // 所以 0 就意味着渲染根本没走到 effect）
@@ -1547,32 +1570,118 @@ window.__ModuleLoader__.load({
        */
       function RailTab () {
         const s = useStore()
-        // 与浮层问**同一个** `railOwner()` —— 两条路径不可能同时让位
-        // （实测踩过：各自判断导致两边都不渲染，界面全黑）
-        const rc = state.renderCounts
-        const owner = railOwner()
-        if (owner !== 'tab') {
-          rc.tabNull += 1; rc.lastTabNullReason = owner
+        const settings = s.settings
+        // 「我此刻是否真的在渲染内容」—— 注意**不能**用 `railOwner()` 门控自己：
+        // 那是给浮层判断要不要让位用的，tab 自己就是被让位的那一方，
+        // 用它会导致鸡生蛋问题（把 tabMounted 算进 railOwner 后，
+        // RailTab 永远返回 null → tabMounted 永远 0 → 死锁）。
+        const rendered = state.styleReady === true &&
+          settings !== null && settings.enabled === true && settings.rail !== false
+
+        // ── 关键：用**挂载事实**告诉浮层「我接管了」───────────────────────
+        //
+        // 为什么要 `rendered` 作为依赖：返回 null 的组件**依然是挂载的**，
+        // 它的 effect 照样会跑。若只在 mount 时计数，那么「tab 开着但内容
+        // 因设置无效而返回 null」也会让浮层让位 → 两边都空（实测事故）。
+        // 依赖 `rendered` 后，只有**真的渲染出内容**才计数。
+        useEffect(() => {
+          if (!rendered) return undefined
+          state.tabMounted += 1
+          emit() // 让浮层立刻重新裁决（它该让位了）
+          return () => {
+            state.tabMounted -= 1
+            emit() // tab 被关闭/切走 → 浮层立刻回来接替
+          }
+        }, [rendered])
+
+        if (!rendered) {
+          state.renderCounts.tabNull += 1
+          state.renderCounts.lastTabNullReason = 'not-rendered'
           return null
         }
-        rc.tabRendered += 1
+        state.renderCounts.tabRendered += 1
         // 官方 tab 已经提供了容器（背景/边框/滚动），所以这里只要内容。
         // 用 `zf-rail__body` 而不是 `.zf-rail`（后者带 fixed 定位与面板背景）。
         return h(RailContent)
       }
 
       /**
-       * 观测台该由哪条路径渲染。
+       * 把观测台作为官方 tab 打开（**仅在右栏已经展开时**）。
        *
-       * ── 为什么需要这个函数（实测踩过：两条路径互相让位，结果都不渲染）──
+       * ── 为什么要主动打开（实测踩过）──────────────────────────────────
        *
-       * 原先是各自判断：浮层看 `state.tabRegistered` 决定要不要让位，官方 tab
-       * 由外壳决定。问题出在**状态不一致**：`tabRegistered` 会在卸载时被重置为
-       * false，而浮层组件的 `lastNullReason` 还停在 `official-tab-active` ——
-       * 于是浮层以为 tab 在干活、tab 其实没注册，**两边都不渲染，界面全黑**。
+       * `sidebarRightTabs.register()` 只声明「有这种 tab」，**不会打开任何一个**。
+       * 官方右栏按「已打开的 tab」渲染，而打开要么用户从「指南」里点、要么显式
+       * `openTab()`。官方已有 3 个类型带 guide 条目（files / browser / terminal），
+       * 加上我们是 4 个 —— 按官方规则「多个条目 → 展开时显示指南」，
+       * **永远不会自动显示我们的页**。所以必须主动打开一次。
        *
-       * 修法：把「谁渲染」收敛成**一个纯函数**，两条路径都问它，不可能同时让位。
-       * 判定依据是**当下的事实**（tabRegistered 且 disposer 都还在），不是历史。
+       * ── 「仅在展开侧栏的时候走官方」（用户明确要求）────────────────────
+       *
+       * 只在面板**已经展开**时才打开，绝不代为展开：
+       *   · `openTab` 的真实语义含「面板会展开，因为用户看不见的内容不该被打开」，
+       *     若在收起状态下调用，会把用户的面板顶开 —— 那是打扰。
+       *   · 收起时由浮层（`.zf-rail`）负责显示，两条路径互补。
+       *
+       * ── 幂等与「尊重用户关闭」─────────────────────────────────────────
+       *
+       * `railTabOpenedFor` 记住「这一个展开周期内我已经开过了」：
+       *   · 同一展开周期内重复调用不会重复开（官方对普通页 tab 也会去重，
+       *     但少调一次就少一次重排）；
+       *   · 用户手动关掉我们的 tab 后**不会被反复重开**（尊重用户选择）；
+       *   · 面板收起时清空标记 → 下次展开会再次出现（这是期望行为）。
+       *
+       * @param {Document} doc
+       */
+      function maybeOpenRailTab (doc) {
+        const right = state.sidebarRight
+        if (right === null || right === undefined) return // 无官方右栏服务（Web 端）
+        if (state.tabRegistered !== true) return // 类型没注册成功，openTab 会抛
+        if (state.settings?.enabled !== true || state.settings.rail === false) return
+
+        const frame = doc.querySelector('[class*="_frame"]')
+        if (frame === null || frame === undefined) return
+        const collapsed = frame.hasAttribute('data-rightbar-collapsed') ||
+          frame.hasAttribute('data-details-collapsed')
+
+        if (collapsed) {
+          // 面板收起了 → 清空标记，下次展开重新出现
+          state.railTabOpenedFor = null
+          return
+        }
+        // 已经开着（我们的 tab 在渲染）→ 无事可做
+        if (state.tabMounted > 0) return
+        // 这个展开周期已经尝试过（例如用户刚把它关掉）→ 不再打扰
+        if (state.railTabOpenedFor === 'expanded') return
+
+        state.railTabOpenedFor = 'expanded'
+        try {
+          right.openTab(TAB_KIND)
+          state.tabDiag.opened = true
+        } catch (error) {
+          // openTab 抛错是「接线错误」（kind 没注册等），不该拖垮打标
+          state.tabDiag.openError = error?.message ?? String(error)
+          console.warn('[zhuang-fangyi] openTab 失败：', state.tabDiag.openError)
+        }
+      }
+
+      /**
+       * 观测台该由哪条路径渲染（**只给浮层用**）。
+       *
+       * ── 这里踩过两次坑，都是「让位给了不存在的东西」──────────────────
+       *
+       * 坑 1：两条路径各自判断 → 浮层以为 tab 在干活、tab 其实没注册 → 全黑。
+       *      修法：收敛成一个函数。
+       *
+       * 坑 2（更隐蔽）：把**「注册成功」当成了「已打开」**。
+       *      `sidebarRightTabs.register()` 只是声明「有这种 tab」，**并不打开
+       *      任何一个 tab**。官方 tab 是根据「已打开的 tab」渲染的，而打开要
+       *      用户从指南里点、或显式 `openTab()`。所以注册成功时 `tabCalls:0` ——
+       *      浮层让位给一个从未打开的 tab，结果**右边什么都没有**（用户实测
+       *      反馈「右栏怎么做都没有观测台」）。
+       *
+       *      修法：判定依据改成**挂载事实** `state.tabMounted`（由 `RailTab` 的
+       *      effect 维护）。tab 真的在渲染才让位；否则浮层顶上。
        *
        * @returns {'tab'|'overlay'|'none'}
        */
@@ -1580,10 +1689,8 @@ window.__ModuleLoader__.load({
         const s = state.settings
         if (s === null || s.enabled !== true || s.rail === false) return 'none'
         if (!state.styleReady) return 'none'
-        // 官方 tab 真正活着才算接管（两个 disposer 都在）
-        const tabAlive = state.tabRegistered === true &&
-          state.tabTypeDispose !== null && state.tabBodyDispose !== null
-        return tabAlive ? 'tab' : 'overlay'
+        // 只有 tab **真的挂着内容**才算接管 —— 注册 ≠ 打开
+        return state.tabMounted > 0 ? 'tab' : 'overlay'
       }
 
       /**
@@ -1692,19 +1799,45 @@ window.__ModuleLoader__.load({
           // `sidebarRightTabs` 是**服务**（不是插槽），所以用 `ctx.inject` 等待它。
           // 服务不存在时回调永不触发 —— 这正是我们要的降级信号：
           // Web 端没有 `dsh-client-ui-sidebar-right`，回调不跑，浮层兜底接手。
-          ctx.inject(['sidebarRightTabs'], scope => {
+          //
+          // 同时注入 `sidebarRight`（导航控制器）：`openTab` 在它上面，是
+          // 「把观测台打开到官方右栏」的唯一入口。两个服务由同一个包提供
+          // （`ctx.reflect.provide`），一起注入能保证拿到 tabs 就能打开 tab。
+          ctx.inject(['sidebarRightTabs', 'sidebarRight'], scope => {
             try {
               const tabs = scope.sidebarRightTabs
               if (tabs === undefined || tabs === null) {
                 state.tabDiag.error = 'sidebarRightTabs 为 undefined'
                 return
               }
+              state.sidebarRight = scope.sidebarRight ?? null
               // 阶段一：声明 tab 类型
+              //
+              // ── `guide` 是**必需的**，不是可选项（实测踩过：没有它右栏里
+              //    根本找不到我们的 tab）─────────────────────────────────────
+              //
+              // 官方 README 原文：
+              //   「`guide` lists entry boxes for the guide page; picking one
+              //     opens the contributing type as a page.」
+              //   「Default pages depend on the number of registered guide
+              //     entries, not the number of tab types or open tabs.
+              //     Exactly one entry opens its page directly; zero or multiple
+              //     entries open the guide.」
+              //
+              // 也就是说：**只有注册了 `guide` 条目，类型才会出现在右栏的
+              // 「指南」页里，用户才有入口打开它。** 没有 `guide` 的定义等于
+              // 隐形 —— 注册成功但永远打不开。
               const disposeType = tabs.register({
                 id: TAB_ID,
                 kind: TAB_KIND,
                 priority: 'extension',
-                title: () => t('railTitle')
+                title: () => t('railTitle'),
+                guide: [{
+                  id: 'observation',
+                  order: 10,
+                  title: () => t('railTitle'),
+                  description: () => t('localOnly')
+                }]
               })
               state.tabDiag.kind = TAB_KIND
 
@@ -1773,8 +1906,19 @@ window.__ModuleLoader__.load({
 
       /* ---------------- 皮肤运行时 ---------------- */
 
-      // 打标 + 右栏显隐。`onLayout` 在每轮打标后触发，让顶栏/右栏读数跟着更新。
-      state.skin = mountSkin({ state, onLayout: () => emit() })
+      // 打标 + 右栏显隐。`onLayout` 在每轮打标后触发，让右栏读数跟着更新，
+      // 顺便裁决「要不要把观测台打开进官方右栏」。
+      //
+      // 为什么走 `onLayout` 而不是在 `refresh()` 里直接调：`mountSkin` 定义在
+      // **模块作用域**，看不到 `apply()` 内部的函数（`maybeOpenRailTab` 在里面）。
+      // `onLayout` 是已有的回调通道，正好用来把内部逻辑挂到打标之后。
+      state.skin = mountSkin({
+        state,
+        onLayout: () => {
+          maybeOpenRailTab(document)
+          emit()
+        }
+      })
 
       /* ---------------- 卸载 ---------------- */
 
@@ -1818,8 +1962,8 @@ window.__ModuleLoader__.load({
         DICT, PRESETS, SCHEMES, BACKGROUNDS, POSITIONS,
         // 供无头测试直接验证定位/打标逻辑
         makeModuleClass, makeMarker, readSessionState, readStats, nativeRightbarOpen,
-        // 观测台路径裁决与设置同步（用例 41/42）
-        railOwner, resyncSettings,
+        // 观测台路径裁决与设置同步（用例 41/42），以及官方 tab 的自动打开（用例 44）
+        railOwner, resyncSettings, maybeOpenRailTab,
         // 让测试能模拟「宿主设置被外部改动」：stub fetch 下一次 /settings 的返回
         setNextSettings (next) {
           globalThis.__zfNextSettings = next

@@ -239,6 +239,21 @@ const DEFAULT_SERVICES = {}
 /** 用例 37 用的 tab 注册记录。 */
 const TAB_REGS = []
 
+/**
+ * 官方右栏的两个服务由**同一个包**提供（`ctx.reflect.provide`），
+ * 插件一并注入。所以夹具也必须两个都给 —— 只给一个时 `ctx.inject`
+ * 回调不触发（那正是 Web 端的降级路径，另有用例覆盖）。
+ *
+ * @param {object} tabs `sidebarRightTabs` 桩
+ * @param {object} [right] `sidebarRight` 桩（导航控制器，提供 openTab）
+ */
+function rightServices (tabs, right) {
+  return {
+    sidebarRightTabs: tabs,
+    sidebarRight: right ?? { openTab () {} }
+  }
+}
+
 function makeHarness (settingsPayload, themePayload, stylePayload = DEFAULT_STYLE, serviceFixture = DEFAULT_SERVICES) {
   const dom = makeDom()
   const effects = []
@@ -1388,7 +1403,7 @@ function shellDom (opts = {}) {
       }
     }
   }
-  const { h, mod } = await boot({ ...baseSettings }, null, { sidebarRightTabs: tabs })
+  const { h, mod } = await boot({ ...baseSettings }, null, rightServices(tabs))
 
   ok('探测到 sidebarRightTabs 服务', mod.__test.state.tabDiag.attempted === true)
   ok('tab 类型注册成功', mod.__test.state.tabDiag.ok === true,
@@ -1400,12 +1415,29 @@ function shellDom (opts = {}) {
       r.meta.key === 'dsh-zhuang-fangyi-observation'))
   ok('tabRegistered 为 true', mod.__test.state.tabRegistered === true)
 
-  // 关键：官方 tab 接管后，浮层兜底必须**不再渲染**，否则会出现两份
+  // ⚠️ 关键教训：**注册 ≠ 打开**。
+  // `sidebarRightTabs.register()` 只声明「有这种 tab」，不打开任何一个。
+  // 官方 tab 按「已打开的 tab」渲染，而打开要用户从指南里点。
+  // 所以注册成功时 `tabMounted===0` → 浮层**必须继续渲染**，否则右边全空
+  // （用户实测反馈「右栏怎么做都没有观测台」，就是这里让位给了没打开的 tab）。
   const overlay = h.slotRegistrations.filter(r => r.meta.name === 'shell.overlay')
   const rail = overlay.find(r => r.meta.id === 'zhuang-fangyi-rail')
   ok('浮层仍注册（供降级用）', rail !== undefined)
+  ok('注册成功但 tab 未打开 → tabMounted 为 0', mod.__test.state.tabMounted === 0)
+  ok('注册成功但 tab 未打开 → railOwner 仍是 overlay（不让位）',
+    mod.__test.railOwner() === 'overlay', mod.__test.railOwner())
   const out = rail?.component?.({})
-  ok('浮层组件在官方 tab 生效时返回 null', out === null, String(out))
+  ok('注册成功但 tab 未打开 → 浮层照常渲染（右边不会空）',
+    out !== null && out !== undefined, String(out))
+
+  // guide 是必需的：没有它，类型在右栏「指南」里不出现，用户无从打开
+  const def = TAB_REGS.find(r => r.id === 'dsh-zhuang-fangyi-observation')
+  ok('tab 定义带 guide 条目', Array.isArray(def?.guide) && def.guide.length === 1,
+    JSON.stringify(def?.guide))
+  ok('guide 条目有 id/title/order',
+    def?.guide?.[0]?.id === 'observation' &&
+    typeof def?.guide?.[0]?.title === 'function' &&
+    def?.guide?.[0]?.order === 10)
 }
 
 // 用例 38：官方右栏 tab 不可用时降级到浮层
@@ -1431,7 +1463,7 @@ function shellDom (opts = {}) {
   const bad = {
     register () { throw new Error('simulated tab register failure') }
   }
-  const { h, mod } = await boot({ ...baseSettings }, null, { sidebarRightTabs: bad })
+  const { h, mod } = await boot({ ...baseSettings }, null, rightServices(bad))
   ok('tab 注册抛错时 apply() 未中断', mod.__test.state.tabDiag.error !== null)
   ok('降级：浮层仍可用',
     h.slotRegistrations.some(r => r.meta.name === 'shell.overlay' && r.meta.id === 'zhuang-fangyi-rail'))
@@ -1452,7 +1484,7 @@ function shellDom (opts = {}) {
       }
     }
   }
-  const { h, mod } = await boot({ ...baseSettings }, null, { sidebarRightTabs: tabs })
+  const { h, mod } = await boot({ ...baseSettings }, null, rightServices(tabs))
   ok('注册后 regs 有 1 条', regs.length === 1, `实际 ${regs.length}`)
   for (const e of [...h.effects].reverse()) e.dispose?.()
   ok('卸载后 regs 清空（disposer 已释放）', regs.length === 0, `实际 ${regs.length}`)
@@ -1471,26 +1503,26 @@ function shellDom (opts = {}) {
   ok('无官方 tab → overlay',
     railOwner() === 'overlay', railOwner())
 
-  // 场景 2：官方 tab 活着 → tab
+  // 场景 2：**只注册、没打开** → 仍走浮层（实测事故：据此让位导致右边全空）
   mod.__test.state.tabRegistered = true
-  mod.__test.state.tabTypeDispose = () => {}
-  mod.__test.state.tabBodyDispose = () => {}
-  ok('官方 tab 活着 → tab', railOwner() === 'tab', railOwner())
-
-  // 场景 3：tabRegistered=true 但 disposer 丢了（半卸载态）→ **必须回落浮层**
-  // 这正是那次「全黑」事故的根源：旧代码只在 Rail 里看 tabRegistered，
-  // 而卸载流程把 disposer 清了却没让浮层重新渲染。
-  mod.__test.state.tabTypeDispose = null
-  ok('tabRegistered=true 但 disposer 缺失 → 回落 overlay（防双让位）',
+  ok('注册但未打开 → overlay（不让位给不存在的 tab）',
     railOwner() === 'overlay', railOwner())
 
-  // 场景 4：插件停用 → none
+  // 场景 3：tab 真的挂着内容 → 浮层让位
+  mod.__test.state.tabMounted = 1
+  ok('tab 已挂载 → tab（浮层让位）', railOwner() === 'tab', railOwner())
+
+  // 场景 4：tab 被用户关掉 → 浮层立刻回来接替
+  mod.__test.state.tabMounted = 0
+  ok('tab 被关闭 → 回落 overlay（右边不会空）', railOwner() === 'overlay', railOwner())
+
+  // 场景 5：插件停用 → none
   mod.__test.state.tabRegistered = false
   mod.__test.state.settings = { ...mod.__test.state.settings, enabled: false }
   ok('插件停用 → none', railOwner() === 'none', railOwner())
   mod.__test.state.settings = { ...mod.__test.state.settings, enabled: true }
 
-  // 场景 5：rail 关闭 → none
+  // 场景 6：rail 关闭 → none
   mod.__test.state.settings = { ...mod.__test.state.settings, rail: false }
   ok('rail 关闭 → none', railOwner() === 'none', railOwner())
 }
@@ -1542,6 +1574,92 @@ function shellDom (opts = {}) {
   const rw = src.match(/Math\.max\((\d+), Math\.min\((\d+), Number\(s\?\.railWidth\) \|\| (\d+)\)\)/)
   ok('client.js railWidth 字面量 = 240/380/288',
     rw !== null && rw[1] === '240' && rw[2] === '380' && rw[3] === '288', rw?.slice(1).join('/'))
+}
+// 用例 44：观测台进官方右栏 —— 仅在展开时自动打开
+{
+  console.log('\n--- 官方 tab 自动打开 ---')
+
+  // 场景 A：面板**已展开** + 我们的 tab 没开 → 应该 openTab(kind)
+  {
+    const opened = []
+    const { h, mod } = await boot({ ...baseSettings }, null, rightServices(
+      { register: def => { TAB_REGS.push(def); return () => {} } },
+      { openTab: kind => opened.push(kind) }
+    ))
+    ok('注入了 sidebarRight（导航控制器）', mod.__test.state.sidebarRight !== null)
+    // 测试环境的 document 没有 `_frame` 元素 → 视为「找不到框架」，不打开
+    ok('找不到 frame 时不盲目 openTab', opened.length === 0, JSON.stringify(opened))
+  }
+
+  // 场景 B：面板收起 → 绝不能代为展开（用户要求「仅在展开时走官方」）
+  {
+    const opened = []
+    const { h, mod } = await boot({ ...baseSettings }, null, rightServices(
+      { register: def => { TAB_REGS.push(def); return () => {} } },
+      { openTab: kind => opened.push(kind) }
+    ))
+    const doc = globalThis.document
+    const frame = doc.createElement('div')
+    frame.setAttribute('class', 'Xyz_frame')
+    frame.setAttribute('data-rightbar-collapsed', '')
+    doc.body.appendChild(frame)
+    mod.__test.maybeOpenRailTab(doc)
+    ok('面板收起时不 openTab（不打扰用户）', opened.length === 0, JSON.stringify(opened))
+    ok('收起时清空展开周期标记', mod.__test.state.railTabOpenedFor === null)
+  }
+
+  // 场景 C：面板展开 → 打开一次；重复调用不重复打开
+  {
+    const opened = []
+    const { h, mod } = await boot({ ...baseSettings }, null, rightServices(
+      { register: def => { TAB_REGS.push(def); return () => {} } },
+      { openTab: kind => opened.push(kind) }
+    ))
+    const doc = globalThis.document
+    const prev = doc.querySelector('[class*="_frame"]')
+    if (prev !== null) prev.remove()
+    const frame = doc.createElement('div')
+    frame.setAttribute('class', 'Xyz_frame')
+    doc.body.appendChild(frame)
+
+    mod.__test.maybeOpenRailTab(doc)
+    ok('面板展开 → 打开我们的 tab', opened.length === 1, JSON.stringify(opened))
+    ok('openTab 用的是我们的 kind', opened[0] === 'zhuang-fangyi-observation', String(opened[0]))
+
+    // 再调两次：即使 tab 还没挂载（React 还没提交），也不该重复打开
+    mod.__test.maybeOpenRailTab(doc)
+    mod.__test.maybeOpenRailTab(doc)
+    ok('同一展开周期内幂等（只开一次）', opened.length === 1, JSON.stringify(opened))
+
+    // 用户手动关掉（tabMounted 归零）后也不重开 —— 尊重用户选择
+    mod.__test.state.tabMounted = 0
+    mod.__test.maybeOpenRailTab(doc)
+    ok('用户关掉后不反复重开', opened.length === 1, JSON.stringify(opened))
+
+    // 面板收起再展开 → 重新出现
+    frame.setAttribute('data-rightbar-collapsed', '')
+    mod.__test.maybeOpenRailTab(doc)
+    frame.removeAttribute('data-rightbar-collapsed')
+    mod.__test.maybeOpenRailTab(doc)
+    ok('收起后重新展开 → 再次出现', opened.length === 2, JSON.stringify(opened))
+  }
+
+  // 场景 D：插件停用 / rail 关闭 → 不打开
+  {
+    const opened = []
+    const { h, mod } = await boot({ ...baseSettings, rail: false }, null, rightServices(
+      { register: def => { TAB_REGS.push(def); return () => {} } },
+      { openTab: kind => opened.push(kind) }
+    ))
+    const doc = globalThis.document
+    const prev = doc.querySelector('[class*="_frame"]')
+    if (prev !== null) prev.remove()
+    const frame = doc.createElement('div')
+    frame.setAttribute('class', 'Xyz_frame')
+    doc.body.appendChild(frame)
+    mod.__test.maybeOpenRailTab(doc)
+    ok('rail 关闭时不 openTab', opened.length === 0, JSON.stringify(opened))
+  }
 }
 
 console.log(`\n合计 ${pass + fail} 项，通过 ${pass}，失败 ${fail}`)
