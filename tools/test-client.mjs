@@ -2110,6 +2110,93 @@ function shellDom (opts = {}) {
     String(darkVert.h.dom.html.props.get('--zf-art-backdrop')).includes('--zf-art-portrait-dark'),
     String(darkVert.h.dom.html.props.get('--zf-art-backdrop')))
 }
+// 用例 50：设置 v3 —— accentHue 强调色 + motion 静止模式
+{
+  console.log('\n--- 设置 v3（accentHue / motion）---')
+  const pal = await import('../src/palette.js')
+  const set = await import('../src/settings.js')
+
+  // 1) 版本与迁移
+  ok('SETTINGS_VERSION = 3', set.SETTINGS_VERSION === 3, String(set.SETTINGS_VERSION))
+  const v2 = { version: 2, preset: 'wine', scheme: 'dark', background: 'pool', railWidth: 320, avatarBubbles: false }
+  const mig = set.normalizeSettings(v2)
+  ok('v2 → v3 无损（version 升、旧字段保留）',
+    mig.version === 3 && mig.preset === 'wine' && mig.railWidth === 320 && mig.avatarBubbles === false,
+    JSON.stringify(mig))
+  ok('v2 迁移补默认 accentHue/motion',
+    mig.accentHue === 'preset' && mig.motion === 'auto',
+    `${JSON.stringify(mig.accentHue)}/${mig.motion}`)
+
+  // 2) accentHue 归一化
+  ok('normalizeAccentHue: preset 原样', pal.normalizeAccentHue('preset') === 'preset')
+  ok('normalizeAccentHue: 360 → 0', pal.normalizeAccentHue(360) === 0)
+  ok('normalizeAccentHue: -30 → 330', pal.normalizeAccentHue(-30) === 330)
+  ok('normalizeAccentHue: 400 → 40', pal.normalizeAccentHue(400) === 40)
+  ok('normalizeAccentHue: 非法 → preset',
+    pal.normalizeAccentHue('abc') === 'preset' && pal.normalizeAccentHue(null) === 'preset')
+  ok('normalizeSettings 夹取 accentHue',
+    set.normalizeSettings({ accentHue: 999 }).accentHue === 279)
+
+  // 3) 色相覆盖真的改强调色，且不动非强调色
+  const base = pal.buildRoles('burst', 'dark')
+  const rot = pal.buildRoles('burst', 'dark', 300)
+  ok('accentHue 改变 brand', base.brand !== rot.brand, `${base.brand} → ${rot.brand}`)
+  ok('accentHue 不动表面色（base/surface/sidebar）',
+    base.base === rot.base && base.surface === rot.surface && base.sidebar === rot.sidebar)
+  ok("'preset' 与不传参数完全一致",
+    JSON.stringify(pal.buildTokens('burst')) === JSON.stringify(pal.buildTokens('burst', 'preset')))
+
+  // 4) 换色相后仍可读（这是 accentHue 的硬约束，contrast.js 有 672 项全扫，
+  //    这里在客户端测试里也抽一格，防止有人绕过 contrast.js 改 palette）
+  const { contrast } = pal
+  let worst = Infinity
+  for (let hue = 0; hue < 360; hue += 45) {
+    for (const presetId of ['zhuang', 'burst', 'cyan', 'wine']) {
+      for (const scheme of ['light', 'dark']) {
+        const roles = pal.buildRoles(presetId, scheme, hue)
+        // link 要在 base 与气泡（brandSoft）上都可读
+        for (const bg of [roles.base, roles.brandSoft]) {
+          const r = contrast(roles.link, bg)
+          if (r !== null && r < worst) worst = r
+        }
+      }
+    }
+  }
+  ok('任意色相下 link 对比度 ≥ 4.5', worst >= 4.5, `最低 ${worst.toFixed(2)}:1`)
+
+  // 5) 客户端：accentHue 变化触发重取 /themes 并重注册
+  const boot1 = await boot({ ...baseSettings, accentHue: 'preset' })
+  const before = boot1.h.calls.filter(c => c.url.endsWith('/themes')).length
+  await boot1.mod.__test.save({ accentHue: 200 })
+  const after = boot1.h.calls.filter(c => c.url.endsWith('/themes')).length
+  ok('改 accentHue 会重取 /themes', after > before, `${before} → ${after}`)
+  ok('accentHue 已写入状态', boot1.mod.__test.state.settings.accentHue === 200,
+    String(boot1.mod.__test.state.settings.accentHue))
+
+  // 6) 不改 accentHue 时不重取（避免无谓重注册）
+  const boot2 = await boot({ ...baseSettings, accentHue: 'preset' })
+  const n1 = boot2.h.calls.filter(c => c.url.endsWith('/themes')).length
+  await boot2.mod.__test.save({ backgroundOpacity: 22 })
+  const n2 = boot2.h.calls.filter(c => c.url.endsWith('/themes')).length
+  ok('改其它设置不重取 /themes', n2 === n1, `${n1} → ${n2}`)
+
+  // 7) motion → data-zf-motion
+  const boot3 = await boot({ ...baseSettings, motion: 'reduced' })
+  ok('motion=reduced 时打 data-zf-motion',
+    boot3.h.dom.body.getAttribute('data-zf-motion') === 'reduced',
+    String(boot3.h.dom.body.getAttribute('data-zf-motion')))
+  const boot4 = await boot({ ...baseSettings, motion: 'auto' })
+  ok('motion=auto 时不打标记', !boot4.h.dom.body.hasAttribute('data-zf-motion'))
+  const boot5 = await boot({ ...baseSettings, enabled: false, motion: 'reduced' })
+  ok('插件停用时不打 motion 标记', !boot5.h.dom.body.hasAttribute('data-zf-motion'))
+
+  // 8) CSS 里有静止模式规则，且只作用于本插件自己的元素（不越权全局）
+  const { structureCss } = await import('../index.js')
+  const css = structureCss()
+  ok('CSS 含 data-zf-motion 规则', css.includes('body[data-zf-motion="reduced"]'))
+  ok('静止模式不写全局 *{transition:none}（不越权）',
+    !/\*\s*\{[^}]*transition:none/.test(css))
+}
 
 console.log(`\n合计 ${pass + fail} 项，通过 ${pass}，失败 ${fail}`)
 if (fail > 0) {

@@ -85,6 +85,13 @@ window.__ModuleLoader__.load({
         posTile: '平铺',
         contourBorder: '等高线细边框',
         accentGlow: '强调色微光',
+        accentHue: '强调色色相',
+        accentHueHint: '拖动改变强调色（按钮/链接/选中态）的色相；「预设」= 用配色自带的',
+        accentHuePreset: '预设',
+        motion: '静止模式',
+        motionHint: '关闭界面过渡动画（系统已开启「减少动态效果」时自动生效）',
+        motionAuto: '跟随系统',
+        motionReduced: '静止',
         accentGlowHint: '聚焦控件时显示一层主题色柔光',
         heroAvatar: '空白页头像',
         titlebarFollow: '标题栏跟随',
@@ -150,6 +157,13 @@ window.__ModuleLoader__.load({
         posTile: 'Tile',
         contourBorder: 'Contour hairline border',
         accentGlow: 'Accent glow',
+        accentHue: 'Accent hue',
+        accentHueHint: 'Rotate the accent hue (buttons / links / selection); "Preset" keeps the palette\'s own',
+        accentHuePreset: 'Preset',
+        motion: 'Reduced motion',
+        motionHint: 'Disable UI transitions (also follows the system "reduce motion" setting)',
+        motionAuto: 'Follow system',
+        motionReduced: 'Still',
         accentGlowHint: 'Show a soft accent glow on focused controls',
         heroAvatar: 'Empty-state avatar',
         titlebarFollow: 'Follow in title bar',
@@ -258,6 +272,7 @@ window.__ModuleLoader__.load({
         body.removeAttribute('data-zf-wallpaper')
         body.removeAttribute('data-zf-glow')
         body.removeAttribute('data-zf-contour')
+        body.removeAttribute('data-zf-motion')
         return
       }
 
@@ -312,6 +327,10 @@ window.__ModuleLoader__.load({
         root.removeAttribute('data-zf-art-fit')
         body.removeAttribute('data-zf-wallpaper')
       }
+
+      // 静止模式：显式开关（`auto` 交给 CSS 的 prefers-reduced-motion）
+      if (settings.motion === 'reduced') body.setAttribute('data-zf-motion', 'reduced')
+      else body.removeAttribute('data-zf-motion')
 
       // 装饰
       if (settings.accentGlow) body.setAttribute('data-zf-glow', '')
@@ -1198,7 +1217,9 @@ window.__ModuleLoader__.load({
                   backgroundPosition: state.settings.backgroundPosition,
                   rail: state.settings.rail,
                   railWidth: state.settings.railWidth,
-                  avatarBubbles: state.settings.avatarBubbles
+                  avatarBubbles: state.settings.avatarBubbles,
+                  accentHue: state.settings.accentHue,
+                  motion: state.settings.motion
                 }
           }
           await fetch(`${ROUTE}/diag`, {
@@ -1300,6 +1321,7 @@ window.__ModuleLoader__.load({
 
       async function save (patch) {
         const next = { ...(state.settings ?? {}), ...patch }
+        const prevAccent = state.settings?.accentHue
         state.settings = next
         applySettings()
         try {
@@ -1313,7 +1335,36 @@ window.__ModuleLoader__.load({
           state.lastError = String(error?.message ?? error)
           console.warn('[zhuang-fangyi] 保存失败：', state.lastError)
         }
+        // 强调色色相改了 → 主题 token 表整体变了，必须重新拉取并重注册。
+        //
+        // 为什么不能只改 CSS 变量：主题的 token 是**宿主算好下发**的
+        // （客户端不 import palette.js），而且已注册的主题在 `state.registered`
+        // 里有缓存（`registerThemes` 见到已注册 id 会跳过）。所以要先注销、
+        // 重取 `/themes`、再注册，否则改动不生效（表现为「选了色相没反应」）。
+        if (next.accentHue !== prevAccent) await reloadThemes()
         emit()
+      }
+
+      /**
+       * 重新从宿主取主题定义与 token 表，并**重注册**。
+       *
+       * 只在 token 表会变的设置项（目前是 `accentHue`）变化时调用 ——
+       * 全量重注册会让外壳重新应用主题，能省则省。
+       */
+      async function reloadThemes () {
+        try {
+          const payload = await api('/themes')
+          unregisterThemes()
+          state.themes = payload.themes ?? []
+          state.overrides = payload.overrides ?? {}
+          state.themeRoles = payload.roles ?? {}
+          state.wallpaperMeta = payload.wallpaperMeta ?? {}
+          registerThemes()
+          applySettings()
+        } catch (error) {
+          state.lastError = String(error?.message ?? error)
+          console.warn('[zhuang-fangyi] 重取主题失败：', state.lastError)
+        }
       }
 
       /* ---------------- 样式接管 ---------------- */
@@ -1642,6 +1693,31 @@ window.__ModuleLoader__.load({
             })),
 
           h('div', { style: groupStyle }, t('groupDecor')),
+          h(Row, { label: t('accentHue'), hint: t('accentHueHint') },
+            h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', justifyContent: 'flex-end' } },
+              h('button', {
+                type: 'button',
+                'aria-pressed': settings.accentHue === 'preset' ? 'true' : 'false',
+                onClick: () => set({ accentHue: 'preset' }),
+                style: buttonStyle(settings.accentHue === 'preset')
+              }, t('accentHuePreset')),
+              h(Slider, {
+                value: typeof settings.accentHue === 'number' ? settings.accentHue : 0,
+                min: 0,
+                max: 359,
+                step: 1,
+                suffix: '°',
+                onChange: v => set({ accentHue: v })
+              }))),
+          h(Row, { label: t('motion'), hint: t('motionHint') },
+            h(Segmented, {
+              value: settings.motion,
+              options: [
+                { value: 'auto', label: t('motionAuto') },
+                { value: 'reduced', label: t('motionReduced') }
+              ],
+              onChange: v => set({ motion: v })
+            })),
           h(Row, { label: t('contourBorder') },
             h(Toggle, { value: settings.contourBorder, onChange: v => set({ contourBorder: v }) })),
           h(Row, { label: t('accentGlow'), hint: t('accentGlowHint') },
@@ -2239,7 +2315,7 @@ window.__ModuleLoader__.load({
         // 供无头测试直接验证定位/打标逻辑
         makeModuleClass, makeMarker, readSessionState, readStats, nativeRightbarOpen,
         // 观测台路径裁决与设置同步（用例 41/42），以及官方 tab 的自动打开（用例 44）
-        railOwner, resyncSettings, maybeOpenRailTab, resetToDefaults,
+        railOwner, resyncSettings, maybeOpenRailTab, resetToDefaults, reloadThemes, save,
         formatElapsed, trackSessionSince,
         // 让测试能模拟「宿主设置被外部改动」：stub fetch 下一次 /settings 的返回
         setNextSettings (next) {

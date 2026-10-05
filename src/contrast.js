@@ -166,6 +166,61 @@ for (const presetId of PRESET_IDS) {
   console.log('')
 }
 
+// ── 强调色色相扫描（accentHue 覆盖）──────────────────────────────────────
+//
+// `accentHue` 让用户把强调色转到任意色相。旋转只改色相、保留原色的饱和度与
+// 明度，所以「浅色强调色压得够深」这条可读性约束理论上依然成立 —— 但这是
+// **理论**。这里按 30° 步长扫 12 个色相 × 4 预设 × 2 明暗，把与强调色相关的
+// 断言（品牌/链接/焦点环）全部重跑一遍，用数据确认「随便转都还能读」。
+//
+// 为什么必须做：色相一换，同一个明度的**相对亮度**会变（人眼对绿最敏感、
+// 对蓝最迟钝）。黄绿预设转到蓝色相时，明度相同但亮度更低 —— 这正是容易
+// 跌破阈值的地方。
+console.log('━━━ 强调色色相扫描（accentHue 0..359，每 30° 一格）━━━')
+const ACCENT_CHECKS = CHECKS.filter(([, fg]) =>
+  ['brand-primary', 'link', 'onboarding-accent'].includes(fg))
+let hueTotal = 0
+let hueFailed = 0
+const hueFailures = []
+
+for (const presetId of PRESET_IDS) {
+  for (const scheme of ['light', 'dark']) {
+    const bad = []
+    for (let hue = 0; hue < 360; hue += 30) {
+      const table = buildTokens(presetId, hue)[scheme]
+      for (const [label, fg, bg, need] of ACCENT_CHECKS) {
+        hueTotal += 1
+        const fgv = tok(table, fg)
+        const bgv = tok(table, bg)
+        const ratio = (fgv === undefined || bgv === undefined) ? null : contrast(fgv, bgv)
+        if (ratio === null || ratio < need) {
+          hueFailed += 1
+          bad.push({ hue, label, ratio, need, fg: fgv, bg: bgv })
+        }
+      }
+    }
+    if (bad.length === 0) {
+      console.log(`  ${presetId}/${scheme}：12 个色相全部通过`)
+    } else {
+      // 只列前几条，避免刷屏；但计数是完整的
+      console.log(`  ${presetId}/${scheme}：不达标 ${bad.length} 项`)
+      for (const b of bad.slice(0, 4)) {
+        const r = b.ratio === null ? '不可解析' : `${b.ratio.toFixed(2)}:1`
+        console.log(`     FAIL hue=${b.hue} ${b.label.padEnd(18)} ${String(r).padStart(9)} < ${b.need}  (${b.fg ?? '—'} / ${b.bg ?? '—'})`)
+      }
+      if (bad.length > 4) console.log(`     …另有 ${bad.length - 4} 项`)
+      hueFailures.push(`${presetId}/${scheme}`)
+    }
+  }
+}
+if (hueFailures.length === 0) {
+  console.log(`  合计 ${hueTotal} 项（${PRESET_IDS.length} 预设 × 2 明暗 × 12 色相 × ${ACCENT_CHECKS.length} 断言）全部通过`)
+} else {
+  console.log(`  合计 ${hueTotal} 项，不达标 ${hueFailed} 项`)
+  failed += hueFailed
+}
+console.log('')
+
 // 额外健全性检查：每个 token 必须同时有两套值，且色阶单调
 console.log('━━━ 结构健全性 ━━━')
 let structural = 0

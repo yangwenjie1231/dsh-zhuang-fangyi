@@ -263,7 +263,8 @@ export function bootStyle (settings) {  if (!settings.enabled) return ''
 
 /** 预设 token 表（首帧用；浏览器半边接管后移除）。 */
 export function tokenStyle (settings) {
-  const { light, dark } = buildTokens(settings.preset)
+  // 首帧也要尊重 accentHue，否则启动瞬间的强调色与随后接管的不一致（会闪一下）
+  const { light, dark } = buildTokens(settings.preset, settings.accentHue)
   const decl = (table, indent) =>
     Object.entries(table)
       .map(([k, v]) => `${indent}${k}:${v};`)
@@ -685,9 +686,19 @@ export function structureCss () {
     '}',
     // 视口过窄时藏掉右栏，避免挤压中栏
     '@media (max-width:1180px){ .zf-rail{ display:none; } }',
-    // 尊重系统的减弱动效
+    // 尊重系统的减弱动效（自动）
     '@media (prefers-reduced-motion:reduce){',
     '  .zf-rail{ transition:none; }',
+    '}',
+    // 静止模式（显式开关，对标 Mornye 的「静止模式」）：
+    // 只关本插件自己声明的过渡，不去全局 * { transition:none } ——
+    // 那会连外壳的动画一起干掉，属于越权。
+    'body[data-zf-motion="reduced"] .zf-rail,',
+    'body[data-zf-motion="reduced"] .zf-rail *,',
+    'body[data-zf-motion="reduced"] .zf-nav *,',
+    'body[data-zf-motion="reduced"] [data-zf-wallpaper]{',
+    '  transition:none !important;',
+    '  animation:none !important;',
     '}'
   ].join('\n')
 }
@@ -809,13 +820,19 @@ export function apply (ctx, config) {
 
       if (route === '/themes') {
         // 浏览器半边据此注册「外观」下拉里的主题，并用 roles 算壁纸的「纱」色。
+        //
+        // `accentHue` 必须在这里生效：主题的 token 表是**宿主算好下发**的
+        // （客户端不 import palette.js），所以强调色色相覆盖要在这里算进去。
+        // 客户端改 accentHue 后会重新拉这个接口并**重注册**主题。
+        const accentHue = settings.get()?.accentHue
         sendJson(res, 200, {
           // 探活标记：宿主进程会缓存 ESM 模块，这个字段能一眼看出
           // 跑的是不是最新代码（`plugin_manager` 重载不一定能刷新依赖模块）。
           build: PLUGIN_BUILD,
-          themes: themeDefinitions(),
+          accentHue,
+          themes: themeDefinitions(accentHue),
           presets: PRESET_IDS,
-          overrides: Object.fromEntries(PRESET_IDS.map(id => [id, overridesFor(id)])),
+          overrides: Object.fromEntries(PRESET_IDS.map(id => [id, overridesFor(id, accentHue)])),
           roles: Object.fromEntries(PRESET_IDS.map(id => [id, PRESETS[id].light !== undefined
             ? { light: PRESETS[id].light, dark: PRESETS[id].dark }
             : null])),

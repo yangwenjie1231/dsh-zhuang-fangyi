@@ -4,7 +4,12 @@
  * 持久化位置：`$DSH_HOME/zhuang-fangyi/settings.json`
  */
 
-import { DEFAULT_PRESET, PRESET_IDS } from './palette.js'
+import {
+  DEFAULT_PRESET,
+  PRESET_IDS,
+  ACCENT_HUE_PRESET,
+  normalizeAccentHue
+} from './palette.js'
 
 /** 明暗模式。`system` 走 overrideTokens（不改 preference，保住跟随系统）。 */
 export const SCHEMES = ['system', 'light', 'dark']
@@ -34,8 +39,16 @@ export const POSITIONS = ['cover', 'right', 'tile']
  */
 export const BG_OPACITY_MAX = 45
 
-/** 设置结构版本。v2 加入观测栏 / 头像气泡重绘（顶栏已移除）。 */
-export const SETTINGS_VERSION = 2
+/**
+ * 设置结构版本。
+ *
+ *   v1 → v2：加入观测栏 / 头像气泡重绘（顶栏后来移除）
+ *   v2 → v3：加入强调色色相覆盖（`accentHue`）与静止模式（`motion`）
+ */
+export const SETTINGS_VERSION = 3
+
+/** 静止模式取值。`auto` = 跟随系统 `prefers-reduced-motion`。 */
+export const MOTION_MODES = ['auto', 'reduced']
 
 /** 右侧观测栏宽度范围（px）。 */
 export const RAIL_WIDTH = { min: 240, max: 380, default: 288 }
@@ -56,6 +69,9 @@ export function defaultSettings () {
     heroAvatar: true,
     titlebarFollow: true,
     accentGlow: false,
+    // v3 新增：强调色色相覆盖（'preset' = 沿用预设自带强调色）+ 静止模式
+    accentHue: ACCENT_HUE_PRESET,
+    motion: 'auto',
     // v2 新增：皮肤层（顶栏已移除，字段不再使用）
     rail: true,
     railWidth: RAIL_WIDTH.default,
@@ -94,6 +110,10 @@ export function normalizeSettings (input) {
   ]) {
     if (typeof input[key] === 'boolean') out[key] = input[key]
   }
+  // v3：强调色色相（'preset' 或 0..360，非法回落 'preset'）
+  out.accentHue = normalizeAccentHue(input.accentHue)
+  // v3：静止模式
+  if (MOTION_MODES.includes(input.motion)) out.motion = input.motion
   out.railWidth = clamp(input.railWidth, RAIL_WIDTH.min, RAIL_WIDTH.max, base.railWidth)
   out.version = SETTINGS_VERSION
   return out

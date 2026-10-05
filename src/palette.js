@@ -312,6 +312,36 @@ export const PRESET_SPECS = {
 }
 
 /**
+ * 一组颜色里**最亮**的那个（按相对亮度）。
+ *
+ * 用于浅色模式：强调色要在最亮的面上仍然够暗，才算可读。
+ */
+export function lightestOf (colors) {
+  let best = null
+  let bestLum = -1
+  for (const c of colors) {
+    const l = luminance(c)
+    if (l !== null && l > bestLum) { bestLum = l; best = c }
+  }
+  return best ?? undefined
+}
+
+/**
+ * 一组颜色里**最暗**的那个（按相对亮度）。
+ *
+ * 用于深色模式：强调色要在最暗的面上仍然够亮，才算可读。
+ */
+export function darkestOf (colors) {
+  let best = null
+  let bestLum = 2
+  for (const c of colors) {
+    const l = luminance(c)
+    if (l !== null && l < bestLum) { bestLum = l; best = c }
+  }
+  return best ?? undefined
+}
+
+/**
  * 由一个预设 + 明暗生成完整角色表。
  *
  * 角色说明（每个模式各一套）：
@@ -347,7 +377,7 @@ export const PRESET_SPECS = {
  * @param {'light'|'dark'} scheme
  * @returns {Record<string,string>} 角色表
  */
-export function buildRoles (presetId, scheme) {
+export function buildRoles (presetId, scheme, accentHue = ACCENT_HUE_PRESET) {
   const spec = PRESET_SPECS[presetId]
   if (spec === undefined) throw new Error(`未知预设：${presetId}`)
   const dark = scheme === 'dark'
@@ -373,8 +403,22 @@ export function buildRoles (presetId, scheme) {
   r.textMuted = tint(hue, T.textMuted / 100, c * 0.35)
   r.textFaint = tint(hue, T.textFaint / 100, c * 0.40)
 
-  // ── 强调色：深色用官方本色，浅色用压深版 ──
-  r.brand = dark ? spec.accent : spec.accentLight
+  // ── 强调色：深色用官方本色，浅色用压深版（可按 accentHue 旋转色相）──
+  //
+  // 换色相时按**最难读的那个底**做明度校正：`link` 要在 4 个面上达 4.5:1
+  // （base / 气泡 / 代码块 / 二级面），取其中最亮的（浅色）或最暗的（深色）
+  // 作为参照，并留出 `link`/`focusRing` 相对 `brand` 的明度偏移余量。
+  // 详见 `rotateAccent` 的注释与 `contrast.js` 的色相扫描。
+  // `link` 要同时读在 4 个面上，其中一个（`specific-bubble` = `brandSoft`）
+  // **本身由强调色派生** —— 换色相时前景与背景一起动，是自指约束，
+  // 所以必须把这几个真实的底都拿来逐一求解，不能只挑一个「最难的面」。
+  const accentSurfaces = [r.base, r.surfaceAlt, r.code, r.brandSoft]
+  r.brand = rotateAccent(dark ? spec.accent : spec.accentLight, accentHue, {
+    againstAll: accentSurfaces,
+    // link 在深色下比 brand 暗 0.02、focusRing 又偏移，所以按比 4.5 更严的
+    // 目标求解，给派生色留出余量（避免「brand 达标、link 不达标」）。
+    minRatio: 5.4
+  })
   r.brandHover = adjust(r.brand, { l: dark ? 0.06 : 0.05, s: 0.02 })
   r.brandInk = dark ? r.base : '#FFFFFF'
   r.brandSoft = tint(hue, (dark ? 20.0 : 90.5) / 100, c * 3.50)
@@ -394,6 +438,100 @@ export function buildRoles (presetId, scheme) {
   r.skeleton = r.text + (dark ? '14' : '0A')
 
   return r
+}
+
+/* ------------------------------------------------------------------ *
+ * 强调色色相覆盖（accentHue）
+ * ------------------------------------------------------------------ */
+
+/** `accentHue` 的「不覆盖」取值：沿用预设自带的强调色。 */
+export const ACCENT_HUE_PRESET = 'preset'
+
+/**
+ * 把 `accentHue` 归一化为 `'preset'` 或 0..360 的整数。
+ *
+ * 非法输入一律回落 `'preset'`（设置损坏时宁可没效果，也不要给出怪色）。
+ */
+export function normalizeAccentHue (value) {
+  if (value === ACCENT_HUE_PRESET || value === undefined || value === null) return ACCENT_HUE_PRESET
+  const n = typeof value === 'number' ? value : Number(value)
+  if (!Number.isFinite(n)) return ACCENT_HUE_PRESET
+  const wrapped = ((Math.round(n) % 360) + 360) % 360
+  return wrapped
+}
+
+/**
+ * 按目标色相旋转一个强调色，并**自动校正明度**以保住可读性。
+ *
+ * ── 为什么不能只转色相（实测数据驱动）──────────────────────────────
+ *
+ * 最初只改色相、保留原明度，理由是「预设的 accentLight 明度是按可读性调过的，
+ * 换色相后明度约束依然成立」。**这个推理是错的** —— 相对亮度取决于色相：
+ * 人眼对绿最敏感、对蓝最迟钝。同一明度下，黄绿转成蓝后亮度显著下降。
+ *
+ * 实测（`contrast.js` 的色相扫描，12 色相 × 4 预设 × 2 明暗 × 3 断言）：
+ * 只转色相会有 **62 项跌破阈值**，例如
+ *   · wine/light 转 60°（黄）：链接 3.25:1 < 4.5（变亮 → 在浅底上不够暗）
+ *   · burst/dark 转 240°（蓝）：链接 4.16:1 < 4.5（变暗 → 在深底上不够亮）
+ *
+ * ── 做法：以「对比度目标」为准，反解明度 ────────────────────────────
+ *
+ * 保留饱和度，明度则在原值附近搜索，使该颜色相对**参照底色**的对比度不低于
+ * 阈值（浅色强调色按浅色底、深色按深色底）。搜索是单调的：向目标方向微调
+ * 明度直到达标，最多若干步；找不到就用最接近的一档（并由对比度测试兜住）。
+ *
+ * @param {string} value 预设自带的强调色
+ * @param {string|number} accentHue `'preset'` 或 0..360
+ * @param {object} [opts]
+ * @param {string} [opts.against] 参照底色（hex）。给了才做明度校正。
+ * @param {number} [opts.minRatio] 目标对比度，默认 4.5（链接级）
+ */
+export function rotateAccent (value, accentHue, opts = {}) {
+  const target = normalizeAccentHue(accentHue)
+  if (target === ACCENT_HUE_PRESET) return value
+  const c = parseColor(value)
+  if (c === null) return value
+  const hsl = rgbToHsl(c)
+  if (Math.abs(target - hsl.h) < 1e-6) return value
+  let l = hsl.l
+  const minRatio = opts.minRatio ?? 4.5
+  // 参照面：`against`（单个）或 `againstAll`（多个，需全部满足）
+  const surfaces = opts.againstAll ?? (opts.against !== undefined ? [opts.against] : [])
+  if (surfaces.length > 0) {
+    // 注意：其中一个参照面可能**由强调色自身派生**（气泡底 = brandSoft）。
+    // 这里把它当作固定色 —— 迭代求解会在下面的循环里重新评估，
+    // 但由于 brandSoft 只随**色相/明度配方**变、不随本次求解的明度变
+    // （它的明度是常量 90.5/20），所以固定参照是准确的。
+    const ok = (lightness) => {
+      const cand = hslToHex(target, hsl.s, lightness)
+      return surfaces.every((bg) => {
+        const ratio = contrast(cand, bg)
+        return ratio !== null && ratio >= minRatio
+      })
+    }
+    if (!ok(l)) {
+      // 方向由参照面的平均亮度决定：浅底 → 压深；深底 → 提亮
+      const lums = surfaces.map((c) => luminance(c)).filter((x) => x !== null)
+      const avg = lums.length > 0 ? lums.reduce((a, b) => a + b, 0) / lums.length : 0
+      const darken = avg > 0.5
+      let found = null
+      for (let step = 1; step <= 80; step += 1) {
+        const cand = darken ? l - step * 0.01 : l + step * 0.01
+        if (cand < 0 || cand > 1) break
+        if (ok(cand)) { found = cand; break }
+      }
+      // 该方向走到头也没达标 → 试反方向（极端色相可能出现）
+      if (found === null) {
+        for (let step = 1; step <= 80; step += 1) {
+          const cand = darken ? l + step * 0.01 : l - step * 0.01
+          if (cand < 0 || cand > 1) break
+          if (ok(cand)) { found = cand; break }
+        }
+      }
+      l = found !== null ? found : (darken ? 0 : 1)
+    }
+  }
+  return hslToHex(target, hsl.s, l)
 }
 
 /** 全部预设 × 明暗的角色表（Host 通过 `/themes` 交给浏览器半边算「纱」色）。 */
@@ -559,7 +697,7 @@ export function tokenName (short) {
  * @param {string} presetId
  * @returns {{ light: Record<string,string>, dark: Record<string,string> }}
  */
-export function buildTokens (presetId) {
+export function buildTokens (presetId, accentHue = ACCENT_HUE_PRESET) {
   const preset = PRESETS[presetId]
   if (preset === undefined) throw new Error(`未知预设：${presetId}`)
   const spec = PRESET_SPECS[presetId]
@@ -571,23 +709,28 @@ export function buildTokens (presetId) {
     light[name] = ramp.light[i]
     dark[name] = ramp.dark[i]
   })
-  for (const [short, value] of Object.entries(deriveAliases(preset.light))) {
+  // 强调色可能被 accentHue 覆盖，所以角色表要**按需重算**而不是直接用静态 PRESETS
+  const hue = normalizeAccentHue(accentHue)
+  const roles = hue === ACCENT_HUE_PRESET
+    ? { light: preset.light, dark: preset.dark }
+    : { light: buildRoles(presetId, 'light', hue), dark: buildRoles(presetId, 'dark', hue) }
+  for (const [short, value] of Object.entries(deriveAliases(roles.light))) {
     light[tokenName(short)] = value
   }
-  for (const [short, value] of Object.entries(deriveAliases(preset.dark))) {
+  for (const [short, value] of Object.entries(deriveAliases(roles.dark))) {
     dark[tokenName(short)] = value
   }
   return { light, dark }
 }
 
 /** 转成 `ctx.theme.register()` 需要的扁平 token 表。 */
-export function tokensForScheme (presetId, scheme) {
-  return buildTokens(presetId)[scheme]
+export function tokensForScheme (presetId, scheme, accentHue = ACCENT_HUE_PRESET) {
+  return buildTokens(presetId, accentHue)[scheme]
 }
 
 /** 转成 `ctx.theme.overrideTokens()` 需要的 `{ token: { light, dark } }`。 */
-export function overridesFor (presetId) {
-  const { light, dark } = buildTokens(presetId)
+export function overridesFor (presetId, accentHue = ACCENT_HUE_PRESET) {
+  const { light, dark } = buildTokens(presetId, accentHue)
   const out = {}
   for (const name of Object.keys(light)) out[name] = { light: light[name], dark: dark[name] }
   return out
@@ -606,7 +749,7 @@ export function themeLabel (presetId, scheme) {
 }
 
 /** 全部 8 个主题定义（4 预设 × 2 明暗）。 */
-export function themeDefinitions () {
+export function themeDefinitions (accentHue = ACCENT_HUE_PRESET) {
   const out = []
   for (const presetId of PRESET_IDS) {
     for (const scheme of ['light', 'dark']) {
@@ -614,7 +757,7 @@ export function themeDefinitions () {
         id: themeId(presetId, scheme),
         colorScheme: scheme,
         label: themeLabel(presetId, scheme),
-        tokens: tokensForScheme(presetId, scheme)
+        tokens: tokensForScheme(presetId, scheme, accentHue)
       })
     }
   }
