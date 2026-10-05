@@ -2301,6 +2301,46 @@ function shellDom (opts = {}) {
   ok('滑杆在松手/失焦时提交',
     /onPointerUp:\s*event\s*=>\s*commit/.test(src) && /onBlur:\s*event\s*=>\s*commit/.test(src))
 }
+// 用例 52：首帧注入（盖住官方开机卡片）—— 走 webserver/index-inject
+//
+// 这是「开场动画」的正确做法，也是我此前误判的地方：客户端插件挂遮罩要
+// 338ms，而官方卡片 67ms 就画出来了（实测数据），中间 271ms 客户端怎么调
+// z-index 都盖不住。只有让**被送出的那份文档**自己先盖住才行。
+{
+  console.log('\n--- 首帧注入（盖住官方开机卡片）---')
+  const hostSrc = fs.readFileSync(path.join(ROOT, 'index.js'), 'utf8')
+
+  // 1) 用的是官方公开口子（不是 tapIndex，也不是改 asar）
+  ok('注册了 webserver/index-inject', hostSrc.includes("'webserver/index-inject'"))
+  ok('推 style 行（盖住卡片）', /table\.push\(\{\s*kind:\s*'style'/.test(hostSrc))
+  ok('推 script 行（首帧生命周期）', /table\.push\(\{\s*kind:\s*'script'/.test(hostSrc))
+
+  // 2) 关掉时不注入（「关闭档一张黑屏都不出现」）
+  ok('splash 关闭时不注入', /splash === false\)\s*return/.test(hostSrc))
+
+  // 3) 首帧脚本的关键能力
+  const m = /const FIRST_FRAME_JS = \[([\s\S]*?)\]\.join/.exec(hostSrc)
+  ok('FIRST_FRAME_JS 存在', m !== null)
+  const js = m ? m[1] : ''
+  ok('插入 #zf-first-frame 遮罩', js.includes('zf-first-frame'))
+  ok('暴露 window.__zfFirstFrame.end()', js.includes('__zfFirstFrame={end:end}'))
+  ok('官方卡片被按下去（visibility:hidden）', hostSrc.includes('[data-dsh-boot]{visibility:hidden'))
+  ok('自保：官方卡片消失后自行撤离',
+    js.includes('querySelector("[data-dsh-boot]")===null'))
+  ok('自保：12s 绝对上限', js.includes('12000'))
+  ok('end() 幂等', js.includes('if(ended)return'))
+  ok('遮罩 pointer-events:none（不挡操作）',
+    hostSrc.includes('pointer-events:none') && js.includes('zf-first-frame'))
+
+  // 4) 客户端交接
+  const clientSrc = fs.readFileSync(path.join(ROOT, 'client.js'), 'utf8')
+  ok('客户端调用首帧 end()（同一帧无缝交接）',
+    clientSrc.includes('globalThis.__zfFirstFrame?.end?.()'))
+  ok('交接幂等（firstFrameEnded 标记）',
+    clientSrc.includes('state.firstFrameEnded !== true') &&
+    clientSrc.includes('state.firstFrameEnded = true') &&
+    clientSrc.includes('firstFrameEnded: false'))
+}
 
 console.log(`\n合计 ${pass + fail} 项，通过 ${pass}，失败 ${fail}`)
 if (fail > 0) {

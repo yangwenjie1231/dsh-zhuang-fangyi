@@ -1001,6 +1001,61 @@ export function apply (ctx, config) {
     return `${html.slice(0, at)}${tag}\n${html.slice(at)}`
   }
 
+  /**
+   * 首帧样式：盖住官方开机卡片，并给遮罩层定好底色。
+   *
+   * 底色取主题画布色 —— 但此刻客户端还没跑，拿不到 presenter 写的 token，
+   * 所以用预设里算好的 base 色（与随后应用的主题同色系，交接时看不出接缝）。
+   */
+  function firstFrameCss () {
+    const s = settings.get()
+    const scheme = s?.scheme === 'light' ? 'light' : 'dark'
+    const preset = PRESETS[s?.preset]
+    const bg = preset?.[scheme]?.base ?? '#151716'
+    return [
+      '/* 庄方宜主题 · 首帧（盖住官方开机卡片）*/',
+      `html{background:${bg};}`,
+      '#zf-first-frame{',
+      '  position:fixed;inset:0;z-index:2147483000;',
+      `  background:${bg};`,
+      '  display:flex;align-items:center;justify-content:center;',
+      '  pointer-events:none;',
+      '  transition:opacity 260ms ease-out;',
+      '}',
+      '#zf-first-frame.zf-out{opacity:0;}',
+      // 官方卡片与它的 spinner 一并按下去，避免透过底色露出一点
+      '[data-dsh-boot]{visibility:hidden !important;}'
+    ].join('\n')
+  }
+
+  /**
+   * 首帧脚本（同步执行，早于 boot 卡片绘制）。
+   *
+   * 职责：① 立刻插入遮罩（纯色）；② 提供 `end()` 让客户端在同一帧退役它；
+   * ③ 自保 —— 官方卡片消失或超时后自行撤离，避免客户端出问题时挡住界面。
+   */
+  const FIRST_FRAME_JS = [
+    '(function(){',
+    '  if(document.getElementById("zf-first-frame"))return;',
+    '  var d=document.createElement("div");d.id="zf-first-frame";',
+    '  (document.body||document.documentElement).appendChild(d);',
+    '  var ended=false;',
+    '  function end(){',
+    '    if(ended)return;ended=true;',
+    '    var el=document.getElementById("zf-first-frame");',
+    '    if(!el)return;',
+    '    el.classList.add("zf-out");',
+    '    setTimeout(function(){el.remove();},300);',
+    '  }',
+    '  window.__zfFirstFrame={end:end};',
+    '  // 自保：官方卡片消失（应用已挂载）→ 撤；再给 12s 绝对上限',
+    '  var iv=setInterval(function(){',
+    '    if(document.querySelector("[data-dsh-boot]")===null){clearInterval(iv);end();}',
+    '  },250);',
+    '  setTimeout(function(){clearInterval(iv);end();},12000);',
+    '})();'
+  ].join('\n')
+
   ctx.inject(['webServer'], scoped => {
     const server = scoped.webServer
     scoped.effect(
@@ -1011,7 +1066,39 @@ export function apply (ctx, config) {
       () => server.tapIndex(tap),
       'zhuang-fangyi: first-paint tokens'
     )
-    logger.info?.('zhuang-fangyi: 路由已挂载于 ' + ROUTE_PREFIX)
+
+    /* ── 首帧注入：盖住官方开机卡片（走 `webserver/index-inject`）────────
+     *
+     * ── 为什么必须走这条路（而不是客户端插件）──────────────────────────
+     *
+     * 官方有一张开机卡片（`[data-dsh-boot]`，画的是 "HARNESS / Loading
+     * plugins…"），由 shell 内核绘制，**等所有插件加载完才移除**。而
+     * `shell.overlay` 这类插槽要等 shell 渲染后才存在 —— 所以**走插槽的开场
+     * 动画永远排在官方卡片后面**（实测：卡片 67ms 出现、客户端遮罩 338ms
+     * 才挂上、卡片 517ms 移除，中间 271ms 是客户端怎么调 z-index 都盖不住的）。
+     *
+     * `webserver/index-inject` 是官方留给插件的口子：它收集一张注入行表，
+     * 由**载体**在页面解析阶段应用 ——
+     *   · Web 载体：渲染进 index.html 的 `<head>`，早于 shell 的 module script；
+     *   · 桌面载体：在 settle `__DSH_BOOT_READY__` **之前逐行应用**
+     *     （`script` 行走 `createElement` 所以会执行）。
+     * 两条路都发生在**内核建卡片之前**，于是卡片从来没被画到屏幕上。
+     *
+     * 行类型只支持纯 JSON 数据（`global` / `style` / `script` / `script-src` /
+     * `html` / `meta`），所以这里推两行：一条 `style`、一条同步 `script`。
+     *
+     * ── 与客户端半边的约定（改一边要改另一边）──────────────────────────
+     *
+     *   `window.__zfFirstFrame.end()`  客户端遮罩挂载后调用它退役首帧
+     *                                  （同一帧交接，无闪烁）
+     * 首帧也不赖着不走：脚本自己每 250ms 看一次官方卡片，卡片消失就自行撤离，
+     * 另有 12s 绝对上限 —— 即使客户端插件挂了，页面仍然可看可点。
+     */
+    scoped.on('webserver/index-inject', table => {
+      if (settings.get()?.splash === false) return   // 关掉时一张黑屏都不出现
+      table.push({ kind: 'style', text: firstFrameCss() })
+      table.push({ kind: 'script', placement: 'head', text: FIRST_FRAME_JS })
+    })
   })
 }
 

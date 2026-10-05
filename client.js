@@ -834,6 +834,8 @@ window.__ModuleLoader__.load({
         wallpaperMeta: {},
         /** 本次页面会话是否已经播过启动动效（避免每次 emit 都闪一次）。 */
         splashPlayed: false,
+        /** 是否已让宿主首帧遮罩退役（幂等，见 Splash 的交接说明）。 */
+        firstFrameEnded: false,
         layerDispose: null,
         registered: new Map(),
         heroDispose: null,
@@ -2046,6 +2048,22 @@ window.__ModuleLoader__.load({
         // 所以这里统一让组件在 DURATION 后卸载即可。
         if (settings.splash === false) return null
         state.splashPlayed = true
+
+        // ── 与宿主半边首帧的交接（同一帧，无缝）─────────────────────────
+        //
+        // 宿主通过 `webserver/index-inject` 在**页面解析阶段**插了一块纯色
+        // 遮罩（`#zf-first-frame`），它盖住了官方开机卡片 —— 所以屏幕从第一帧
+        // 起就是我们的底色。等这里的立绘真正要渲染时，调 `end()` 让那块首帧
+        // 淡出，立绘同时在下面淡入，接缝不可见。
+        //
+        // 这一步是**幂等**的，且首帧脚本自己也有自保撤离（卡片消失/12s 超时），
+        // 所以这里即使失败也只是少一次淡出，不会留下遮挡。
+        if (state.firstFrameEnded !== true) {
+          state.firstFrameEnded = true
+          try {
+            globalThis.__zfFirstFrame?.end?.()
+          } catch { /* 注入脚本不在（Web 端或已撤离）：忽略 */ }
+        }
 
         const narrow = typeof window !== 'undefined' && window.innerWidth <= 900
         const file = narrow ? 'splash-sm.webp' : 'splash.webp'
