@@ -1082,6 +1082,9 @@ window.__ModuleLoader__.load({
               // 「真的挂着内容」才代表 tab 可见 —— 注册成功但 tabMounted=0
               // 就是「类型声明好了但用户没打开」的状态
               mounted: state.tabMounted,
+              // 原生面板是否展开：收起时 tab 仍挂载但被移出可视区，
+              // 这个字段能立刻区分「tab 在显示」与「tab 挂着但看不见」
+              panelOpen: nativeRightbarOpen(document),
               owner: railOwner()
             },
             // 订阅者数量：`useStore` 在 useEffect 里注册，为 0 说明
@@ -1945,12 +1948,23 @@ window.__ModuleLoader__.load({
        *
        * @returns {'tab'|'overlay'|'none'}
        */
-      function railOwner () {
+      function railOwner (doc = document) {
         const s = state.settings
         if (s === null || s.enabled !== true || s.rail === false) return 'none'
         if (!state.styleReady) return 'none'
-        // 只有 tab **真的挂着内容**才算接管 —— 注册 ≠ 打开
-        return state.tabMounted > 0 ? 'tab' : 'overlay'
+        // ── 两个条件缺一不可：tab 挂着内容 **且** 原生面板确实展开 ──────────
+        //
+        // 只判 `tabMounted` 会踩这个坑（用户实测反馈「第一次展开再收起后，
+        // 观测台不再显示」）：官方实现里
+        //
+        //   "Docked content stays mounted while collapsed, translated off the
+        //    frame's right edge"（收起时 docked 内容仍挂载，只是平移出右边缘）
+        //
+        // 所以收起后 `tabMounted` 依然是 1 —— 只看它会误判「tab 正在显示」，
+        // 于是浮层让位，而 tab 已被移出可视区 → **两边都看不见**。
+        // 加上 `nativeRightbarOpen` 后：收起 → 浮层接手；展开 → tab 接管。
+        if (state.tabMounted > 0 && nativeRightbarOpen(doc)) return 'tab'
+        return 'overlay'
       }
 
       /**

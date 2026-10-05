@@ -1573,13 +1573,27 @@ function shellDom (opts = {}) {
   ok('注册但未打开 → overlay（不让位给不存在的 tab）',
     railOwner() === 'overlay', railOwner())
 
-  // 场景 3：tab 真的挂着内容 → 浮层让位
+  // 场景 3：tab 挂着 **且面板展开** → 浮层让位
+  // 官方实现："Docked content stays mounted while collapsed, translated off
+  // the frame's right edge" —— 所以「挂着」不足以判定 tab 可见。
+  // shellDom 默认给 `data-rightbar-collapsed`（收起）；展开态要显式关掉它
+  const shellOpen = shellDom({ kinds: [], rightbarCollapsed: false })  // 无 collapsed = 展开
+  const shellShut = shellDom({ rightbarCollapsed: true })              // 有 = 收起
   mod.__test.state.tabMounted = 1
-  ok('tab 已挂载 → tab（浮层让位）', railOwner() === 'tab', railOwner())
+  ok('tab 挂着 + 面板展开 → tab（浮层让位）',
+    railOwner(shellOpen.document) === 'tab', railOwner(shellOpen.document))
+
+  // 场景 3b（用户实测反馈）：收起后 tab 仍挂载但被平移出可视区
+  //   → 必须回落浮层，否则两边都看不见
+  ok('tab 挂着但面板收起 → overlay（否则两边都空）',
+    railOwner(shellShut.document) === 'overlay', railOwner(shellShut.document))
+  ok('Web 壳收起属性同样识别',
+    railOwner(shellDom({ collapseAttr: 'data-details-collapsed' }).document) === 'overlay')
 
   // 场景 4：tab 被用户关掉 → 浮层立刻回来接替
   mod.__test.state.tabMounted = 0
-  ok('tab 被关闭 → 回落 overlay（右边不会空）', railOwner() === 'overlay', railOwner())
+  ok('tab 被关闭 → 回落 overlay（右边不会空）',
+    railOwner(shellOpen.document) === 'overlay', railOwner(shellOpen.document))
 
   // 场景 5：插件停用 → none
   mod.__test.state.tabRegistered = false
