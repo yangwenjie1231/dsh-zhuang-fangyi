@@ -720,6 +720,53 @@ export function structureCss () {
     'body[data-zf-avatar] [data-chat-flow-kind="assistant-step"][data-turn-process-hidden]::before{',
     '  content:none;display:none;',
     '}',
+    /* ── 代码块底色（修官方的变量作用域 bug）─────────────────────────────
+     *
+     * ── 症状（用户反馈「这一块一直都是白色的」）────────────────────────
+     *
+     * 代码块（shiki 高亮）的背景一直是白的，不受主题影响。
+     *
+     * ── 根因：`:root` 上的变量读不到 `body` 上的 alias（实测确认）────────
+     *
+     * 外壳的三层链条（源码实测）：
+     *
+     *   :root{ --dsw-static-neutral-bluish-*: #... }            ← 色阶在 :root
+     *   body { --dsw-alias-markdown-code-block: var(--static) } ← alias 在 body
+     *   :root{ --shiki-background: var(--dsw-alias-markdown-    ← shiki 又在 :root
+     *                              code-block) }                  ✗ 读不到 body！
+     *
+     * **自定义属性在「声明它的那个元素」上做变量替换。** `html` 不是 `body`
+     * 的后代，所以 `:root` 上解析 `var(--dsw-alias-markdown-code-block)` 失败
+     * → `--shiki-background` 成为无效值 → 代码块的
+     * `background-color:var(--shiki-background)` 退化为 `transparent`。
+     *
+     * 用 Edge headless 实测（真实 CSS 引擎，非推理）：
+     *
+     *   :root 上 --shiki-background 解析为  → ""（空）
+     *   <pre> 计算 background-color         → rgba(0,0,0,0)
+     *
+     * ⚠️ 这是**官方自己的 bug**（默认主题下同样如此），不是我们引入的 ——
+     * 但既然要做主题，就该顺手修掉：它让代码块在任何主题下都发白。
+     *
+     * ── 修法：在 `body` 上重声明 `--shiki-*` ────────────────────────────
+     *
+     * 把 shiki 变量**也**声明到 `body`（它能看到 `body` 自己的 alias），
+     * 明暗两套就都自动跟随了。实测三选一对比：
+     *
+     *   A. body 上重声明 shiki      浅 rgb(232,232,234) / 深 rgb(43,43,46)  ✓
+     *   B. html 上也放 alias         浅亮 / **深色失效**（alias 只有一套）   ✗
+     *   C. !important 覆盖           正确，但需要 !important 且写死       ✓
+     *
+     * 选 A：不需要 `!important`、不写死颜色、明暗两套都跟随主题。
+     *
+     * 顺带把 `--shiki-foreground` 也一起修（同一个 bug，否则代码文字也会
+     * 落到外壳默认色，与主题不一致）。
+     */
+    'body{',
+    '  --shiki-background:var(--dsw-alias-markdown-code-block);',
+    '  --shiki-foreground:var(--dsw-alias-label-primary);',
+    '}',
+
     // 用户气泡：细边框 + 圆角，去阴影
     'body[data-zf-avatar] [data-chat-flow-kind="user"] [data-zf-bubble],',
     'body[data-zf-avatar] [data-chat-flow-kind="steering"] [data-zf-bubble]{',

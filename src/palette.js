@@ -247,8 +247,19 @@ const SURFACE_L = {
     sidebar: 93.0, overlay: 98.4, code: 91.6, codeBanner: 89.0, inlineCode: 91.0
   },
   dark: {
+    // ⚠️ `code` 必须与 `base` 拉开足够距离：它曾经是 11.2（与 base 只差 2.6
+    // 个百分点），修好 shiki 底色后发现**深色下看不出那是个代码块** ——
+    // 实测亮度差只有 0.0032–0.0061。
+    //
+    // 只提到 14.5（差 5.9 个百分点）还不够：**亮度曲线在暗端是非线性的**，
+    // 所以同样的百分点间距，base 越亮的预设绝对差越小 —— `wine`
+    // （`surfaceShiftDark = +1.6`，base 最亮）实测只有 0.0099，仍是
+    // 「几乎看不出」。现在给到 8.4 个百分点，实测差 0.0147–0.0192。
+    //
+    // `codeBanner`（标题条）与 `inlineCode`（行内代码）同步上调，保持
+    // 「行内 > 标题条 > 代码块 > 画布」的层级不倒挂。
     base: 8.6, surface: 12.4, surfaceAlt: 16.4, surfaceSunken: 20.4,
-    sidebar: 10.4, overlay: 16.4, code: 11.2, codeBanner: 14.6, inlineCode: 16.4
+    sidebar: 10.4, overlay: 16.4, code: 17.0, codeBanner: 20.2, inlineCode: 21.4
   }
 }
 

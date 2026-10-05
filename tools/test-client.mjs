@@ -2798,6 +2798,68 @@ function shellDom (opts = {}) {
   ok('折叠行非空（这正是旧判据误判的原因）',
     folded[0].children.length > 0)
 }
+// 用例 59：代码块底色（修官方的 shiki 变量作用域 bug）
+//
+// 用户反馈「这一块一直都是白色的」。
+//
+// 根因：外壳把 shiki 变量声明在 `:root`，但它的值引用 `body` 上的 alias：
+//   :root{ --shiki-background: var(--dsw-alias-markdown-code-block) }
+//   body { --dsw-alias-markdown-code-block: var(--dsw-static-...) }
+// 自定义属性在**声明它的元素上**做替换，而 html 不是 body 的后代 →
+// 解析失败 → --shiki-background 无效 → background-color 退化为 transparent。
+//
+// 用 Edge headless 实测过（真实 CSS 引擎）：
+//   :root 上 --shiki-background → ""（空）
+//   <pre> 计算 background-color → rgba(0,0,0,0)
+// 修法 A（body 上重声明）→ 浅 rgb(232,232,234) / 深 rgb(43,43,46) ✓
+{
+  console.log('\n--- 代码块底色（shiki 变量作用域）---')
+  const { structureCss } = await import('../index.js')
+  const css = structureCss()
+  const flat = css.replace(/\s+/g, '')
+
+  ok('CSS 在 body 上重声明 --shiki-background',
+    flat.includes('body{--shiki-background:var(--dsw-alias-markdown-code-block)'))
+  ok('CSS 在 body 上重声明 --shiki-foreground',
+    flat.includes('--shiki-foreground:var(--dsw-alias-label-primary)'))
+  ok('用 var() 引用 alias（不写死颜色，明暗自动跟随）',
+    /--shiki-background:var\(--dsw-alias-markdown-code-block\)/.test(flat))
+  ok('不依赖 !important（body 声明足够，无需压外壳）',
+    !/--shiki-background:[^;]*!important/.test(flat))
+
+  // 我们确实提供了被引用的 token（否则修了也没底色）
+  const pal = await import('../src/palette.js')
+  for (const scheme of ['light', 'dark']) {
+    const t = pal.buildTokens('zhuang')[scheme]
+    ok(`${scheme} 下 markdown-code-block 已注册`,
+      typeof t['--dsw-alias-markdown-code-block'] === 'string')
+    ok(`${scheme} 下 label-primary 已注册`,
+      typeof t['--dsw-alias-label-primary'] === 'string')
+  }
+
+  // 代码块底色必须与画布**可区分**（否则等于没修：底色＝背景色就看不出块）
+  const { contrast, luminance } = pal
+  for (const id of ['zhuang', 'burst', 'cyan', 'wine']) {
+    for (const scheme of ['light', 'dark']) {
+      const t = pal.buildTokens(id)[scheme]
+      const code = t['--dsw-alias-markdown-code-block']
+      const base = t['--dsw-alias-bg-base']
+      const d = Math.abs((luminance(code) ?? 0) - (luminance(base) ?? 0))
+      ok(`${id}/${scheme} 代码块底色与画布可区分`,
+        d > 0.01, `亮度差 ${d.toFixed(4)}（code=${code} base=${base}）`)
+    }
+  }
+
+  // 正文在代码块上要可读（4.5:1）
+  for (const id of ['zhuang', 'burst', 'cyan', 'wine']) {
+    for (const scheme of ['light', 'dark']) {
+      const t = pal.buildTokens(id)[scheme]
+      const r = contrast(t['--dsw-alias-label-primary'], t['--dsw-alias-markdown-code-block'])
+      ok(`${id}/${scheme} 正文在代码块上 ≥4.5:1`,
+        r !== null && r >= 4.5, r === null ? '不可解析' : `${r.toFixed(2)}:1`)
+    }
+  }
+}
 
 console.log(`\n合计 ${pass + fail} 项，通过 ${pass}，失败 ${fail}`)
 if (fail > 0) {
