@@ -703,7 +703,14 @@ window.__ModuleLoader__.load({
          * 记「组件被调用几次」与「每次为什么返回 null」，这样自检能直接回答
          * 「为什么观测栏没出现」，不必靠推理 React 时序（踩过这个坑）。
          */
-        renderCounts: { railCalls: 0, railNull: 0, railRendered: 0, lastNullReason: null }
+        renderCounts: { railCalls: 0, railNull: 0, railRendered: 0, lastNullReason: null },
+        /** 官方右栏 tab 是否注册成功（true 时浮层兜底不再渲染）。 */
+        tabRegistered: false,
+        /** tab 的两个 disposer（阶段一 / 阶段二各一个，卸载时都要释放）。 */
+        tabTypeDispose: null,
+        tabBodyDispose: null,
+        /** tab 相关的诊断信息（自检里看）。 */
+        tabDiag: { attempted: false, ok: false, error: null, kind: null }
       }
 
       const emit = () => {
@@ -912,6 +919,8 @@ window.__ModuleLoader__.load({
             // ── 渲染诊断：直接回答「组件跑了几次、为什么返回 null」──
             // 每次 `Rail()` 被调用都计数并记录返回类型，避免再靠推理猜时序。
             render: { ...state.renderCounts },
+            // 官方右栏 tab 的注册结果（主路径是否走通）
+            officialTab: { ...state.tabDiag, registered: state.tabRegistered },
             // 订阅者数量：`useStore` 在 useEffect 里注册，为 0 说明
             // 组件从未真正挂载（返回 null 的组件 React 仍会跑 effect，
             // 所以 0 就意味着渲染根本没走到 effect）
@@ -1419,43 +1428,23 @@ window.__ModuleLoader__.load({
        */
 
       /**
-       * 右侧观测栏。
+       * 观测台的**内容**（与容器无关，两处复用）。
        *
-       * **不调用 `ctx.layout.openRightbar()`** —— 那是文件 / 终端 / 文档预览等
-       * 插件共用的原生面板，抢过来会与它们打架。这里独立渲染，原生右栏展开时
-       * 由 `mountSkin` 自动隐藏。
+       * 抽出来是因为要同时服务于两个容器：
+       *   · 官方右栏标签页（`sidebar.right.pane.tab`）—— 主路径；
+       *   · `shell.overlay` 浮层 —— 兜底（无官方右栏服务的平台）。
        *
-       * 刻意**不读取消息正文**：本插件是皮肤，不该碰会话内容。读数只来自
-       * 外壳已渲染的统计行（`[data-composer-stats]`）。
+       * 这样内容只写一遍，容器差异由调用方负责。
        */
-      function Rail () {
+      function RailContent () {
         const s = useStore()
-        // 渲染诊断：自检里直接看这三个数就知道卡在哪一步
-        const rc = state.renderCounts
-        rc.railCalls += 1
-        if (!state.styleReady) {
-          rc.railNull += 1; rc.lastNullReason = 'styleReady=false'
-          return null
-        }
         const settings = s.settings
-        if (settings === null) {
-          rc.railNull += 1; rc.lastNullReason = 'settings=null'
-          return null
-        }
-        if (settings.enabled !== true) {
-          rc.railNull += 1; rc.lastNullReason = 'enabled=false'
-          return null
-        }
-        if (settings.rail === false) {
-          rc.railNull += 1; rc.lastNullReason = 'rail=false'
-          return null
-        }
-        rc.railRendered += 1
+        if (settings === null || settings.enabled !== true) return null
         const st = state.stats
         const set = patch => { void save(patch) }
         const stateText = SESSION_TEXT[state.sessionState] ?? SESSION_TEXT.idle
 
-        return h('aside', { className: 'zf-rail', 'aria-label': t('rail') },
+        return h('div', { className: 'zf-rail__body' },
           h('div', { className: 'zf-rail__head' },
             h('img', { className: 'zf-rail__avatar', src: `${ROUTE}/art/avatar.webp`, alt: '' }),
             h('div', { style: { minWidth: 0 } },
@@ -1499,6 +1488,59 @@ window.__ModuleLoader__.load({
               settings.background === b ? h('span', null, '✓') : null)))))
       }
 
+      /**
+       * 官方右栏标签页的**面板主体**。
+       *
+       * 注册进 `sidebar.right.pane.tab`（keyed 槽，key = tab 定义的 id）。
+       * 它是**官方容器**里的一个真实标签页 —— 不占额外位置、不冲突、
+       * 随原生右栏一起开合与拖拽调宽。
+       */
+      function RailTab () {
+        const s = useStore()
+        if (!state.styleReady) return null
+        if (s.settings === null || s.settings.enabled !== true || s.settings.rail === false) return null
+        // 官方 tab 已经提供了容器（边框/背景/滚动），所以这里只要内容，
+        // 用 `zf-rail__body` 而不是 `.zf-rail`（后者带 fixed 定位与面板背景）。
+        return h(RailContent)
+      }
+
+      /**
+       * 右侧观测栏（**兜底路径**）。
+       *
+       * 仅在官方右栏 tab 不可用时使用 —— 见 `registerRailTab()` 的说明。
+       * 它是 `shell.overlay` 上的浮层，原生右栏展开时自动让位。
+       */
+      function Rail () {
+        const s = useStore()
+        // 渲染诊断：自检里直接看这三个数就知道卡在哪一步
+        const rc = state.renderCounts
+        rc.railCalls += 1
+        if (!state.styleReady) {
+          rc.railNull += 1; rc.lastNullReason = 'styleReady=false'
+          return null
+        }
+        // 官方 tab 已接管 → 浮层不再渲染（避免两份内容同时出现）
+        if (state.tabRegistered === true) {
+          rc.railNull += 1; rc.lastNullReason = 'official-tab-active'
+          return null
+        }
+        const settings = s.settings
+        if (settings === null) {
+          rc.railNull += 1; rc.lastNullReason = 'settings=null'
+          return null
+        }
+        if (settings.enabled !== true) {
+          rc.railNull += 1; rc.lastNullReason = 'enabled=false'
+          return null
+        }
+        if (settings.rail === false) {
+          rc.railNull += 1; rc.lastNullReason = 'rail=false'
+          return null
+        }
+        rc.railRendered += 1
+        return h('aside', { className: 'zf-rail', 'aria-label': t('rail') }, h(RailContent))
+      }
+
       /* ---------------- 插槽注册 ---------------- */
 
       /**
@@ -1537,15 +1579,108 @@ window.__ModuleLoader__.load({
         id: 'zhuang-fangyi-toggle', order: 60, locale: NS
       }, SidebarAction)
 
-      // 右侧观测栏进 `shell.overlay` —— 外壳原生渲染的浮动层
-      // （`absolute; inset:0; z-index:20`，子元素自动恢复 pointer-events）。
-      // 用插槽而不是硬贴 DOM：React 管理生命周期，重渲染不会掉。
-      // `shell.overlay` 是 list 槽，按 `id` 区分，不会与别人冲突。
+      /* ---------------- 官方右栏标签页（主路径） ---------------- */
+
+      /** 本插件在官方 tab 系统里的身份。等于 tab 本体的注册 key。 */
+      const TAB_ID = 'dsh-zhuang-fangyi-observation'
+      /** tab 的 kind（决定用哪个渲染器）。第三方用自己的 kind，别抢 builtin。 */
+      const TAB_KIND = 'zhuang-fangyi-observation'
+
+      /**
+       * 把观测台注册成**官方右栏的一个标签页**。
+       *
+       * ── 为什么值得走官方（而不是继续用浮层）────────────────────────────
+       *
+       * `sidebar.right.pane.tab` 是官方右栏（`rightbarCol` 轨道）的标签页
+       * 系统。注册进去的收益：
+       *   · **不占额外位置** —— 它是轨道里的一个 tab，不是叠在上面的浮层；
+       *   · **不与原生右栏冲突** —— 同一个容器，不需要「展开时让位」那套逻辑；
+       *   · **随原生一起开合、可拖拽调宽** —— 全部免费获得。
+       *
+       * ── 两阶段注册（官方契约，README 明确要求）─────────────────────────
+       *
+       *   1. `ctx.sidebarRightTabs.register({id, kind, priority, title, …})`
+       *      —— 声明「有这样一种 tab」，返回一个 disposer；
+       *   2. `ctx.slots.register({name:'sidebar.right.pane.tab', key: id}, Body)`
+       *      —— 注册该 tab 的**本体**，key 必须等于第一步的 `id`。
+       *
+       * `priority: 'extension'` 表示**占一个独立席位**，不接管任何 builtin
+       * kind（`builtin` 会抢别人的 kind，第三方不该用）。
+       *
+       * ── 失败必须降级 ──────────────────────────────────────────────────
+       *
+       * `sidebarRightTabs` 由 `dsh-client-ui-sidebar-right` 提供，那是**桌面
+       * 专属包**（Web 端没有）。所以整段走 `safeInject`，任何一步失败都只是
+       * `tabRegistered` 保持 false —— 浮层兜底继续工作。
+       *
+       * @returns {boolean} 是否成功注册
+       */
+      function registerRailTab () {
+        state.tabDiag.attempted = true
+        let ok = false
+        try {
+          // `sidebarRightTabs` 是**服务**（不是插槽），所以用 `ctx.inject` 等待它。
+          // 服务不存在时回调永不触发 —— 这正是我们要的降级信号：
+          // Web 端没有 `dsh-client-ui-sidebar-right`，回调不跑，浮层兜底接手。
+          ctx.inject(['sidebarRightTabs'], scope => {
+            try {
+              const tabs = scope.sidebarRightTabs
+              if (tabs === undefined || tabs === null) {
+                state.tabDiag.error = 'sidebarRightTabs 为 undefined'
+                return
+              }
+              // 阶段一：声明 tab 类型
+              const disposeType = tabs.register({
+                id: TAB_ID,
+                kind: TAB_KIND,
+                priority: 'extension',
+                title: () => t('railTitle')
+              })
+              state.tabDiag.kind = TAB_KIND
+
+              // 阶段二：注册本体（key 必须等于上面的 id）
+              const disposeBody = safeInject('sidebar.right.pane.tab', {
+                key: TAB_ID, locale: NS
+              }, RailTab)
+
+              if (disposeBody === null) {
+                state.tabDiag.error = 'tab 本体注册失败'
+                try { disposeType?.() } catch { /* 已释放 */ }
+                return
+              }
+
+              state.tabTypeDispose = disposeType
+              state.tabBodyDispose = disposeBody
+              state.tabRegistered = true
+              state.tabDiag.ok = true
+              state.renderCounts.lastNullReason = 'official-tab-active'
+              emit()
+            } catch (error) {
+              state.tabDiag.error = error?.message ?? String(error)
+              console.warn('[zhuang-fangyi] 官方 tab 注册失败，改用浮层兜底：', state.tabDiag.error)
+              emit()
+            }
+          })
+          ok = state.tabRegistered
+        } catch (error) {
+          state.tabDiag.error = error?.message ?? String(error)
+          console.warn('[zhuang-fangyi] 无法注入 sidebarRightTabs：', state.tabDiag.error)
+        }
+        return ok
+      }
+
+      // 右侧观测栏的**兜底**浮层。
       //
-      // 顶栏已移除（见 TopBar 处的说明），所以这里只注册一个条目。
+      // 只在官方 tab 不可用时渲染（`Rail` 内部会检查 `tabRegistered`）。
+      // 进 `shell.overlay` —— 外壳原生浮动层（`position:absolute; inset:0;
+      // z-index:20`，子元素自动恢复 pointer-events）。`shell.overlay` 是 list
+      // 槽，按 `id` 区分，不会与官方或其它插件冲突。
       safeInject('shell.overlay', {
         id: 'zhuang-fangyi-rail', order: 50, locale: NS
       }, Rail)
+
+      // 尝试走官方 tab（成功则浮层自动隐让）
+      registerRailTab()
 
       // 侧栏品牌位。
       //
@@ -1585,7 +1720,12 @@ window.__ModuleLoader__.load({
           } catch { /* 已移除 */ }
           state.styleEl = null
         }
-        for (const key of ['heroDispose', 'brandMarkDispose', 'brandNameDispose']) {
+        for (const key of [
+          'heroDispose', 'brandMarkDispose', 'brandNameDispose',
+          // 官方 tab 的两个 disposer 也必须释放，否则重新启用插件时
+          // `sidebarRightTabs.register` 会因「同 id 重复注册」而抛错
+          'tabBodyDispose', 'tabTypeDispose'
+        ]) {
           if (state[key] !== null && state[key] !== undefined) {
             try {
               state[key]()
@@ -1593,6 +1733,7 @@ window.__ModuleLoader__.load({
             state[key] = null
           }
         }
+        state.tabRegistered = false
         state.listeners.clear()
       }, 'zhuang-fangyi: teardown')
 

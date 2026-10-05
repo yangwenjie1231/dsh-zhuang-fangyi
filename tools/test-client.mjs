@@ -228,7 +228,18 @@ const SINGLE_SLOTS = new Set([
  */
 const DEFAULT_STYLE = '/* stub skin css */\n.zf-topbar{display:grid}\n.zf-rail{position:absolute}\n'
 
-function makeHarness (settingsPayload, themePayload, stylePayload = DEFAULT_STYLE) {
+/**
+ * 默认「存在哪些服务」。
+ *
+ * `sidebarRightTabs` **默认不存在** —— 因为它是桌面专属包提供的，Web 端没有。
+ * 要测官方 tab 路径的用例显式传入它。
+ */
+const DEFAULT_SERVICES = {}
+
+/** 用例 37 用的 tab 注册记录。 */
+const TAB_REGS = []
+
+function makeHarness (settingsPayload, themePayload, stylePayload = DEFAULT_STYLE, serviceFixture = DEFAULT_SERVICES) {
   const dom = makeDom()
   const effects = []
   const listeners = new Map()
@@ -348,10 +359,60 @@ function makeHarness (settingsPayload, themePayload, stylePayload = DEFAULT_STYL
     bind: ns => key => dictionaries.get(ns)?.zh?.[key] ?? key
   }
 
+  /**
+   * 桩服务：`ctx.sidebarRightTabs`。
+   *
+   * 真实契约（README 实测）：
+   *   register({id, kind, patterns?, priority?, canOpen?, title, guide?, keepMounted?})
+   *   → 返回一个 disposer；同 id 重复注册会抛错。
+   *
+   * `enabled` 控制它是否「存在」—— 不存在时 `ctx.inject` 回调**永不触发**，
+   * 这正是 Web 端（无 `dsh-client-ui-sidebar-right`）的降级路径。
+   */
+  const tabRegistrations = []
+  const makeSidebarRightTabs = () => ({
+    register (definition) {
+      if (typeof definition?.id !== 'string' || definition.id.trim() === '') {
+        throw new Error('tab id must not be empty')
+      }
+      if (tabRegistrations.some(r => r.id === definition.id)) {
+        throw new Error(`Duplicate tab type: ${definition.id}`)
+      }
+      tabRegistrations.push(definition)
+      return () => {
+        const at = tabRegistrations.indexOf(definition)
+        if (at >= 0) tabRegistrations.splice(at, 1)
+      }
+    }
+  })
+
   const ctx = {
     theme,
     slots,
     locale,
+    /**
+     * 桩 `ctx.inject`（服务注入，**与 `slots.inject` 不同**）。
+     *
+     * 真实语义：声明依赖的服务名，服务就绪时同步调用回调；**服务不存在时
+     * 回调永不触发**（不抛错、不报错）。这是插件做渐进增强的标准手段。
+     *
+     * `serviceFixture` 决定哪些服务「存在」——
+     *   传 `null` 表示全都不存在（模拟 Web 端）。
+     */
+    inject: (deps, fn) => {
+      const names = Array.isArray(deps) ? deps : [deps]
+      const missing = names.filter(n => serviceFixture[n] === undefined)
+      if (missing.length > 0) {
+        // 服务缺失：回调不跑（真实行为），只登记一次「未触发」供断言
+        effects.push({ dispose: null, label: `inject-pending:${names.join(',')}` })
+        return () => {}
+      }
+      const scope = { ...ctx }
+      for (const n of names) scope[n] = serviceFixture[n]
+      const dispose = fn(scope)
+      effects.push({ dispose: dispose ?? null, label: `inject:${names.join(',')}` })
+      return () => dispose?.()
+    },
     effect: (fn, label) => {
       const dispose = fn()
       effects.push({ dispose, label })
@@ -393,7 +454,9 @@ function makeHarness (settingsPayload, themePayload, stylePayload = DEFAULT_STYL
 
   return {
     ctx, dom, layers, registered, slotRegistrations, dictionaries, calls,
-    effects, listeners, fetchImpl, getPreference: () => preference
+    effects, listeners, fetchImpl, getPreference: () => preference,
+    // 官方 tab 相关的观测面
+    tabRegistrations, serviceFixture
   }
 }
 
@@ -513,7 +576,7 @@ const baseSettings = {
 }
 
 /** 跑一次完整挂载。 */
-async function boot (settings, payloadOverrides) {
+async function boot (settings, payloadOverrides, services) {
   const h = makeHarness(
     { settings },
     {
@@ -522,7 +585,9 @@ async function boot (settings, payloadOverrides) {
       overrides,
       roles,
       ...(payloadOverrides ?? {})
-    }
+    },
+    DEFAULT_STYLE,
+    services ?? DEFAULT_SERVICES
   )
   globalThis.document = h.dom.document
   globalThis.fetch = h.fetchImpl
@@ -1303,7 +1368,93 @@ function shellDom (opts = {}) {
   const gated = readByComponents.filter(f => new RegExp(`state\\.${f}`).test(src))
   ok('组件读取的字段都在 emit 覆盖范围内', gated.length >= 3, gated.join(','))
 }
+// 用例 37：官方右栏 tab 可用时走主路径
+{
+  console.log('\n--- 官方右栏 tab（可用）---')
+  // 模拟桌面端：`sidebarRightTabs` 服务存在
+  const tabs = {
+    register (def) {
+      if (typeof def?.id !== 'string' || def.id.trim() === '') throw new Error('tab id must not be empty')
+      if (TAB_REGS.some(r => r.id === def.id)) throw new Error(`Duplicate tab type: ${def.id}`)
+      TAB_REGS.push(def)
+      return () => {
+        const at = TAB_REGS.indexOf(def)
+        if (at >= 0) TAB_REGS.splice(at, 1)
+      }
+    }
+  }
+  const { h, mod } = await boot({ ...baseSettings }, null, { sidebarRightTabs: tabs })
 
+  ok('探测到 sidebarRightTabs 服务', mod.__test.state.tabDiag.attempted === true)
+  ok('tab 类型注册成功', mod.__test.state.tabDiag.ok === true,
+    String(mod.__test.state.tabDiag.error))
+  ok('kind 用的是自有 kind（不抢 builtin）',
+    mod.__test.state.tabDiag.kind === 'zhuang-fangyi-observation')
+  ok('tab 本体注册进 sidebar.right.pane.tab',
+    h.slotRegistrations.some(r => r.meta.name === 'sidebar.right.pane.tab' &&
+      r.meta.key === 'dsh-zhuang-fangyi-observation'))
+  ok('tabRegistered 为 true', mod.__test.state.tabRegistered === true)
+
+  // 关键：官方 tab 接管后，浮层兜底必须**不再渲染**，否则会出现两份
+  const overlay = h.slotRegistrations.filter(r => r.meta.name === 'shell.overlay')
+  const rail = overlay.find(r => r.meta.id === 'zhuang-fangyi-rail')
+  ok('浮层仍注册（供降级用）', rail !== undefined)
+  const out = rail?.component?.({})
+  ok('浮层组件在官方 tab 生效时返回 null', out === null, String(out))
+}
+
+// 用例 38：官方右栏 tab 不可用时降级到浮层
+{
+  console.log('\n--- 官方右栏 tab（不可用 → 降级）---')
+  // DEFAULT_SERVICES 为空 → `ctx.inject(['sidebarRightTabs'])` 回调不触发
+  const { h, mod } = await boot({ ...baseSettings })
+  ok('未探测到服务时 tabRegistered 保持 false', mod.__test.state.tabRegistered === false)
+  ok('tabDiag.ok 为 false', mod.__test.state.tabDiag.ok === false)
+
+  // 降级路径必须工作：浮层照常渲染
+  const overlay = h.slotRegistrations.filter(r => r.meta.name === 'shell.overlay')
+  const rail = overlay.find(r => r.meta.id === 'zhuang-fangyi-rail')
+  ok('浮层已注册', rail !== undefined)
+  const out = rail?.component?.({})
+  ok('浮层组件正常返回元素（降级生效）', out !== null && out !== undefined)
+  ok('浮层根节点是 .zf-rail', out?.props?.className === 'zf-rail', String(out?.props?.className))
+}
+
+// 用例 39：tab 注册失败不能中断 apply()
+{
+  console.log('\n--- tab 注册失败容错 ---')
+  const bad = {
+    register () { throw new Error('simulated tab register failure') }
+  }
+  const { h, mod } = await boot({ ...baseSettings }, null, { sidebarRightTabs: bad })
+  ok('tab 注册抛错时 apply() 未中断', mod.__test.state.tabDiag.error !== null)
+  ok('降级：浮层仍可用',
+    h.slotRegistrations.some(r => r.meta.name === 'shell.overlay' && r.meta.id === 'zhuang-fangyi-rail'))
+  ok('降级：主题仍注册', h.registered.size === 8, `实际 ${h.registered.size}`)
+  ok('降级：样式表仍注入', h.dom.head.children.some(c => c.getAttribute('id') === 'zf-style'))
+}
+
+// 用例 40：tab 的 disposer 在卸载时释放（否则重新启用会「重复注册」）
+{
+  console.log('\n--- tab disposer 释放 ---')
+  const regs = []
+  const tabs = {
+    register (def) {
+      regs.push(def.id)
+      return () => {
+        const at = regs.indexOf(def.id)
+        if (at >= 0) regs.splice(at, 1)
+      }
+    }
+  }
+  const { h, mod } = await boot({ ...baseSettings }, null, { sidebarRightTabs: tabs })
+  ok('注册后 regs 有 1 条', regs.length === 1, `实际 ${regs.length}`)
+  for (const e of [...h.effects].reverse()) e.dispose?.()
+  ok('卸载后 regs 清空（disposer 已释放）', regs.length === 0, `实际 ${regs.length}`)
+  ok('卸载后 tabRegistered 归 false', mod.__test.state.tabRegistered === false)
+  ok('卸载后 tab 本体注销',
+    !h.slotRegistrations.some(r => r.meta.name === 'sidebar.right.pane.tab'))
+}
 console.log(`\n合计 ${pass + fail} 项，通过 ${pass}，失败 ${fail}`)
 if (fail > 0) {
   console.log(`\n失败项：\n  ${failures.join('\n  ')}`)

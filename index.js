@@ -465,10 +465,21 @@ export function structureStyle () {
     '  top:var(--dsh-windows-titlebar-height, 40px);',
     '}',
     'body[data-zf-rail="off"] .zf-rail{ display:none; }',
-    // 中栏让位：只在本插件右栏可见时加内边距，否则会白白留一条空白
+    // 中栏让位：只在本插件右栏可见时加内边距，否则会白白留一条空白。
+    // **只在浮层路径生效** —— 走官方 tab 时容器由外壳提供，中栏已经让过位了，
+    // 再加内边距会重复挤压。`tabRegistered` 时浮层不渲染，这条也就无害。
     'body[data-zf-rail="on"] [data-zf-center]{ padding-right:var(--zf-rail-width); }',
 
     /* ── 观测栏内部结构 ─────────────────────────────────────────────── */
+    //
+    // `.zf-rail__body` 是**内容容器**，两个容器共用：
+    //   · 官方 tab（`sidebar.right.pane.tab`）：外壳给了面板背景/边框/滚动，
+    //     所以这里只负责内部排版，**不能有定位、背景、边框**；
+    //   · 浮层 `.zf-rail`：它自己带 `position:fixed` 与面板背景。
+    '.zf-rail__body{',
+    '  display:flex;flex-direction:column;gap:14px;',
+    '  min-width:0;font-size:12px;color:var(--dsw-alias-label-primary);',
+    '}',
     '.zf-rail__head{ display:flex;align-items:center;gap:9px; }',
     // `corner-shape:round` 必须写：外壳全局把 `*`/`::before`/`::after` 设成了
     // 超椭圆圆角（`corner-shape: var(--dsw-corner-shape)` = superellipse(1.5)），
