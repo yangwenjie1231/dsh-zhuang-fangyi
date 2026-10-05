@@ -3074,6 +3074,84 @@ function shellDom (opts = {}) {
     (hostSrc.match(/locale: NS/g) ?? []).length >= 5,
     `实测 ${(hostSrc.match(/locale: NS/g) ?? []).length} 处`)
 }
+// 用例 63：发行完整性 —— 素材必须入库（CI 抓到过的真实问题）
+//
+// 背景：`.gitignore` 曾忽略 `art/*.webp`，理由是「可以重新生成」。
+// **这个理由不成立**：源素材在仓库外（`庄方宜素材/` 10.8 GB、
+// `干员立绘.jpeg` 在上一级），别人 clone 后重跑生成脚本会失败；
+// 而 GitHub 直装走 git clone → 素材缺失时 `/art/*` 返回 404
+// → 背景图裂、启动动效空白。
+//
+// 这组断言把「哪些素材必须在仓库里」变成可执行的检查，防止有人
+// 为了减小仓库体积把 `.gitignore` 改回去。
+{
+  console.log('\n--- 发行完整性（素材入库）---')
+  const { execFileSync } = await import('node:child_process')
+
+  /** 该文件是否被 git 跟踪（= 会随 clone 分发）。 */
+  const tracked = rel => {
+    try {
+      execFileSync('git', ['ls-files', '--error-unmatch', rel], {
+        cwd: ROOT, stdio: ['ignore', 'pipe', 'ignore']
+      })
+      return true
+    } catch { return false }
+  }
+
+  // 1) 启动动效素材：来自仓库外的 `干员立绘.jpeg`，**必须入库**
+  for (const f of ['art/splash.webp', 'art/splash-sm.webp']) {
+    ok(`${f} 已入库（否则 clone 后启动动效坏）`, tracked(f))
+    ok(`${f} 文件存在`, fs.existsSync(path.join(ROOT, f)))
+  }
+
+  // 2) 壁纸：来自仓库外的 `庄方宜素材/`，同样必须入库
+  const BG = SHARED_MOD.__test.BACKGROUNDS
+  const missingBg = []
+  for (const id of BG) {
+    if (id === 'none') continue
+    for (const suffix of ['', '-dark']) {
+      const rel = `art/wallpaper-${id}${suffix}.webp`
+      if (!tracked(rel)) missingBg.push(rel)
+    }
+  }
+  ok('全部壁纸（明暗两版）已入库', missingBg.length === 0, missingBg.slice(0, 4).join(', '))
+
+  // 3) 缩略图（设置页壁纸选择器要显示它们）
+  const missingThumb = []
+  for (const id of BG) {
+    if (id === 'none') continue
+    for (const suffix of ['', '-dark']) {
+      const rel = `art/thumbs/wallpaper-${id}${suffix}.webp`
+      if (!tracked(rel)) missingThumb.push(rel)
+    }
+  }
+  ok('全部缩略图已入库（否则设置页缩略图条裂图）',
+    missingThumb.length === 0, missingThumb.slice(0, 4).join(', '))
+
+  // 4) 清单与装饰素材
+  for (const f of ['art/wallpapers.json', 'art/avatar.webp', 'art/contour.webp']) {
+    ok(`${f} 已入库`, tracked(f))
+  }
+
+  // 5) `.gitignore` 不该再忽略 art 下的产物
+  const gi = fs.readFileSync(path.join(ROOT, '.gitignore'), 'utf8')
+  ok('.gitignore 不再忽略 art/*.webp',
+    !/^art\/\*\.webp\s*$/m.test(gi),
+    '有人把忽略规则加回来了 —— 那会让 GitHub 直装缺素材')
+  ok('.gitignore 仍忽略 node_modules 与 dist（不该入库的）',
+    /node_modules\//.test(gi) && /dist\//.test(gi))
+
+  // 6) 生成的 CSS 里引用的每个素材都要在仓库里（防「CSS 指向不存在的图」）
+  const { structureCss } = await import('../index.js')
+  const css = structureCss()
+  const refs = [...css.matchAll(/--zf-art-([a-z0-9-]+):url\("([^"]+)"\)/g)]
+  ok('CSS 里有壁纸变量（引用存在性检查的前提）', refs.length > 0, `实测 ${refs.length} 条`)
+  const badRefs = refs
+    .map(m => decodeURIComponent(m[2].split('/art/').pop()))
+    .filter(f => !fs.existsSync(path.join(ROOT, 'art', f)))
+  ok('CSS 引用的每个素材文件都存在',
+    badRefs.length === 0, badRefs.slice(0, 4).join(', '))
+}
 
 console.log(`\n合计 ${pass + fail} 项，通过 ${pass}，失败 ${fail}`)
 if (fail > 0) {
