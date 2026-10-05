@@ -626,6 +626,27 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * 某个壁纸是不是**当前预设的推荐壁纸**。
+     *
+     * 抽成纯函数有两个理由：
+     *   1. **可测** —— 组件树在测试桩里只能渲染出顶层两级，取不到缩略图按钮，
+     *      所以判定逻辑留在组件里就永远测不到（而它正是「绝不自动改壁纸」
+     *      这条核心约束的载体）；
+     *   2. **去重** —— 同一表达式原本在设置页与观测栏各写了一遍（共 3 处），
+     *      改一处漏一处是迟早的事。
+     *
+     * @param {object} presetStyles 宿主下发的 `presetStyles`
+     * @param {string} preset 当前预设 id
+     * @param {string} file 壁纸 id（`BACKGROUNDS` 里的一项）
+     */
+    function isRecommendedArt (presetStyles, preset, file) {
+      if (file === 'none') return false
+      const recommended = presetStyles?.[preset]?.background
+      if (typeof recommended !== 'string' || recommended === '') return false
+      return file === recommended
+    }
+
+    /**
      * 预设 → 材质深度档位（`flat` / `soft` / `deep`）。
      *
      * ⚠️ 必须是**模块作用域**：`applyStyleVars`（也在模块作用域）要用它。
@@ -1746,8 +1767,7 @@ window.__ModuleLoader__.load({
                 const file = b === 'none' ? null : `wallpaper-${b}${dark ? '-dark' : ''}.webp`
                 // 本预设的推荐壁纸 —— **只标记，不自动应用**。
                 // 用户明确要求：配套壁纸仅作推荐，切换预设不改 settings.background。
-                const recommended = b !== 'none' &&
-                  b === state.presetStyles?.[settings.preset]?.background
+                const recommended = isRecommendedArt(state.presetStyles, settings.preset, b)
                 const label = t(BG_LABELS[b])
                 return h('button', {
                   key: b, type: 'button',
@@ -2006,10 +2026,10 @@ window.__ModuleLoader__.load({
                 key: b,
                 type: 'button',
                 // 与设置页一致：推荐项加圆点标记（纯提示，不自动切换）
-                className: b === state.presetStyles?.[settings.preset]?.background
+                className: isRecommendedArt(state.presetStyles, settings.preset, b)
                   ? 'zf-rail__swatch zf-art-recommended'
                   : 'zf-rail__swatch',
-                'data-zf-recommended': b === state.presetStyles?.[settings.preset]?.background
+                'data-zf-recommended': isRecommendedArt(state.presetStyles, settings.preset, b)
                   ? 'true'
                   : undefined,
                 'aria-pressed': settings.background === b ? 'true' : 'false',
@@ -2570,7 +2590,7 @@ window.__ModuleLoader__.load({
         makeModuleClass, makeMarker, readSessionState, readStats, nativeRightbarOpen,
         // 观测台路径裁决与设置同步（用例 41/42），以及官方 tab 的自动打开（用例 44）
         railOwner, resyncSettings, maybeOpenRailTab, resetToDefaults, reloadThemes, save,
-        formatElapsed, trackSessionSince, bootScreenGone, presetDepth,
+        formatElapsed, trackSessionSince, bootScreenGone, presetDepth, isRecommendedArt,
         // 让测试能模拟「宿主设置被外部改动」：stub fetch 下一次 /settings 的返回
         setNextSettings (next) {
           globalThis.__zfNextSettings = next

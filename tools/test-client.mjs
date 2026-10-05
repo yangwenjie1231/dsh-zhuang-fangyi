@@ -488,7 +488,13 @@ function makeHarness (settingsPayload, themePayload, stylePayload = DEFAULT_STYL
   const fetchImpl = async (url, init) => {
     calls.push({ url, init })
     if (url.endsWith('/themes')) {
-      return { ok: true, json: async () => themePayload }
+      // `presetStyles` 是宿主真实下发的字段（`/themes` 的 presetStyles）。
+      // 桩默认补上，免得每个 payload 站点都要写一遍；调用方给了就用它的。
+      // 缺了它会让「配套壁纸推荐标记」静默不渲染（实测就是这么漏的）。
+      const payload = themePayload.presetStyles !== undefined
+        ? themePayload
+        : { ...themePayload, presetStyles: DEFAULT_PRESET_STYLES }
+      return { ok: true, json: async () => payload }
     }
     if (url.endsWith('/settings')) {
       if (init?.method === 'POST') {
@@ -627,6 +633,20 @@ const roles = {
   burst: { light: { base: '#F7FAF8', sidebar: '#F1F6F3' }, dark: { base: '#141917', sidebar: '#161C1A' } },
   cyan: { light: { base: '#F6FAFA', sidebar: '#F0F6F6' }, dark: { base: '#141819', sidebar: '#161B1C' } },
   wine: { light: { base: '#FBF8F7', sidebar: '#F7F1F0' }, dark: { base: '#181516', sidebar: '#1B1718' } }
+}
+
+/**
+ * 桩用的 `presetStyles`（宿主 `/themes` 真实下发的字段）。
+ *
+ * 形状与 `src/palette.js` 的 `PRESET_STYLES` 一致，**且必须一致** ——
+ * 客户端靠它给壁纸缩略图打「本预设推荐」标记。若这里漏字段，
+ * 标记会静默不渲染（实测踩过）。
+ */
+const DEFAULT_PRESET_STYLES = {
+  zhuang: { label: '本体黄绿', style: '明亮轻盈', background: 'sakura', borderAlpha: 0.72 },
+  burst: { label: '大招墨青金', style: '厚重深沉', background: 'dark', borderAlpha: 0.9 },
+  cyan: { label: '青', style: '清爽中性', background: 'pool', borderAlpha: 0.6 },
+  wine: { label: '酒红', style: '浓郁暖调', background: 'promo', borderAlpha: 0.8 }
 }
 
 const baseSettings = {
@@ -2606,6 +2626,103 @@ function shellDom (opts = {}) {
   ok('切换预设后深度标记跟随',
     b3.h.dom.body.getAttribute('data-zf-depth') === 'deep',
     String(b3.h.dom.body.getAttribute('data-zf-depth')))
+}
+// 用例 57：配套壁纸「只作推荐、不自动切换」
+//
+// ⚠️ 为什么测**纯函数**而不是渲染组件树：测试桩的组件树只能渲染出顶层两级，
+// 缩略图按钮（更深层）取不到 —— 实测遍历 87 个节点只拿到 2 个 button，
+// 而那两个是别的东西。所以判定逻辑被抽成 `isRecommendedArt` 纯函数，
+// 约束才真正可测（它正是「绝不自动改壁纸」这条核心约束的载体）。
+{
+  console.log('\n--- 配套壁纸推荐（只提示，绝不自动切换）---')
+  const probe = await boot({ ...baseSettings, preset: 'burst', background: 'sakura' })
+  const T = probe.mod.__test
+  const rec = T.isRecommendedArt
+
+  ok('isRecommendedArt 已导出', typeof rec === 'function')
+
+  const styles = {
+    zhuang: { background: 'sakura' },
+    burst: { background: 'dark' },
+    cyan: { background: 'pool' },
+    wine: { background: 'promo' }
+  }
+
+  // 1) 判定正确：命中当前预设的配套壁纸
+  ok('burst 预设 + dark 壁纸 → 命中', rec(styles, 'burst', 'dark') === true)
+  ok('burst 预设 + sakura 壁纸 → 不命中', rec(styles, 'burst', 'sakura') === false)
+  ok('wine 预设 + promo 壁纸 → 命中', rec(styles, 'wine', 'promo') === true)
+  ok('zhuang 预设 + sakura 壁纸 → 命中', rec(styles, 'zhuang', 'sakura') === true)
+
+  // 2) 边界：none 永不命中；字段缺失/损坏不抛
+  ok("壁纸为 'none' 时永不命中（无背景不算推荐）", rec(styles, 'burst', 'none') === false)
+  ok('presetStyles 为 undefined 不抛', rec(undefined, 'burst', 'dark') === false)
+  ok('预设不存在时不抛', rec(styles, 'nope', 'dark') === false)
+  ok('background 字段缺失时不命中', rec({ burst: {} }, 'burst', 'dark') === false)
+  ok('background 为空串时不命中', rec({ burst: { background: '' } }, 'burst', 'dark') === false)
+  ok('background 非字符串时不命中', rec({ burst: { background: 42 } }, 'burst', 'dark') === false)
+
+  // 3) ★ 核心约束：切预设不改 settings.background
+  //    （纯函数只做判定，不产生任何副作用 —— 这就是「不自动切换」的实现保证）
+  const b = await boot({ ...baseSettings, preset: 'burst', background: 'sakura' })
+  ok('★ 启动后 background 保持用户选择（sakura）',
+    b.mod.__test.state.settings.background === 'sakura',
+    String(b.mod.__test.state.settings.background))
+  await b.mod.__test.save({ preset: 'wine' })
+  ok('★ 切预设后 background 仍为 sakura（不自动跟随）',
+    b.mod.__test.state.settings.background === 'sakura',
+    String(b.mod.__test.state.settings.background))
+  await b.mod.__test.save({ preset: 'zhuang' })
+  ok('★ 再切一次仍不自动跟随',
+    b.mod.__test.state.settings.background === 'sakura')
+
+  // 4) 手动改壁纸生效（推荐标记不干扰手动选择）
+  await b.mod.__test.save({ background: 'ultrawide' })
+  ok('手动改壁纸生效（ultrawide）',
+    b.mod.__test.state.settings.background === 'ultrawide',
+    String(b.mod.__test.state.settings.background))
+  ok('手动改后推荐判定仍跟预设走（与当前选择无关）',
+    rec(b.mod.__test.state.presetStyles, 'zhuang', 'sakura') === true &&
+    rec(b.mod.__test.state.presetStyles, 'zhuang', 'ultrawide') === false)
+
+  // 5) 宿主下发的 presetStyles 契约
+  const ps = b.mod.__test.state.presetStyles
+  ok('state.presetStyles 含四套',
+    ['zhuang', 'burst', 'cyan', 'wine'].every(id => ps?.[id] !== undefined),
+    JSON.stringify(Object.keys(ps ?? {})))
+  ok('presetStyles 无 radius 字段（圆角禁令）', !('radius' in (ps?.zhuang ?? {})))
+  ok('每套都有 style 与 background',
+    ['zhuang', 'burst', 'cyan', 'wine'].every(id =>
+      typeof ps[id].style === 'string' && typeof ps[id].background === 'string'))
+
+  // 6) 推荐壁纸 id 必须都在 BACKGROUNDS 里（否则标记静默落空）
+  const BG = b.mod.__test.BACKGROUNDS
+  const badBg = ['zhuang', 'burst', 'cyan', 'wine']
+    .map(id => ps[id].background)
+    .filter(x => !BG.includes(x))
+  ok('四套推荐壁纸都在 BACKGROUNDS 里存在（防标记静默落空）',
+    badBg.length === 0, badBg.join(', '))
+
+  // 7) 判定逻辑已去重（3 处调用点统一走纯函数）
+  const csrc = fs.readFileSync(path.join(ROOT, 'client.js'), 'utf8')
+  const dup = (csrc.match(/presetStyles\?\.\[settings\.preset\]\?\.background/g) ?? []).length
+  ok('组件里不再重复写判定表达式（已收敛到纯函数）', dup === 0, `仍有 ${dup} 处`)
+  ok('isRecommendedArt 有 3 处调用（设置页 1 + 观测栏 2）',
+    (csrc.match(/isRecommendedArt\(/g) ?? []).length >= 3)
+
+  // 8) CSS 侧：推荐标记的小圆点必须还原 corner-shape
+  //    外壳全局给 *,:before,:after 设了 superellipse(1.5)，不还原会变方圆角
+  const { structureCss } = await import('../index.js')
+  const css = structureCss()
+  const flat = css.replace(/\s/g, '')
+  ok('CSS 含 .zf-art-recommended 规则', css.includes('.zf-art-recommended'))
+  ok('圆点还原 corner-shape:round（防超椭圆）',
+    flat.includes('corner-shape:round'))
+  ok('圆点用主题强调色', flat.includes('var(--dsw-alias-brand-primary)'))
+  // 全仓除该圆点外不得新增圆角
+  const radiusUses = (csrc.match(/border-radius/g) ?? []).length
+  ok('client.js 的 border-radius 用量受控（≤ 既有数量，无风格化新增）',
+    radiusUses <= 6, `实测 ${radiusUses} 处`)
 }
 
 console.log(`\n合计 ${pass + fail} 项，通过 ${pass}，失败 ${fail}`)
