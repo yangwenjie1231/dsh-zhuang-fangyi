@@ -28,24 +28,20 @@
 
 ## ⏳ 待办（需要用户操作或授权）
 
-### 1. 推 GitHub（阻塞其余全部渠道）
+### 1. ~~推 GitHub~~ ✅ 已完成
 
-```powershell
-cd D:\Users\A\Downloads\仿通行证\dsh-zhuang-fangyi
-git remote add origin https://github.com/yangwenjie1231/dsh-zhuang-fangyi.git
-git push -u origin master
-```
+仓库已公开：**https://github.com/yangwenjie1231/dsh-zhuang-fangyi**
 
-推完给仓库加 topic（索引站按 topic 抓，`dsh-plugin` 是硬要求）：
+- ✅ topics 已加（含索引站硬要求的 `dsh-plugin`）
+- ✅ `package.json` 的三个地址占位已替换为真实地址
+- ✅ CI 全绿
+- ✅ 真实安装验证：clone 到临时目录后素材齐全，且副本内独立跑通全部测试
 
-```powershell
-gh repo edit yangwenjie1231/dsh-zhuang-fangyi --add-topic dsh-plugin,deepseek-harness,dsh,dsh-theme
-```
-
-**同时要改** `package.json` 里三个 `yangwenjie1231` 占位：
-- `repository.url`
-- `homepage`
-- `bugs.url`
+> **踩过的坑**：推送 `.github/workflows/` 下的文件需要 token 具备 `workflow`
+> scope —— GitHub 会直接拒绝：
+> `refusing to allow an OAuth App to create or update workflow ... without workflow scope`。
+> 解决：`gh auth refresh -h github.com -s workflow`（需浏览器输入一次性代码）。
+> 当时为不阻塞进度先把 CI 放到 `docs/ci/`，拿到 scope 后移回标准位置。
 
 ### 2. 截图（`screenshots.json`）
 

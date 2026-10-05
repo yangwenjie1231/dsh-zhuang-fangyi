@@ -64,6 +64,16 @@
 
 ## 安装
 
+**从 GitHub 直装**（推荐，无需 npm）：
+
+```sh
+dsh plugin --profile desktop add github:yangwenjie1231/dsh-zhuang-fangyi
+```
+
+装完**重启 DSH**（bundle 在启动时装配；宿主半边改动更是必须重启）。
+
+**从本地源码装**（改代码时用）：
+
 ```sh
 # 从本地目录装进 desktop profile
 dsh plugin --profile desktop add /path/to/dsh-zhuang-fangyi
