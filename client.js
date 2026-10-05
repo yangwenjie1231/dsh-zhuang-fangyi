@@ -87,6 +87,18 @@ window.__ModuleLoader__.load({
         posTile: '平铺',
         contourBorder: '等高线细边框',
         accentGlow: '强调色微光',
+        fontFamily: '字体',
+        font_default: '默认',
+        font_sans: '无衬线',
+        font_serif: '衬线',
+        font_rounded: '圆体',
+        font_mono: '等宽',
+        fontScale_0_95: '紧凑',
+        fontScale_1: '标准',
+        fontScale_1_05: '宽松',
+        fontFamilyHint: '整套界面的字族（不影响代码块与终端 —— 它们用等宽字体，改了会错位）',
+        fontScale: '字号',
+        fontScaleHint: '正文与行高的整体缩放（±5%，幅度小是刻意的：再大就会撑破固定高度的行）',
         accentHue: '强调色色相',
         accentHueHint: '拖动改变强调色（按钮/链接/选中态）的色相；「预设」= 用配色自带的',
         accentHuePreset: '预设',
@@ -164,6 +176,18 @@ window.__ModuleLoader__.load({
         posTile: 'Tile',
         contourBorder: 'Contour hairline border',
         accentGlow: 'Accent glow',
+        fontFamily: 'Font',
+        font_default: 'Default',
+        font_sans: 'Sans',
+        font_serif: 'Serif',
+        font_rounded: 'Rounded',
+        font_mono: 'Mono',
+        fontScale_0_95: 'Compact',
+        fontScale_1: 'Normal',
+        fontScale_1_05: 'Roomy',
+        fontFamilyHint: 'Typeface for the whole UI (code blocks and terminals keep their monospace font)',
+        fontScale: 'Text size',
+        fontScaleHint: 'Overall scale of body text and line height (±5% — deliberately small, larger breaks fixed-height rows)',
         accentHue: 'Accent hue',
         accentHueHint: 'Rotate the accent hue (buttons / links / selection); "Preset" keeps the palette\'s own',
         accentHuePreset: 'Preset',
@@ -284,6 +308,8 @@ window.__ModuleLoader__.load({
         body.removeAttribute('data-zf-contour')
         body.removeAttribute('data-zf-motion')
         body.removeAttribute('data-zf-depth')
+        root.removeAttribute('data-zf-font')
+        root.removeAttribute('data-zf-font-scale')
         return
       }
 
@@ -346,6 +372,15 @@ window.__ModuleLoader__.load({
       if (settings.motion === 'on') body.setAttribute('data-zf-motion', 'on')
       else if (settings.motion === 'reduced') body.setAttribute('data-zf-motion', 'reduced')
       else body.removeAttribute('data-zf-motion')
+
+      // 排版：按设置写 `data-zf-font` / `data-zf-font-scale`
+      // `default` / `1` 档**不打标记** —— 那两档就是外壳原样，不打可以少一次
+      // DOM 写入，也让「恢复默认」真的回到零覆盖。
+      const fontAttrs = fontAttrsFor(settings.fontFamily, settings.fontScale)
+      if (fontAttrs.font === null) root.removeAttribute('data-zf-font')
+      else root.setAttribute('data-zf-font', fontAttrs.font)
+      if (fontAttrs.scale === null) root.removeAttribute('data-zf-font-scale')
+      else root.setAttribute('data-zf-font-scale', fontAttrs.scale)
 
       // 材质深度：按预设写 `data-zf-depth`（CSS 侧覆盖 --dsw-elevation-*）
       // `soft` 档**不打标记** —— 那是官方默认值，不打省一次属性写入
@@ -623,6 +658,51 @@ window.__ModuleLoader__.load({
       if (!was && now) state.sessionSince = Date.now()
       else if (was && !now) state.sessionSince = null
       state.sessionState = next
+    }
+
+    /**
+     * 排版档位。
+     *
+     * 与 `src/fonts.js` 的 `FONT_FAMILIES` / `FONT_SCALES` **必须一致** ——
+     * 客户端拿不到宿主的 ESM 模块（只通过 `/themes` 拿数据），只能各持一份。
+     * 有测试断言两者相同，改一处漏一处会被抓出来。
+     *
+     * 显示名不在这里：走 `DICT` 的 `font_*` / `fontScale_*` 键（跟宿主 locale 走）。
+     */
+    const FONT_FAMILIES = ['default', 'sans', 'serif', 'rounded', 'mono']
+    const FONT_SCALES = [0.95, 1, 1.05]
+
+    /**
+     * 从设置算出要写的两个排版属性。
+     *
+     * ⚠️ 必须是**模块作用域**：`applyStyleVars`（也在模块作用域）要用它。
+     * 放进 `apply()` 会得到 `is not defined` —— 这个坑踩过两次了
+     * （`syncSchemeWallpaper` 的 `state`、`presetDepth`）。
+     *
+     * 逻辑与 `src/fonts.js` 的 `fontAttrs()` 一致，但这里**重写一份**而不是
+     * 从宿主 import —— 客户端半边拿不到宿主的 ESM 模块（它只通过 `/themes`
+     * 拿数据）。所以两处要一起改，测试会断言它们一致。
+     *
+     * @param {string} family 设置里的字体档位
+     * @param {number} scale 设置里的字号档位
+     * @returns {{font: string|null, scale: string|null}}
+     */
+    function fontAttrsFor (family, scale) {
+      const fam = FONT_FAMILIES.includes(family) ? family : 'default'
+      // 夹到最近的一档（与宿主同规则）
+      let best = FONT_SCALES[0]
+      const n = typeof scale === 'number' ? scale : Number(scale)
+      if (Number.isFinite(n)) {
+        for (const s of FONT_SCALES) {
+          if (Math.abs(s - n) < Math.abs(best - n)) best = s
+        }
+      } else {
+        best = 1
+      }
+      return {
+        font: fam === 'default' ? null : fam,
+        scale: best === 1 ? null : String(best)
+      }
     }
 
     /**
@@ -1822,6 +1902,23 @@ window.__ModuleLoader__.load({
             })),
 
           h('div', { style: groupStyle }, t('groupDecor')),
+          h(Row, { label: t('fontFamily'), hint: t('fontFamilyHint') },
+            h(Select, {
+              value: settings.fontFamily ?? 'default',
+              // 显示名走 t()（与其它设置项一致，由宿主 locale 决定语言）；
+              // DICT 里没有该键时 t() 会原样返回键名，所以档位名直接写进 DICT
+              options: FONT_FAMILIES.map(f => ({ value: f, label: t(`font_${f}`) })),
+              onChange: v => set({ fontFamily: v })
+            })),
+          h(Row, { label: t('fontScale'), hint: t('fontScaleHint') },
+            h(Segmented, {
+              value: String(settings.fontScale ?? 1),
+              options: FONT_SCALES.map(sc => ({
+                value: String(sc),
+                label: t(`fontScale_${String(sc).replace('.', '_')}`)
+              })),
+              onChange: v => set({ fontScale: Number(v) })
+            })),
           h(Row, { label: t('accentHue'), hint: t('accentHueHint') },
             h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', justifyContent: 'flex-end' } },
               h('button', {
@@ -2591,6 +2688,7 @@ window.__ModuleLoader__.load({
         // 观测台路径裁决与设置同步（用例 41/42），以及官方 tab 的自动打开（用例 44）
         railOwner, resyncSettings, maybeOpenRailTab, resetToDefaults, reloadThemes, save,
         formatElapsed, trackSessionSince, bootScreenGone, presetDepth, isRecommendedArt,
+        fontAttrsFor, FONT_FAMILIES, FONT_SCALES,
         // 让测试能模拟「宿主设置被外部改动」：stub fetch 下一次 /settings 的返回
         setNextSettings (next) {
           globalThis.__zfNextSettings = next

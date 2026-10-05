@@ -23,6 +23,7 @@ import os from 'node:os'
 import { fileURLToPath } from 'node:url'
 
 import { PRESET_IDS, PRESETS, PRESET_STYLES, buildTokens, overridesFor, themeDefinitions } from './src/palette.js'
+import { fontCss } from './src/fonts.js'
 import {
   SETTINGS_VERSION,
   BACKGROUNDS,
@@ -766,6 +767,13 @@ export function structureCss () {
     '  --shiki-background:var(--dsw-alias-markdown-code-block);',
     '  --shiki-foreground:var(--dsw-alias-label-primary);',
     '}',
+
+    /* ── 排版（风格预设的第四个维度）────────────────────────────────────
+     *
+     * 属性驱动：客户端按设置写 `data-zf-font` / `data-zf-font-scale`，
+     * 这里只放静态规则。详见 `src/fonts.js` 的说明（含实测数据）。
+     */
+    ...fontCss().split('\n'),
 
     // 用户气泡：细边框 + 圆角，去阴影
     'body[data-zf-avatar] [data-chat-flow-kind="user"] [data-zf-bubble],',

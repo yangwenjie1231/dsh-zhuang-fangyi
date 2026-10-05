@@ -2157,11 +2157,13 @@ function shellDom (opts = {}) {
   const set = await import('../src/settings.js')
 
   // 1) 版本与迁移
-  ok('SETTINGS_VERSION = 3', set.SETTINGS_VERSION === 3, String(set.SETTINGS_VERSION))
+  // 断言「>= 3」而不是写死数字：版本随新设置项递增（v4 加了排版），
+  // 写死会让每次加设置项都要改这里 —— 而这里要验的是**迁移**，不是版本号本身
+  ok('SETTINGS_VERSION >= 3', set.SETTINGS_VERSION >= 3, String(set.SETTINGS_VERSION))
   const v2 = { version: 2, preset: 'wine', scheme: 'dark', background: 'pool', railWidth: 320, avatarBubbles: false }
   const mig = set.normalizeSettings(v2)
-  ok('v2 → v3 无损（version 升、旧字段保留）',
-    mig.version === 3 && mig.preset === 'wine' && mig.railWidth === 320 && mig.avatarBubbles === false,
+  ok('v2 → 最新版无损（version 升、旧字段保留）',
+    mig.version === set.SETTINGS_VERSION && mig.preset === 'wine' && mig.railWidth === 320 && mig.avatarBubbles === false,
     JSON.stringify(mig))
   ok('v2 迁移补默认 accentHue/motion',
     mig.accentHue === 'preset' && mig.motion === 'auto',
@@ -2858,6 +2860,128 @@ function shellDom (opts = {}) {
       ok(`${id}/${scheme} 正文在代码块上 ≥4.5:1`,
         r !== null && r >= 4.5, r === null ? '不可解析' : `${r.toFixed(2)}:1`)
     }
+  }
+}
+// 用例 60：排版体系（风格预设的第四个维度）
+//
+// 依据：外壳有 184 个 `--dsw-font-*` token（32 个排版角色），此前一个都没用。
+//
+// 两个实测确认的关键点（写在 `src/fonts.js` 里，这里用断言锁住）：
+//   ① 必须**同时**覆盖 `:root` 与 `body` —— 复合 token（249 处消费）在
+//      `:root` 求值，只写 body 时标题/正文块不换字体（Edge 实测）
+//   ② 字号缩放**必须** `!important` —— presenter 把 `--dsh-content-font-size`
+//      写成 body 的行内样式，普通规则压不过（Edge 实测）
+{
+  console.log('\n--- 排版体系（字体 / 字号）---')
+  const fonts = await import('../src/fonts.js')
+  const { structureCss } = await import('../index.js')
+  const css = structureCss()
+  const flat = css.replace(/\s+/g, '')
+
+  // 1) 每个档位都要有规则，且 `:root` 与 `body` 都在
+  for (const fam of fonts.FONT_FAMILIES) {
+    if (fam === 'default') continue
+    ok(`${fam} 档有规则`, flat.includes(`html[data-zf-font="${fam}"]`))
+    ok(`${fam} 档同时覆盖 html 与 body`,
+      new RegExp(`html\\[data-zf-font="${fam}"\\],html\\[data-zf-font="${fam}"\\]body\\{`).test(flat))
+  }
+  ok('default 档不写规则（零覆盖）', !flat.includes('data-zf-font="default"'))
+
+  // 2) 字号缩放
+  ok('字号规则存在', flat.includes('data-zf-font-scale="1.05"'))
+  ok('字号规则带 !important（否则压不过 presenter 的行内值）',
+    /data-zf-font-scale="1\.05"\]body\{[^}]*--dsh-content-font-size:calc\(16px\*1\.05\)!important/.test(flat))
+  ok('scale=1 不写规则（零覆盖）', !flat.includes('data-zf-font-scale="1"'))
+
+  // 3) 字体栈质量：以通用族结尾、无远程 URL
+  for (const [key, stack] of Object.entries(fonts.FONT_STACKS)) {
+    const last = stack.split(',').pop().trim()
+    ok(`${key} 字体栈以通用族结尾`,
+      ['serif', 'sans-serif', 'monospace', 'system-ui'].includes(last), last)
+    ok(`${key} 字体栈不含 url()（零网络、零体积）`, !/url\(/.test(stack))
+    ok(`${key} 字体栈含中文回退`,
+      /PingFang|Microsoft YaHei|Songti|SimSun|Sarasa|Yuanti|Hiragino|Noto Serif CJK/.test(stack))
+  }
+  // 等宽档必须真等宽（否则代码/终端会错位）—— 只用于界面，代码块另有 --dsw-font-mono
+  ok('mono 档以 monospace 结尾（等宽保证）',
+    fonts.FONT_STACKS.mono.trim().endsWith('monospace'))
+
+  // 4) 归一化
+  ok('非法字体档回落 default', fonts.normalizeFontFamily('bogus') === 'default')
+  ok('字号夹到最近档（1.02 → 1）', fonts.normalizeFontScale(1.02) === 1)
+  ok('字号夹到最近档（3 → 1.05）', fonts.normalizeFontScale(3) === 1.05)
+  ok('字号非法输入回落 1', fonts.normalizeFontScale('abc') === 1)
+  ok('字号档位全在 ±5% 内（防撑破固定高度行）',
+    fonts.FONT_SCALES.every(s => s >= 0.95 && s <= 1.05), JSON.stringify(fonts.FONT_SCALES))
+
+  // 5) fontAttrs：default/1 不打标记（零覆盖）
+  const a1 = fonts.fontAttrs('default', 1)
+  ok('default + 1 → 两个属性都为 null（不打标记）',
+    a1.font === null && a1.scale === null, JSON.stringify(a1))
+  const a2 = fonts.fontAttrs('serif', 1.05)
+  ok('serif + 1.05 → 两个属性都有值',
+    a2.font === 'serif' && a2.scale === '1.05', JSON.stringify(a2))
+
+  // 6) 客户端与宿主档位一致（各持一份，必须同步）
+  const probe = await boot(baseSettings)
+  const T = probe.mod.__test
+  ok('客户端 FONT_FAMILIES 与宿主一致',
+    JSON.stringify(T.FONT_FAMILIES) === JSON.stringify(fonts.FONT_FAMILIES),
+    `${JSON.stringify(T.FONT_FAMILIES)} vs ${JSON.stringify(fonts.FONT_FAMILIES)}`)
+  ok('客户端 FONT_SCALES 与宿主一致',
+    JSON.stringify(T.FONT_SCALES) === JSON.stringify(fonts.FONT_SCALES))
+  ok('客户端 fontAttrsFor 与宿主 fontAttrs 同结果',
+    JSON.stringify(T.fontAttrsFor('serif', 1.05)) === JSON.stringify(fonts.fontAttrs('serif', 1.05)) &&
+    JSON.stringify(T.fontAttrsFor('default', 1)) === JSON.stringify(fonts.fontAttrs('default', 1)))
+  ok('客户端 fontAttrsFor 对非法值回落',
+    JSON.stringify(T.fontAttrsFor('bogus', 99)) === JSON.stringify({ font: null, scale: '1.05' }),
+    JSON.stringify(T.fontAttrsFor('bogus', 99)))
+
+  // 7) 属性写入（写到 html 上，不是 body —— CSS 选择器是 html[...]）
+  const b1 = await boot({ ...baseSettings, fontFamily: 'serif', fontScale: 1.05 })
+  ok("fontFamily=serif 时 html 有 data-zf-font='serif'",
+    b1.h.dom.html.getAttribute('data-zf-font') === 'serif',
+    String(b1.h.dom.html.getAttribute('data-zf-font')))
+  ok("fontScale=1.05 时 html 有 data-zf-font-scale='1.05'",
+    b1.h.dom.html.getAttribute('data-zf-font-scale') === '1.05',
+    String(b1.h.dom.html.getAttribute('data-zf-font-scale')))
+  const b2 = await boot({ ...baseSettings, fontFamily: 'default', fontScale: 1 })
+  ok('默认档不打标记（零覆盖）',
+    !b2.h.dom.html.hasAttribute('data-zf-font') &&
+    !b2.h.dom.html.hasAttribute('data-zf-font-scale'))
+  const b3 = await boot({ ...baseSettings, fontFamily: 'mono', enabled: false })
+  ok('插件停用时不打字体标记', !b3.h.dom.html.hasAttribute('data-zf-font'))
+  // 切换要立刻生效
+  await b2.mod.__test.save({ fontFamily: 'rounded' })
+  ok('切换字体后标记跟随',
+    b2.h.dom.html.getAttribute('data-zf-font') === 'rounded',
+    String(b2.h.dom.html.getAttribute('data-zf-font')))
+
+  // 8) 代码块字体不受影响（改了会错位）
+  ok('字体规则不碰 --dsw-font-mono（代码/终端专用）',
+    !/--dsw-font-mono\s*:/.test(flat))
+
+  // 9) 设置迁移 v3 → v4
+  const set = await import('../src/settings.js')
+  ok('SETTINGS_VERSION ≥ 4', set.SETTINGS_VERSION >= 4, String(set.SETTINGS_VERSION))
+  const mig = set.normalizeSettings({ version: 3, preset: 'wine', accentHue: 200, motion: 'reduced' })
+  ok('v3 → v4 无损（旧字段保留 + 新键补默认）',
+    mig.accentHue === 200 && mig.motion === 'reduced' &&
+    mig.fontFamily === 'default' && mig.fontScale === 1, JSON.stringify(mig))
+  ok('设置里非法排版值回落',
+    set.normalizeSettings({ fontFamily: 'x', fontScale: 99 }).fontFamily === 'default' &&
+    set.normalizeSettings({ fontFamily: 'x', fontScale: 99 }).fontScale === 1.05)
+
+  // 10) DICT 中英键一致（防漏翻）
+  const zh = Object.keys(T.DICT.zh).sort()
+  const en = Object.keys(T.DICT.en).sort()
+  const onlyZh = zh.filter(k => !en.includes(k))
+  const onlyEn = en.filter(k => !zh.includes(k))
+  ok('DICT 中英键集合一致（防漏翻）',
+    onlyZh.length === 0 && onlyEn.length === 0,
+    `仅 zh: ${onlyZh.join(',')} | 仅 en: ${onlyEn.join(',')}`)
+  for (const f of fonts.FONT_FAMILIES) {
+    ok(`DICT 含 font_${f}`, typeof T.DICT.zh[`font_${f}`] === 'string' && typeof T.DICT.en[`font_${f}`] === 'string')
   }
 }
 

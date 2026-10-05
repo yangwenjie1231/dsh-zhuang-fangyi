@@ -10,6 +10,7 @@ import {
   ACCENT_HUE_PRESET,
   normalizeAccentHue
 } from './palette.js'
+import { normalizeFontFamily, normalizeFontScale } from './fonts.js'
 
 /** 明暗模式。`system` 走 overrideTokens（不改 preference，保住跟随系统）。 */
 export const SCHEMES = ['system', 'light', 'dark']
@@ -43,9 +44,10 @@ export const BG_OPACITY_MAX = 45
  * 设置结构版本。
  *
  *   v1 → v2：加入观测栏 / 头像气泡重绘（顶栏后来移除）
- *   v2 → v3：加入强调色色相覆盖（`accentHue`）与静止模式（`motion`）
+ *   v2 → v3：加入强调色色相覆盖（`accentHue`）与动效模式（`motion`）
+ *   v3 → v4：加入排版（`fontFamily` / `fontScale`）
  */
-export const SETTINGS_VERSION = 3
+export const SETTINGS_VERSION = 4
 
 /**
  * 动效模式取值。
@@ -82,6 +84,9 @@ export function defaultSettings () {
     accentHue: ACCENT_HUE_PRESET,
     motion: 'auto',
     splash: true,
+    // v4 新增：排版（风格预设的第四个维度）
+    fontFamily: 'default',
+    fontScale: 1,
     // v2 新增：皮肤层（顶栏已移除，字段不再使用）
     rail: true,
     railWidth: RAIL_WIDTH.default,
@@ -124,8 +129,11 @@ export function normalizeSettings (input) {
   }
   // v3：强调色色相（'preset' 或 0..360，非法回落 'preset'）
   out.accentHue = normalizeAccentHue(input.accentHue)
-  // v3：静止模式
+  // v3：动效模式
   if (MOTION_MODES.includes(input.motion)) out.motion = input.motion
+  // v4：排版（非法值一律回落默认，保证不会给出坏字体栈/坏字号）
+  out.fontFamily = normalizeFontFamily(input.fontFamily)
+  out.fontScale = normalizeFontScale(input.fontScale)
   out.railWidth = clamp(input.railWidth, RAIL_WIDTH.min, RAIL_WIDTH.max, base.railWidth)
   out.version = SETTINGS_VERSION
   return out
