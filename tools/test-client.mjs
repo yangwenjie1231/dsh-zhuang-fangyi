@@ -2326,7 +2326,7 @@ function shellDom (opts = {}) {
   ok('暴露 window.__zfFirstFrame.end()', js.includes('__zfFirstFrame={end:end}'))
   ok('官方卡片被按下去（visibility:hidden）', hostSrc.includes('[data-dsh-boot]{visibility:hidden'))
   ok('自保：官方卡片消失后自行撤离',
-    js.includes('querySelector("[data-dsh-boot]")===null'))
+    js.includes('querySelector("[data-dsh-boot]")') && js.includes('boot===null'))
   ok('自保：12s 绝对上限', js.includes('12000'))
   ok('end() 幂等', js.includes('if(ended)return'))
   ok('遮罩 pointer-events:none（不挡操作）',
@@ -2340,6 +2340,51 @@ function shellDom (opts = {}) {
     clientSrc.includes('state.firstFrameEnded !== true') &&
     clientSrc.includes('state.firstFrameEnded = true') &&
     clientSrc.includes('firstFrameEnded: false'))
+}
+// 用例 53：官方开机卡片的主题色（走 index-inject 注入 token）
+//
+// 官方卡片优先读主题 token（`var(--dsw-alias-bg-base, var(--dsh-boot-bg, Canvas))`），
+// `--dsh-boot-*` 只是兜底 —— 所以正确做法是让主题 token 在卡片绘制前就位，
+// 而不是去覆盖那几个兜底变量。
+{
+  console.log('\n--- 官方开机卡片的主题色 ---')
+  const hostSrc = fs.readFileSync(path.join(ROOT, 'index.js'), 'utf8')
+
+  ok('定义了 bootCardTokens()', hostSrc.includes('function bootCardTokens'))
+  ok('亮色挂 :root（文档解析期 body 可能不存在）',
+    /bootCardTokens[\s\S]*?'\:root\{'/.test(hostSrc))
+  // 外壳真实约定：presenter 把 data-ds-dark-theme 投在 **body** 上（官方文档原文），
+  // 写 :root[data-ds-dark-theme] 永远匹配不到 —— 这条断言防的就是那个错
+  ok('暗色挂 body[data-ds-dark-theme]（外壳真实约定）',
+    hostSrc.includes("'body[data-ds-dark-theme]{'"))
+  // 只看代码不看注释：注释里会写「不能写 :root[data-ds-dark-theme]」来解释原因，
+  // 直接 includes 会把解释本身判成违规
+  const hostCode = hostSrc
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '')
+  ok('没有误写 :root[data-ds-dark-theme]（代码内）',
+    !hostCode.includes(':root[data-ds-dark-theme]'))
+
+  // 注入顺序与开关语义
+  ok('token 注入在遮罩之前（先给卡片上色，再盖）',
+    hostSrc.indexOf('bootCardTokens()') < hostSrc.indexOf('firstFrameCss()'))
+  ok('开场动效关掉时 token 仍注入（那时卡片会露出来）',
+    /table\.push\(\{\s*kind:\s*'style',\s*text:\s*bootCardTokens\(\)\s*\}\)[\s\S]{0,160}splash === false/
+      .test(hostSrc))
+
+  // 复用同一套 token 生成器（含 accentHue），保证与运行期配色一致
+  ok('复用 buildTokens（含 accentHue）',
+    /function bootCardTokens[\s\S]*?buildTokens\(s\.preset,\s*s\.accentHue\)/.test(hostSrc))
+
+  // 官方卡片的失败态不能被藏掉（上一轮踩过的坑）
+  ok('首帧脚本检测官方失败态并让路',
+    hostSrc.includes('[class*="_failed_"]') && hostSrc.includes('bail()'))
+  ok('不再用 visibility:hidden 藏官方卡片（代码内）',
+    !hostCode.includes('[data-dsh-boot]{visibility:hidden'))
+
+  // 生成的 token CSS 结构正确（用真实函数产物断言）
+  const mod = await import('../index.js')
+  ok('index.js 导出可用', typeof mod.structureCss === 'function')
 }
 
 console.log(`\n合计 ${pass + fail} 项，通过 ${pass}，失败 ${fail}`)

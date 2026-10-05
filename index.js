@@ -1002,6 +1002,61 @@ export function apply (ctx, config) {
   }
 
   /**
+   * 官方开机卡片的**主题 token**（纯 CSS）。
+   *
+   * ── 为什么要专门给它一份 token（而不是只靠遮罩盖住）────────────────
+   *
+   * 官方卡片（`[data-dsh-boot]`）的样式是**优先读主题 token** 的（源码实测）：
+   *
+   *   ._boot  { background: var(--dsw-alias-bg-base, var(--dsh-boot-bg, Canvas)) }
+   *   ._wordmark { color: var(--dsw-alias-label-primary, var(--dsh-boot-label-primary)) }
+   *   ._spinner:after { background: conic-gradient(var(--dsw-alias-brand-primary, ...) ...) }
+   *
+   * `--dsh-boot-*` 只是**兜底**。所以只要让主题 token 在卡片绘制前就位，
+   * 卡片自己就会变成主题配色 —— 不需要去覆盖那几个兜底变量。
+   *
+   * ── 为什么必须在这一层给，而不是只靠 tapIndex ────────────────────────
+   *
+   * `tapIndex` 在桌面端**从不执行**（`dsh-app://` 直读磁盘），而
+   * `webserver/index-inject` 的 style 行是**载体在文档解析阶段应用**的：
+   * Web 渲染进 `<head>`、桌面在 settle `__DSH_BOOT_READY__` 之前逐行应用 ——
+   * 而 boot 卡片是 `__DSH_BOOT_READY__` 之后由内核用 createElement 建的。
+   * 所以这里的 token 一定**早于**卡片出现。
+   *
+   * ── 为什么挂 `:root` 而不是 `body` ───────────────────────────────────
+   *
+   * `tokenStyle()`（Web 端 tapIndex 用）挂在 `body{}` —— 因为外壳 presenter
+   * 之后要把 token 写进 body 的行内样式。但这一份的读者是 **boot 卡片**，
+   * 它挂在 `#root` 里；文档解析阶段 `body` 可能还不存在，挂 `body{}` 会失效。
+   * 挂 `:root`（= `html`）是卡片与后续应用共同的祖先，稳妥。
+   */
+  function bootCardTokens () {
+    const s = settings.get() ?? defaultSettings()
+    const { light, dark } = buildTokens(s.preset, s.accentHue)
+    const decl = (table, indent) =>
+      Object.entries(table)
+        .map(([k, v]) => `${indent}${k}:${v};`)
+        .join('\n')
+    return [
+      '/* 庄方宜主题 · 官方开机卡片的主题色（早于卡片绘制）*/',
+      // 亮色挂在 `:root`（html）—— 文档解析阶段 body 可能还不存在，
+      // 挂 body 会失效；第一份必须是「无论何时都在」的那个祖先。
+      ':root{',
+      decl(light, '  '),
+      '}',
+      // 暗色挂在 `body[data-ds-dark-theme]` —— **这是外壳的真实约定**
+      // （官方文档原文：presenter 把 `body[data-ds-dark-theme]` 投到 document）。
+      // 不能写 `:root[data-ds-dark-theme]`：该属性从来不在 html 上，永远匹配不到。
+      //
+      // 位置也更对：boot 卡片在 `#root` 内、body 的后代，自定义属性按**最近祖先**
+      // 解析，所以 body 上的暗色值会正确覆盖 `:root` 上的亮色值。
+      'body[data-ds-dark-theme]{',
+      decl(dark, '  '),
+      '}'
+    ].join('\n')
+  }
+
+  /**
    * 首帧样式：盖住官方开机卡片，并给遮罩层定好底色。
    *
    * 底色取主题画布色 —— 但此刻客户端还没跑，拿不到 presenter 写的 token，
@@ -1023,8 +1078,22 @@ export function apply (ctx, config) {
       '  transition:opacity 260ms ease-out;',
       '}',
       '#zf-first-frame.zf-out{opacity:0;}',
-      // 官方卡片与它的 spinner 一并按下去，避免透过底色露出一点
-      '[data-dsh-boot]{visibility:hidden !important;}'
+      /* ⚠️ 关键：**不能**把官方卡片 `visibility:hidden` 掉。
+       *
+       * 那张卡片承载语义，不只是「加载中」：插件激活失败时它会切到**失败态**
+       * （`_failed_*` 类，列出哪个插件没起来）。我最初写
+       *
+       *     [data-dsh-boot]{visibility:hidden !important;}
+       *
+       * 把整张卡片按掉 —— 结果是**失败信息也被一起藏了**：用户只看到我们这块
+       * 遮罩停在那里，不知道有插件崩了。这是「把别人的语义节点当成可随意隐藏的
+       * 装饰」的典型错误（同类教训：dsh-550c-boot 借 `data-dsh-boot-splash`
+       * 标记，反被全家桶复用/删除）。
+       *
+       * 正确做法：**用自己的遮罩盖住它**（同 z-index 比拼，我们更高），
+       * 并让脚本在检测到**失败态**时立刻撤离，把官方错误照原样露出来。
+       */
+      '#zf-first-frame.zf-bail{display:none;}'
     ].join('\n')
   }
 
@@ -1048,11 +1117,22 @@ export function apply (ctx, config) {
     '    setTimeout(function(){el.remove();},300);',
     '  }',
     '  window.__zfFirstFrame={end:end};',
-    '  // 自保：官方卡片消失（应用已挂载）→ 撤；再给 12s 绝对上限',
+    '  // 自保一：官方卡片消失（应用已挂载）→ 撤，再给 12s 绝对上限',
     '  var iv=setInterval(function(){',
-    '    if(document.querySelector("[data-dsh-boot]")===null){clearInterval(iv);end();}',
+    '    var boot=document.querySelector("[data-dsh-boot]");',
+    '    if(boot===null){clearInterval(iv);end();return;}',
+    '    // 自保二：官方卡片进入**失败态**（有插件没起来）→ 立刻让路，',
+    '    // 让错误信息看得见。宁可少播一次开场，也不能把崩溃藏着。',
+    '    if(boot.querySelector(\'[class*="_failed_"]\')){clearInterval(iv);bail();}',
     '  },250);',
     '  setTimeout(function(){clearInterval(iv);end();},12000);',
+    '  // bail：无声撤离（不淡出），把官方卡片原样露出来',
+    '  function bail(){',
+    '    if(ended)return;ended=true;',
+    '    var el=document.getElementById("zf-first-frame");',
+    '    if(el)el.classList.add("zf-bail");',
+    '    setTimeout(function(){if(el)el.remove();},0);',
+    '  }',
     '})();'
   ].join('\n')
 
@@ -1095,7 +1175,10 @@ export function apply (ctx, config) {
      * 另有 12s 绝对上限 —— 即使客户端插件挂了，页面仍然可看可点。
      */
     scoped.on('webserver/index-inject', table => {
-      if (settings.get()?.splash === false) return   // 关掉时一张黑屏都不出现
+      // ① 官方卡片的主题色（无论开场动效开不开都要给 —— 关掉时卡片会露出来）
+      table.push({ kind: 'style', text: bootCardTokens() })
+      // ② 开场遮罩：关掉时不注入，一张黑屏都不出现
+      if (settings.get()?.splash === false) return
       table.push({ kind: 'style', text: firstFrameCss() })
       table.push({ kind: 'script', placement: 'head', text: FIRST_FRAME_JS })
     })
