@@ -585,6 +585,7 @@ window.__ModuleLoader__.load({
       state.sessionState = next
     }
 
+
     /**
      * 原生右栏是否展开。
      *
@@ -1867,6 +1868,7 @@ window.__ModuleLoader__.load({
         // 用 `zf-rail__body` 而不是 `.zf-rail`（后者带 fixed 定位与面板背景）。
         return h(RailContent)
       }
+
 
       /**
        * 把观测台作为官方 tab 打开（**仅在右栏已经展开时**）。
