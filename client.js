@@ -696,7 +696,14 @@ window.__ModuleLoader__.load({
         frame: 0,
         railShown: false,
         sessionState: 'idle',
-        stats: { turns: '—', steps: '—', cache: '—' }
+        stats: { turns: '—', steps: '—', cache: '—' },
+        /**
+         * 渲染计数（诊断用）。
+         *
+         * 记「组件被调用几次」与「每次为什么返回 null」，这样自检能直接回答
+         * 「为什么观测栏没出现」，不必靠推理 React 时序（踩过这个坑）。
+         */
+        renderCounts: { railCalls: 0, railNull: 0, railRendered: 0, lastNullReason: null }
       }
 
       const emit = () => {
@@ -852,11 +859,18 @@ window.__ModuleLoader__.load({
           document.head.appendChild(el)
           state.styleEl = el
           state.styleReady = true
+          // **必须 emit**（实测踩过，代价是观测栏完全不出现）：
+          // `styleReady` 是普通变量，React 组件读它但**不订阅**它。
+          // 不通知的话，首帧就已渲染过的组件（`Rail`）永远停在
+          // 「styleReady=false → return null」那一版 ——
+          // 自检实测 `railCalls:1, railNull:1, railRendered:0`。
+          emit()
         } catch (error) {
           // 拿不到样式表只影响外观，配色仍由 token 层生效 —— 不阻断启动。
           // `styleReady` 保持 false，右栏据此**不渲染**（否则会裸渲染）。
           console.warn('[zhuang-fangyi] 皮肤样式表加载失败：', error?.message ?? error)
           state.styleReady = false
+          emit()
         }
       }
 
@@ -895,6 +909,21 @@ window.__ModuleLoader__.load({
             hasShellOverlay: document.querySelector('[data-shell-overlay]') !== null,
             hasWindowsTitlebar: document.documentElement.hasAttribute('data-windows-titlebar'),
             hasRailEl: document.querySelector('.zf-rail') !== null,
+            // ── 渲染诊断：直接回答「组件跑了几次、为什么返回 null」──
+            // 每次 `Rail()` 被调用都计数并记录返回类型，避免再靠推理猜时序。
+            render: { ...state.renderCounts },
+            // 订阅者数量：`useStore` 在 useEffect 里注册，为 0 说明
+            // 组件从未真正挂载（返回 null 的组件 React 仍会跑 effect，
+            // 所以 0 就意味着渲染根本没走到 effect）
+            listenerCount: state.listeners.size,
+            // 插槽里到底有没有我的条目（注册失败会在这里显形）
+            overlayEntries: (() => {
+              try {
+                const layer = document.querySelector('[data-shell-overlay]')
+                if (layer === null) return null
+                return [...layer.children].map(c => c.className || c.tagName).slice(0, 12)
+              } catch { return null }
+            })(),
             // ── 几何：直接回答「在屏幕的哪个位置」 ──
             geom: {
               viewport: { w: window.innerWidth, h: window.innerHeight },
@@ -963,7 +992,13 @@ window.__ModuleLoader__.load({
           console.warn('[zhuang-fangyi] 读取宿主数据失败：', state.lastError)
           emit()
         }
-        // 挂载与打标跑完后再上报，这样 marked 计数才有意义
+        // 挂载与打标跑完后再上报，这样 marked 计数才有意义。
+        //
+        // 但要**等两帧**：`emit()` 只是把重渲染排进 React 的调度队列，此刻
+        // DOM 还没更新。立刻上报会把「上一帧」的状态当成当前状态 ——
+        // 实测被这个误导过：报告说 `railRendered:0`、`hasRailEl:false`，
+        // 其实观测栏马上就渲染出来了，只是我读得太早。
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
         await reportDiag()
       }
 
@@ -1395,10 +1430,27 @@ window.__ModuleLoader__.load({
        */
       function Rail () {
         const s = useStore()
-        // 同 TopBar：样式表没就绪就不渲染，避免裸渲染出巨大头像。
-        if (!state.styleReady) return null
+        // 渲染诊断：自检里直接看这三个数就知道卡在哪一步
+        const rc = state.renderCounts
+        rc.railCalls += 1
+        if (!state.styleReady) {
+          rc.railNull += 1; rc.lastNullReason = 'styleReady=false'
+          return null
+        }
         const settings = s.settings
-        if (settings?.enabled !== true || settings.rail === false || !state.railShown) return null
+        if (settings === null) {
+          rc.railNull += 1; rc.lastNullReason = 'settings=null'
+          return null
+        }
+        if (settings.enabled !== true) {
+          rc.railNull += 1; rc.lastNullReason = 'enabled=false'
+          return null
+        }
+        if (settings.rail === false) {
+          rc.railNull += 1; rc.lastNullReason = 'rail=false'
+          return null
+        }
+        rc.railRendered += 1
         const st = state.stats
         const set = patch => { void save(patch) }
         const stateText = SESSION_TEXT[state.sessionState] ?? SESSION_TEXT.idle

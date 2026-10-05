@@ -419,21 +419,24 @@ export function structureStyle () {
      * 子元素自动恢复 `pointer-events`。不硬贴 DOM 的原因：overlay 由 React
      * 管理，重渲染不会掉，也不与其它插件抢位置。
      *
-     * ── 用 `position:fixed`，不要用 absolute（踩过，面板掉到画面中部）────
+     * ── 用 `position:fixed`（视口坐标），而不是 absolute ────────────────
      *
-     * `overlayLayer` 是 AppFrame（CSS Grid）的**第 4 个子元素**：
+     * `overlayLayer` 的 `inset:0` 给出一个覆盖全屏的包含块。用 absolute 时
+     * 元素相对它定位，虽然结果通常相同，但有两点不确定性：
      *
-     *   .BynINW_frame{ display:grid; grid-template-rows:100% }
-     *   [data-windows-titlebar] .BynINW_frame{
-     *     padding-top:40px; grid-template-rows:minmax(0,1fr)   ← 只有 1 行
-     *   }
+     *   1. overlay 是 grid 容器（`.frame{display:grid}`）的子元素，而三个列
+     *      与它都没写 `grid-area`，**依赖自动放置**。我一度据此推断它会被挤到
+     *      隐式第二行 —— 后来用 `getBoundingClientRect` 实测，overlay 就在
+     *      `{x:0, y:0}`，**那个推断是错的**（截图量像素得出的结论不可靠）。
+     *   2. `[data-windows-titlebar] .frame{ padding-top:40px }` 会让 absolute
+     *      的坐标基准随壳版本变化。
      *
-     * 三个列 + overlay 都没写 `grid-area`，全靠自动放置。三列填满第 1 行的
-     * 三个列后，**overlay 溢出到隐式第 2 行** —— 它的包含块整体下移将近一屏
-     * （实测：面板顶端出现在 y≈572，上面 500px 全是空 base 色）。
+     * 用 `fixed` 相对**视口**定位，绕开这两个不确定性；代价是 frame 的
+     * `padding-top` 对它无效，Windows 下要自己让开标题栏（见下面的规则）。
+     * 这是「用确定的坐标基准换一点手工补偿」，比依赖 grid 自动放置的结果可靠。
      *
-     * `position:absolute` 相对这个错位的包含块定位，所以 `top:40px` 实际落在
-     * 画面中部。改用 `position:fixed` 相对**视口**定位，彻底绕开。
+     * **教训**：位置问题要用 `getBoundingClientRect` 实测（`/diag` 的 `geom`
+     * 字段就是为此加的），不要靠截图量像素反推 —— 我靠截图推断过一次，错了。
      *
      * ── 顶栏已按用户要求整体移除 ────────────────────────────────────────
      *

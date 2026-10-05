@@ -1225,25 +1225,23 @@ function shellDom (opts = {}) {
   ok('CSS 大括号平衡',
     (css.match(/\{/g) ?? []).length === (css.match(/\}/g) ?? []).length)
 }
-// 用例 34：顶栏/右栏必须用 fixed（overlay 被 grid 自动放置挤到第二行）
+// 用例 34：顶栏/右栏的定位基准必须是视口（fixed）
 {
-  console.log('\n--- overlay 的 grid 偏移 ---')
+  console.log('\n--- 定位基准 ---')
   const { structureStyle } = await import('../index.js')
   const css = structureStyle()
-
-  // 外壳结构（实测 + 源码）：
-  //   .frame{ display:grid; grid-template-rows:100% }
-  //   Windows: .frame{ padding-top:40px; grid-template-rows:minmax(0,1fr) }  ← 只 1 行
-  //   子元素：sidebarCol / centerCol / rightbarCol / overlayLayer —— 都没写 grid-area
-  // 三列占满第 1 行后，overlay **溢出到隐式第 2 行**，包含块整体下移约一屏。
-  // 用 absolute 就会跟着偏（实测面板顶端落在 y≈572，上面 500px 空白）。
+  // 最初用 absolute，依赖 overlay 的包含块。实测 overlay 就在 {0,0}，
+  // 但它是 grid 容器的子元素、且 frame 在 Windows 下有 padding-top ——
+  // 两个都可能随壳版本变化。用 fixed 换确定的视口基准。
   ok('右栏用 position:fixed', /\.zf-rail\{[^}]*position:fixed/.test(css))
-  // 反向断言：不能再出现 absolute（这就是那个 bug）
   ok('右栏不再用 absolute', !/\.zf-rail\{[^}]*position:absolute/.test(css))
-  // fixed 相对视口，不吃 frame 的 padding-top → 必须自己让开 Windows 标题栏
+  // fixed 不吃 frame 的 padding-top → 必须自己让开 Windows 标题栏
   ok('Windows 右栏让开标题栏',
     /html\[data-windows-titlebar\] \.zf-rail\{[^}]*top:var\(--dsh-windows-titlebar-height/.test(css))
+  // 顶栏已移除 → 观测栏 top:0 直接顶格
+  ok('观测栏 top:0（顶格）', /\.zf-rail\{[^}]*position:fixed;top:0/.test(css))
 }
+
 // 用例 35：头像不能有描边，且必须是正圆（外壳全局 corner-shape 会变方圆角）
 {
   console.log('\n--- 头像描边与正圆 ---')
@@ -1278,6 +1276,34 @@ function shellDom (opts = {}) {
   ok('不再有裸的 borderRadius:50% 而无 cornerShape',
     !/borderRadius: '50%',\s*\n\s*objectFit/.test(codeOnly))
 }
+// 用例 36：普通变量变化必须 emit（否则组件永不重渲染）
+{
+  console.log('\n--- state 变更必须通知订阅者 ---')
+  const src = fs.readFileSync(path.join(ROOT, 'client.js'), 'utf8')
+
+  // 实测事故：`ensureStyle()` 设了 `state.styleReady = true` 但没 `emit()`，
+  // 导致首帧渲染过的 `Rail` 永远停在「styleReady=false → return null」——
+  // 自检显示 `railCalls:1, railNull:1, railRendered:0`，观测栏完全不出现。
+  //
+  // 组件读 `state.*` 是普通变量（只有 `settings` 走 useStore 的订阅封装），
+  // 所以凡是「组件会读」的字段，赋值后必须 emit。
+  const ensureStyleBody = src.slice(
+    src.indexOf('async function ensureStyle'),
+    src.indexOf('async function reportDiag')
+  )
+  ok('ensureStyle 成功路径 emit', /state\.styleReady = true[\s\S]{0,400}?emit\(\)/.test(ensureStyleBody))
+  ok('ensureStyle 失败路径也 emit', /state\.styleReady = false[\s\S]{0,200}?emit\(\)/.test(ensureStyleBody))
+
+  // `refresh()` 末尾必须 emit —— 它写 stats/sessionState/railShown
+  const refreshBody = src.slice(src.indexOf('function refresh ()'), src.indexOf('const schedule ='))
+  ok('refresh 末尾 emit（stats/sessionState 靠它更新）', /onLayout\?\.\(\)/.test(refreshBody))
+
+  // 组件里读的 state 字段清单（人工维护）：改这些字段必须 emit
+  const readByComponents = ['styleReady', 'sessionState', 'stats', 'railShown']
+  const gated = readByComponents.filter(f => new RegExp(`state\\.${f}`).test(src))
+  ok('组件读取的字段都在 emit 覆盖范围内', gated.length >= 3, gated.join(','))
+}
+
 console.log(`\n合计 ${pass + fail} 项，通过 ${pass}，失败 ${fail}`)
 if (fail > 0) {
   console.log(`\n失败项：\n  ${failures.join('\n  ')}`)
