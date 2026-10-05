@@ -265,13 +265,33 @@ const TEXT_L = {
 }
 
 /**
- * 预设规格。
+ * 预设规格 —— **风格预设**，不只是配色。
  *
- *   hue / hueDark      表面与文字的色相（取自官方素材量化）
- *   chroma / chromaDark 色度（0..255）—— 「看起来有多少颜色」的绝对量
- *   accent             深色模式的强调色（官方本色）
- *   accentLight        浅色模式的强调色（压深到可读）
- *   label              显示名
+ * 每套预设是一整套视觉性格，用户切换时应当**一眼看出不同**，而不是
+ * 「只有按钮换了个颜色」。因此除了色相，每套还带材质维度：
+ *
+ *   hue / hueDark        表面与文字的色相（取自官方素材量化）
+ *   chroma / chromaDark  色度（0..255）—— 「看起来有多少颜色」的绝对量
+ *   surfaceShift         表面明度基调偏移（百分点）。正=更亮更轻，负=更沉
+ *   textSoft             文字对比倾向：true = 柔和（正文稍淡），false = 锐利
+ *   borderAlpha          边框不透明度基调（0..1）
+ *   defaultBackground    这套预设配套的默认壁纸（预设联动）
+ *   accent               深色模式的强调色（官方本色）
+ *   accentLight          浅色模式的强调色（压深到可读）
+ *   label                显示名
+ *
+ * ── 为什么 chroma 必须差异化（旧版的核心问题）────────────────────────
+ *
+ * 旧版四套预设的 `chroma/chromaDark` **全是 5/6**，只换 hue；而 hue 对
+ * 大面积表面的影响又被 v3 的「按面积分配」刻意压到极低。两者叠加的结果是：
+ * **切预设 ≈ 只换了强调色**，背景几乎不动 —— 用户反馈「切换主题就改个配色
+ * 会不会太少了」，指的就是这个。
+ *
+ * 现在每套给定不同的色度与明度基调：
+ *   · 本体黄绿  克制、明亮（低色度 + 正明度偏移）—— 白天工作台
+ *   · 大招墨青金 厚重、深沉（高色度 + 负明度偏移）—— 深夜指挥室
+ *   · 青        清爽、中性（中色度）—— 通用
+ *   · 酒红      浓郁、偏暖（中高色度 + 微负偏移）—— 夜间阅读
  *
  * 官方取色：本体 荧光黄绿 `#F2E957`、青 `#75DCD9`、酒红 `#D86766`；
  * 大招 墨青 `#1D3D30`、香槟金 `#C4D579`。色相由这些值换算：
@@ -280,8 +300,14 @@ const TEXT_L = {
 export const PRESET_SPECS = {
   zhuang: {
     label: '本体黄绿',
+    // 风格：克制、明亮的白天工作台
+    style: '明亮轻盈',
     hue: 58, hueDark: 58,
-    chroma: 5, chromaDark: 6,
+    chroma: 4, chromaDark: 7,
+    surfaceShift: 1.4, surfaceShiftDark: -0.6,
+    textSoft: false,
+    borderAlpha: 0.72,
+    defaultBackground: 'sakura',
     accent: '#F2E957',
     // 浅色强调色要压得够深：它同时当链接（压在最亮的 surfaceAlt 上达 4.5:1）
     // 与焦点环（压在 surfaceSunken 上达 3:1）。黄绿色相本身亮度高，
@@ -290,26 +316,54 @@ export const PRESET_SPECS = {
   },
   burst: {
     label: '大招墨青金',
+    // 风格：厚重、深沉的深夜指挥室
+    style: '厚重深沉',
     hue: 156, hueDark: 156,
-    chroma: 5, chromaDark: 6,
+    chroma: 8, chromaDark: 11,
+    surfaceShift: -1.0, surfaceShiftDark: -1.8,
+    textSoft: true,
+    borderAlpha: 0.9,
+    defaultBackground: 'dark',
     accent: '#C4D579',
     accentLight: '#17513E'
   },
   cyan: {
     label: '青',
+    // 风格：清爽、中性的通用工作台
+    style: '清爽中性',
     hue: 178, hueDark: 178,
-    chroma: 5, chromaDark: 6,
+    chroma: 6, chromaDark: 8,
+    surfaceShift: 0.6, surfaceShiftDark: 0.8,
+    textSoft: false,
+    borderAlpha: 0.6,
+    defaultBackground: 'pool',
     accent: '#75DCD9',
     accentLight: '#0A5B5E'
   },
   wine: {
     label: '酒红',
+    // 风格：浓郁、偏暖的夜间阅读
+    style: '浓郁暖调',
     hue: 2, hueDark: 2,
-    chroma: 5, chromaDark: 6,
+    chroma: 7, chromaDark: 10,
+    surfaceShift: -0.4, surfaceShiftDark: 1.6,
+    textSoft: true,
+    borderAlpha: 0.8,
+    defaultBackground: 'promo',
     accent: '#E08B87',
     accentLight: '#8A2F2B'
   }
 }
+
+/** 全部预设的**风格摘要**（供设置页显示「这套是什么感觉」）。 */
+export const PRESET_STYLES = Object.fromEntries(
+  Object.entries(PRESET_SPECS).map(([id, spec]) => [id, {
+    label: spec.label,
+    style: spec.style ?? '',
+    background: spec.defaultBackground ?? null,
+    borderAlpha: spec.borderAlpha ?? 0.8
+  }])
+)
 
 /**
  * 一组颜色里**最亮**的那个（按相对亮度）。
@@ -383,9 +437,43 @@ export function buildRoles (presetId, scheme, accentHue = ACCENT_HUE_PRESET) {
   const dark = scheme === 'dark'
   const hue = dark ? spec.hueDark : spec.hue
   const c = dark ? spec.chromaDark : spec.chroma
-  const L = SURFACE_L[scheme]
-  const T = TEXT_L[scheme]
+
+  // ── 风格预设：明度基调偏移（正=更亮更轻，负=更沉）────────────────────
+  //
+  // 这是「切预设看不出区别」的主要修复手段。旧版只换 hue，而 hue 对大面积
+  // 表面的影响被下面的「按面积分配」刻意压到极低 —— 实测四套预设的 base
+  // 亮度差在深色下只有 0.0001（肉眼不可辨）。明度基调才是可感知的维度。
+  const shift = (dark ? spec.surfaceShiftDark : spec.surfaceShift) ?? 0
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v))
+  const L = Object.fromEntries(
+    Object.entries(SURFACE_L[scheme]).map(([k, v]) => [k, clamp(v + shift, 2, 99)])
+  )
+
+  // ── 风格预设：文字对比倾向（柔和 = 正文离底色近一点）────────────────
+  //
+  // ⚠️ 幅度只能给 **2.0** —— 实测数据：给 4.5 时 `burst/light` 与 `wine/light`
+  // 的「三级文字 / 二级面」跌破 4.5:1（实测 4.20–4.41:1）。`textFaint` 要压
+  // 在最亮的表面（surfaceAlt）上仍达 4.5:1，是 `contrast.js` 里最容易失败的
+  // 一项，几乎没有余量。
+  //
+  // 也就是说：**「文字更柔和」这个风格维度的可用幅度非常小**。这是设计约束，
+  // 不是可以调的参数 —— 想要更明显的差异只能靠明度基调与色度（那两个空间大）。
+  // 若将来要更柔，正确做法是同时把 `SURFACE_L` 的 surfaceAlt 压深，而不是
+  // 单独拉高文字明度。
+  const soft = spec.textSoft === true
+  const TEXT_SOFT_DELTA = 2.0
+  const T = soft
+    ? Object.fromEntries(
+        Object.entries(TEXT_L[scheme]).map(([k, v]) => [
+          k,
+          scheme === 'light' ? v + TEXT_SOFT_DELTA : v - TEXT_SOFT_DELTA
+        ])
+      )
+    : TEXT_L[scheme]
+
   const r = {}
+  // 边框强度基调（供 deriveAliases 缩放 border-l1..l4）
+  r.borderAlpha = spec.borderAlpha ?? 0.8
 
   // ── 表面：色度按「视觉敏感度」分配 —— 浅色端给少，深色端给多 ──
   r.base = tint(hue, L.base / 100, c * 0.45)
@@ -436,6 +524,72 @@ export function buildRoles (presetId, scheme, accentHue = ACCENT_HUE_PRESET) {
   r.toastInk = tint(hue, (dark ? 90.0 : 95.0) / 100, c * 0.30)
   r.tooltip = tint(hue, (dark ? 20.4 : 13.0) / 100, c * 0.90)
   r.skeleton = r.text + (dark ? '14' : '0A')
+
+  // ── 状态色（成功 / 警告 / 错误 / 空闲）──────────────────────────────
+  //
+  // 外壳引用这些 token **261 次**（`state-error-primary` 一项就 142 次），
+  // 而旧版**一个都没注册** —— 于是成功/警告/错误在任何预设下都长得一样
+  // （外壳默认的蓝红绿），与主题色系不协调。这是「切主题只改一部分」的
+  // 最大来源。
+  //
+  // 设计原则：**状态色必须保持语义可辨识** —— 绿就是绿、琥珀就是琥珀、
+  // 红就是红。所以色相**锚定在语义色相上**（不跟随预设 hue），只让
+  // **明度骨架**（跟随预设的 surfaceShift）与**色度尺度**（跟随预设的
+  // chroma 性格）向主题靠拢。把「错误」染成主题色是错的：用户会认不出它。
+  //
+  // 明度取「该色相在对应底色上可读」的值：浅色模式压深，深色模式提亮。
+  const STATE_HUE = { success: 145, warn: 42, error: 8, idle: 215 }
+  //
+  // ── 色度为什么用「固定基线 + 预设微调」而不是 `c * N` ──────────────
+  //
+  // `tint(hue, l, chroma)` 的 chroma 是 **0..255 的绝对色度**。表面色的
+  // chroma 只有 4–11（刻意压得很低，大面积不显脏），所以 `c * 1.9 ≈ 21`
+  // 算出来的状态色是**灰的**（实测 `#9AAFA3` 灰绿 / `#B4A29F` 灰粉）——
+  // 完全起不到「一眼看出这是错误」的提示作用。
+  //
+  // 状态色是**语义色**，它需要自己的稳定可辨识度：基线取 60，再按预设的
+  // 色度性格做 ±20% 微调（让四套预设的状态色有细微差异，但都清晰可辨）。
+  // 实测 chroma≈60 得到 `#87C9A3`（明确的绿）、`#71DF9F`（鲜明的绿）。
+  const STATE_CHROMA = 60
+  const sc = STATE_CHROMA * (0.85 + Math.min(c, 14) / 14 * 0.3)
+  /** 生成一个状态色：明度按明暗与预设偏移取值。 */
+  const state = (hueDeg, lLight, lDark) =>
+    tint(hueDeg, (dark ? lDark : lLight) / 100, sc)
+  // 明度随预设的明度基调微调（±1.5 内），保持与表面同调
+  const sShift = clamp(shift * 0.8, -1.5, 1.5)
+
+  r.stateSuccess = state(STATE_HUE.success, 34.0 + sShift, 66.0 + sShift)
+  r.stateSuccess2 = adjust(r.stateSuccess, { l: dark ? -0.10 : 0.12 })
+  r.stateSuccess3 = adjust(r.stateSuccess, { l: dark ? -0.20 : 0.24 })
+  r.stateWarn = state(STATE_HUE.warn, 42.0 + sShift, 72.0 + sShift)
+  r.stateWarn2 = adjust(r.stateWarn, { l: dark ? -0.10 : 0.12 })
+  r.stateWarn3 = adjust(r.stateWarn, { l: dark ? -0.20 : 0.24 })
+  // 警告文字：要在底色上达 4.5:1，所以浅色压得更深
+  r.stateWarnLabel = tint(STATE_HUE.warn, (dark ? 76.0 : 32.0) / 100, sc * 0.85)
+  r.stateError = state(STATE_HUE.error, 44.0 + sShift, 68.0 + sShift)
+  r.stateError2 = adjust(r.stateError, { l: dark ? -0.12 : 0.14 })
+  // 空闲：低饱和中性，跟预设色相走（它不是语义色，只是「无事发生」）。
+  // ⚠️ 明度必须按明暗分开：旧写法两边都用 55%，在浅色底上对比度不足
+  // （实测 `zhuang/light` 与 `cyan/light` 跌破 3:1）。浅色要压到 42%。
+  // 色度也用固定基线（c 的尺度算出来是灰的，同状态色的理由）。
+  r.stateIdle = tint(hue, (dark ? 58.0 : 42.0) / 100, 26)
+
+  // 深潜（推理）标签：外壳给它单独的色，14 次引用
+  // 深潜（推理）标签用**预设色相**（它是主题的一部分，不是语义色），
+  // 但色度同样要够：按 c 的尺度算出来会灰，所以用固定基线。
+  const labelChroma = 34
+  r.labelDeepDiving = tint(hue, (dark ? 70.0 : 40.0) / 100, labelChroma)
+  r.labelDeepDivingShimmer = tint(hue, (dark ? 84.0 : 30.0) / 100, labelChroma * 1.2)
+  r.labelShimmer = tint(hue, (dark ? 88.0 : 26.0) / 100, labelChroma * 0.7)
+
+  // 状态色也要能压在底色上读（供 contrast.js 断言）
+  r.stateSuccessInk = r.stateSuccess
+  r.stateErrorInk = r.stateError
+
+  // 四级文字：比 textFaint 更淡一档。
+  // 它只在**明暗已确定**的地方才能算（浅色要更深、深色要更亮），
+  // 所以放在 buildRoles 里而不是 deriveAliases。
+  r.labelQuaternary = adjust(r.textFaint, { l: dark ? -0.06 : 0.08 })
 
   return r
 }
@@ -565,10 +719,16 @@ export const DEFAULT_PRESET = 'zhuang'
  * @returns {Record<string,string>} token 短名 → 色值
  */
 export function deriveAliases (r) {
-  const b1 = 0.07
-  const b2 = 0.12
-  const b3 = 0.18
-  const b4 = 0.26
+  // ── 边框强度：按预设的 `borderAlpha` 基调缩放 ────────────────────────
+  //
+  // 0.8 是基准（四套预设的 borderAlpha 为 0.72/0.9/0.6/0.8），所以
+  // `k = 1` 时与旧版完全一致 —— 保持向后兼容，不改变默认观感。
+  // 「厚重深沉」的 0.9 会得到更实的边框，「清爽中性」的 0.6 更轻。
+  const bk = (r.borderAlpha ?? 0.8) / 0.8
+  const b1 = 0.07 * bk
+  const b2 = 0.12 * bk
+  const b3 = 0.18 * bk
+  const b4 = 0.26 * bk
   return {
     /* 画布与面板 */
     'bg-base': r.base,
@@ -676,7 +836,75 @@ export function deriveAliases (r) {
     'onboarding-card-fill': withAlpha(r.surface, 0.8),
     'onboarding-secondary-fill': r.surface,
     'onboarding-accent': r.brand,
-    'onboarding-checkbox-border': withAlpha(r.tintRgb, 0.2)
+    'onboarding-checkbox-border': withAlpha(r.tintRgb, 0.2),
+
+    /* ══════════════════════════════════════════════════════════════════
+     * 补齐外壳实际使用的 alias（旧版缺 41 个）
+     *
+     * 外壳共 120 个 alias token，旧版只注册 77 个。**没注册的 token，外壳会
+     * 用回它自己的默认值** —— 于是「切主题只有一部分控件变色」。这里按外壳
+     * 的**引用次数**从高到低补齐（引用多 = 出现得多）。
+     *
+     * 分组依据是语义，不是字母序 —— 每一条都能一句话说清「它是什么」。
+     * ══════════════════════════════════════════════════════════════════ */
+
+    /* ── 状态色（外壳引用 261 次，旧版一个都没有）───────────────────── */
+    // 语义色相锚定（绿/琥珀/红），明度与色度向预设靠拢 —— 详见 buildRoles
+    'state-success-primary': r.stateSuccess,
+    'state-success-secondary': r.stateSuccess2,
+    'state-success-tertiary': r.stateSuccess3,
+    'state-warn-primary': r.stateWarn,
+    'state-warn-secondary': r.stateWarn2,
+    'state-warn-tertiary': r.stateWarn3,
+    'state-warn-label': r.stateWarnLabel,
+    'state-error-primary': r.stateError,
+    'state-error-secondary': r.stateError2,
+    'state-idle-primary': r.stateIdle,
+    'label-error': r.stateError,
+
+    /* ── 推理（深潜）标签与微光 ─────────────────────────────────────── */
+    'label-deep-diving': r.labelDeepDiving,
+    'label-deep-diving-shimmer': r.labelDeepDivingShimmer,
+    'label-shimmer': r.labelShimmer,
+
+    /* ── 工具栏按钮（用户反馈的「某些按钮不变色」）──────────────────── */
+    'button-tool-bar-fill': r.surfaceAlt,
+    'button-tool-bar-fill-invisible': withAlpha(r.surfaceAlt, 0),
+    'button-tool-bar-hover': r.surfaceSunken,
+
+    /* ── 分层背景与填充（bg-l1/l2 是「层」的编号，不是 1/2 级）──────── */
+    'bg-l1': r.surface,
+    'bg-l2': r.surfaceAlt,
+    'bg-layer-4': r.surfaceSunken,
+    'fill-l1': withAlpha(r.tintRgb, b1),
+    'fill-l2': withAlpha(r.tintRgb, b2),
+    'fill-tertiary': withAlpha(r.tintRgb, 0.10),
+    'fill-tsp-secondary': withAlpha(r.tintRgb, 0.06),
+
+    /* ── 遮罩层（bg-mask-* 由浅到深：1 最浅、3 最深）───────────────── */
+    'bg-mask-1': withAlpha(r.base, 0.35),
+    'bg-mask-2': withAlpha(r.base, 0.55),
+    'bg-mask-3': withAlpha(r.base, 0.75),
+    'bg-mask-drop': withAlpha(r.base, 0.5),
+    'bg-mask-photo': withAlpha(r.base, 0.65),
+
+    /* ── 选区与分隔 ─────────────────────────────────────────────────── */
+    'bg-document-selection': withAlpha(r.brand, 0.28),
+    'separator-primary': withAlpha(r.tintRgb, 0.10),
+
+    /* ── 代码 / 文件 diff（用状态色，保持「增绿删红」的通用语义）───── */
+    'code-diff-added': r.stateSuccess,
+    'code-diff-deleted': r.stateError,
+    'file-diff-added-bg': withAlpha(r.stateSuccess, 0.10),
+    'file-diff-added-gutter': withAlpha(r.stateSuccess, 0.18),
+    'file-diff-added-marker': withAlpha(r.stateSuccess, 0.55),
+    'file-diff-deleted-bg': withAlpha(r.stateError, 0.10),
+    'file-diff-deleted-gutter': withAlpha(r.stateError, 0.18),
+    'file-diff-deleted-marker': withAlpha(r.stateError, 0.55),
+
+    /* ── 其余文字层级与浮标 ─────────────────────────────────────────── */
+    'label-quaternary': r.labelQuaternary,
+    'tooltip-key-bg': adjust(r.tooltip, { l: 0.06 })
   }
 }
 

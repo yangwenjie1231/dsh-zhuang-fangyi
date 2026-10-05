@@ -68,6 +68,8 @@ window.__ModuleLoader__.load({
         schemeDark: '固定深色',
         schemeHint: '「跟随系统」下切换系统主题，配色与背景会一起跟随',
         background: '背景图',
+        wallpaperRecommend: '带标记的是当前预设的推荐壁纸（不会自动切换）',
+        presetRecommend: '（本预设推荐）',
         bgNone: '无',
         bgSakura: '樱花树下',
         bgPromo: '宣传 CG',
@@ -143,6 +145,8 @@ window.__ModuleLoader__.load({
         schemeDark: 'Always dark',
         schemeHint: 'On "Follow system", switching the OS theme moves colors and wallpaper together',
         background: 'Background image',
+        wallpaperRecommend: "The marked one is this preset's suggested wallpaper (never auto-applied)",
+        presetRecommend: '(suggested)',
         bgNone: 'None',
         bgSakura: 'Under the cherry tree',
         bgPromo: 'Promo key art',
@@ -279,6 +283,7 @@ window.__ModuleLoader__.load({
         body.removeAttribute('data-zf-glow')
         body.removeAttribute('data-zf-contour')
         body.removeAttribute('data-zf-motion')
+        body.removeAttribute('data-zf-depth')
         return
       }
 
@@ -341,6 +346,12 @@ window.__ModuleLoader__.load({
       if (settings.motion === 'on') body.setAttribute('data-zf-motion', 'on')
       else if (settings.motion === 'reduced') body.setAttribute('data-zf-motion', 'reduced')
       else body.removeAttribute('data-zf-motion')
+
+      // 材质深度：按预设写 `data-zf-depth`（CSS 侧覆盖 --dsw-elevation-*）
+      // `soft` 档**不打标记** —— 那是官方默认值，不打省一次属性写入
+      const depth = presetDepth(settings.preset)
+      if (depth === 'soft') body.removeAttribute('data-zf-depth')
+      else body.setAttribute('data-zf-depth', depth)
 
       // 装饰
       if (settings.accentGlow) body.setAttribute('data-zf-glow', '')
@@ -614,6 +625,29 @@ window.__ModuleLoader__.load({
       state.sessionState = next
     }
 
+    /**
+     * 预设 → 材质深度档位（`flat` / `soft` / `deep`）。
+     *
+     * ⚠️ 必须是**模块作用域**：`applyStyleVars`（也在模块作用域）要用它。
+     * 放进 `apply()` 里会得到 `presetDepth is not defined` —— 与之前
+     * `syncSchemeWallpaper` 踩过的 `state is not defined` 是同一类错误。
+     *
+     * 映射依据是每套预设的风格描述，**不是**配色数据 —— 所以放在这里而不是
+     * `palette.js`（配色模块不该承担样式职责）：
+     *
+     *   zhuang 明亮轻盈 → flat  阴影最轻、描边最淡（接近纸面）
+     *   burst  厚重深沉 → deep  阴影最重、描边最实（接近实体面板）
+     *   cyan   清爽中性 → soft  官方默认
+     *   wine   浓郁暖调 → soft  官方默认
+     *
+     * 未知预设回落 `soft`（= 不打标记，用官方默认值），保证不坏。
+     */
+    function presetDepth (presetId) {
+      if (presetId === 'zhuang') return 'flat'
+      if (presetId === 'burst') return 'deep'
+      return 'soft'
+    }
+
 
     /**
      * 原生右栏是否展开。
@@ -832,6 +866,13 @@ window.__ModuleLoader__.load({
         themeRoles: {},
         /** 壁纸清单（宿主下发）：`{ "wallpaper-x.webp": { fit, width, height } }`。 */
         wallpaperMeta: {},
+        /**
+         * 每套预设的风格摘要（宿主下发）：
+         * `{ [presetId]: { label, style, background, borderAlpha } }`。
+         * `background` 是**推荐**壁纸 —— 只用来在选择器上打标记，
+         * 绝不写回 `settings.background`（用户要求：手动选）。
+         */
+        presetStyles: {},
         /** 本次页面会话是否已经播过启动动效（避免每次 emit 都闪一次）。 */
         splashPlayed: false,
         /** 是否已让宿主首帧遮罩退役（幂等，见 Splash 的交接说明）。 */
@@ -1257,6 +1298,7 @@ window.__ModuleLoader__.load({
           state.themes = themePayload.themes ?? []
           state.overrides = themePayload.overrides ?? {}
           state.themeRoles = themePayload.roles ?? {}
+          state.presetStyles = themePayload.presetStyles ?? {}
           // 壁纸清单：竖图用 contain 的依据（宿主从 art/wallpapers.json 读）
           state.wallpaperMeta = themePayload.wallpaperMeta ?? {}
           state.lastError = null
@@ -1373,6 +1415,7 @@ window.__ModuleLoader__.load({
           state.themes = payload.themes ?? []
           state.overrides = payload.overrides ?? {}
           state.themeRoles = payload.roles ?? {}
+          state.presetStyles = payload.presetStyles ?? {}
           state.wallpaperMeta = payload.wallpaperMeta ?? {}
           registerThemes()
           applySettings()
@@ -1666,7 +1709,16 @@ window.__ModuleLoader__.load({
           h(Row, { label: t('preset') },
             h(Select, {
               value: settings.preset,
-              options: PRESETS.map(p => ({ value: p, label: PRESET_LABELS[p].zh })),
+              // 文案带上风格名（「本体黄绿 · 明亮轻盈」）——
+              // 预设是**整套风格**而不只是配色，光看色名体现不出来。
+              // style 缺失时不留下孤立的 ' · '（宿主未升级/字段缺失时也要好看）。
+              options: PRESETS.map(p => {
+                const style = state.presetStyles?.[p]?.style
+                return {
+                  value: p,
+                  label: style ? `${PRESET_LABELS[p].zh} · ${style}` : PRESET_LABELS[p].zh
+                }
+              }),
               onChange: v => set({ preset: v })
             })),
           h(Row, { label: t('scheme'), hint: t('schemeHint') },
@@ -1692,9 +1744,17 @@ window.__ModuleLoader__.load({
                   (settings.scheme === 'system' &&
                     document.body?.getAttribute?.('data-ds-dark-theme') != null)
                 const file = b === 'none' ? null : `wallpaper-${b}${dark ? '-dark' : ''}.webp`
+                // 本预设的推荐壁纸 —— **只标记，不自动应用**。
+                // 用户明确要求：配套壁纸仅作推荐，切换预设不改 settings.background。
+                const recommended = b !== 'none' &&
+                  b === state.presetStyles?.[settings.preset]?.background
+                const label = t(BG_LABELS[b])
                 return h('button', {
                   key: b, type: 'button',
-                  title: t(BG_LABELS[b]),
+                  className: recommended ? 'zf-art-recommended' : undefined,
+                  'data-zf-recommended': recommended ? 'true' : undefined,
+                  title: recommended ? `${label}${t('presetRecommend')}` : label,
+                  'aria-label': recommended ? `${label}${t('presetRecommend')}` : label,
                   'aria-pressed': pressed ? 'true' : 'false',
                   onClick: () => set({ background: b }),
                   style: {
@@ -1716,6 +1776,14 @@ window.__ModuleLoader__.load({
                       style: { width: '100%', height: '100%', objectFit: 'cover', display: 'block' }
                     }))
               }))),
+          // 说明「推荐」的含义：避免用户以为切换预设会自动换壁纸
+          // （我们刻意不这么做 —— 壁纸永远由用户手动选）
+          h('div', {
+            style: {
+              fontSize: 11, lineHeight: '16px', marginTop: -2,
+              color: 'var(--dsw-alias-label-tertiary)'
+            }
+          }, t('wallpaperRecommend')),
           h(Row, { label: t('opacity') },
             h(Slider, {
               value: settings.backgroundOpacity, min: 0, max: 45, step: 1, suffix: '%',
@@ -1937,7 +2005,13 @@ window.__ModuleLoader__.load({
               ...BACKGROUNDS.filter(b => b !== 'none').map(b => h('button', {
                 key: b,
                 type: 'button',
-                className: 'zf-rail__swatch',
+                // 与设置页一致：推荐项加圆点标记（纯提示，不自动切换）
+                className: b === state.presetStyles?.[settings.preset]?.background
+                  ? 'zf-rail__swatch zf-art-recommended'
+                  : 'zf-rail__swatch',
+                'data-zf-recommended': b === state.presetStyles?.[settings.preset]?.background
+                  ? 'true'
+                  : undefined,
                 'aria-pressed': settings.background === b ? 'true' : 'false',
                 onClick: () => set({ background: settings.background === b ? 'none' : b })
               },
@@ -2496,7 +2570,7 @@ window.__ModuleLoader__.load({
         makeModuleClass, makeMarker, readSessionState, readStats, nativeRightbarOpen,
         // 观测台路径裁决与设置同步（用例 41/42），以及官方 tab 的自动打开（用例 44）
         railOwner, resyncSettings, maybeOpenRailTab, resetToDefaults, reloadThemes, save,
-        formatElapsed, trackSessionSince, bootScreenGone,
+        formatElapsed, trackSessionSince, bootScreenGone, presetDepth,
         // 让测试能模拟「宿主设置被外部改动」：stub fetch 下一次 /settings 的返回
         setNextSettings (next) {
           globalThis.__zfNextSettings = next

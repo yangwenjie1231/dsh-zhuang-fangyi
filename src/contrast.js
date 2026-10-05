@@ -17,10 +17,16 @@ import { PRESETS, PRESET_IDS, buildTokens, tokenName } from './palette.js'
 import { contrast } from './palette.js'
 
 /**
- * 外壳真实存在的 token 名（从 `dsh-client-ui-theme/lib/client.js` 的
- * `body{}` / `body[data-ds-dark-theme]{}` 两套调色板导出，共 107 个 alias
- * 加 19 级色阶）。用来抓住「前缀写错 → 静默失效」这类 bug：
- * 拼错的 token 不会报错，只会变成外壳不认识的变量。
+ * 外壳真实存在的 token 名（从 `app.asar` 里 `@deepseek-ai/dsh-client-ui-theme`
+ * 的两套调色板导出，外壳共 **120 个 alias**、11 个 specific、19 级中性色阶）。
+ *
+ * 用途：抓住「前缀写错 → 静默失效」这类 bug —— 拼错的 token 不会报错，
+ * 只会变成外壳不认识的变量。
+ *
+ * ⚠️ 这个集合必须与 `palette.js` 实际发射的 token **同步**：白名单里有而
+ * palette 不发射 = 白写；palette 发射而白名单没有 = 结构检查会报
+ * 「token 名外壳不认识」。下面 `alias` 段列出本插件注册的全部 alias
+ * （当前 118 个；外壳 120 个里有 2 个是模板字符串拼接出的非常规名）。
  */
 const SHELL_TOKENS = new Set([
   // 色阶（19）
@@ -57,7 +63,12 @@ const SHELL_TOKENS = new Set([
     'state-idle-primary', 'state-success-primary', 'state-success-secondary',
     'state-success-tertiary', 'state-warn-label', 'state-warn-primary',
     'state-warn-secondary', 'state-warn-tertiary', 'switch-thumb', 'toast-bg', 'toast-label',
-    'tooltip-bg', 'tooltip-key-bg', 'turn-trigger-bg', 'turn-trigger-bg-hover'
+    'tooltip-bg', 'tooltip-key-bg', 'turn-trigger-bg', 'turn-trigger-bg-hover',
+    // ── 补齐（旧版白名单里有、但 palette 没发射；或 palette 新增）──────
+    'label-error', 'label-quaternary',
+    'bg-l1', 'bg-l2', 'bg-layer-4',
+    'fill-l1', 'fill-l2', 'fill-tertiary', 'fill-tsp-secondary',
+    'separator-primary'
   ].map((s) => `--dsw-alias-${s}`),
   // specific（外壳里没有 alias 前缀的一族）
   ...[
@@ -107,6 +118,20 @@ const CHECKS = [
   ['焦点环 / 二级面', 'focus-ring-color', 'bg-layer-2', 3],
   ['焦点环 / 三级面', 'focus-ring-color', 'bg-layer-3', 3],
   ['焦点环 / 设置卡片', 'focus-ring-color', 'settings-card-fill', 3],
+  // ── 状态色（旧版完全没注册，外壳引用 261 次）──────────────────────
+  // 语义色必须可辨识：成功/警告/错误都要能压在底色上读出来。
+  // 3:1 是「非文字图形元素」的门槛；`state-warn-label` 是文字，要 4.5:1。
+  ['成功态 / 底色', 'state-success-primary', 'bg-base', 3],
+  ['成功态 / 二级面', 'state-success-primary', 'bg-layer-2', 3],
+  ['警告态 / 底色', 'state-warn-primary', 'bg-base', 3],
+  ['警告文字 / 底色', 'state-warn-label', 'bg-base', 4.5],
+  ['错误态 / 底色', 'state-error-primary', 'bg-base', 3],
+  ['错误态 / 二级面', 'state-error-primary', 'bg-layer-2', 3],
+  ['错误文字 / 底色', 'label-error', 'bg-base', 3],
+  ['空闲态 / 底色', 'state-idle-primary', 'bg-base', 3],
+  // ── 补齐的 alias ─────────────────────────────────────────────────
+  ['四级文字 / 底色', 'label-quaternary', 'bg-base', 3],
+  ['深潜标签 / 底色', 'label-deep-diving', 'bg-base', 3],
   ['开关滑块 / 轨道', 'switch-thumb', 'button-primary-fill', 1.5],
   ['代码块文字 / 代码块底', 'label-primary', 'markdown-code-block', 4.5],
   ['文档预览文字 / 预览底', 'label-document-preview', 'bg-document-preview', 4.5],

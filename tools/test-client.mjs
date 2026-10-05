@@ -2386,6 +2386,227 @@ function shellDom (opts = {}) {
   const mod = await import('../index.js')
   ok('index.js 导出可用', typeof mod.structureCss === 'function')
 }
+// 用例 54：风格预设（步骤 1+2）—— 预设真正驱动整套观感 + 补全 alias
+//
+// 用户反馈：「切换主题就改个配色会不会太少了」。
+// 根因：旧版四套预设的 chroma/chromaDark 全是 5/6，只换 hue；而 hue 对大
+// 面积表面的影响被「按面积分配」压到极低 —— 实测深色下 base 亮度差只有
+// 0.0001（肉眼不可辨）。本组用例锁住修复后的**可测量差异**。
+{
+  console.log('\n--- 风格预设：明度基调 / 色度 / 边框 / 文字 ---')
+  const pal = await import('../src/palette.js')
+  const { luminance } = pal
+  const IDS = ['zhuang', 'burst', 'cyan', 'wine']
+
+  // 1) 明度基调：四套预设必须真的不同（这是「一眼看出」的主要手段）
+  for (const scheme of ['light', 'dark']) {
+    const lums = IDS.map(id => luminance(pal.buildRoles(id, scheme).base))
+    const spread = Math.max(...lums) - Math.min(...lums)
+    // 修复前：light 0.0144 / dark 0.0012；修复后 light 0.0522 / dark 0.0034
+    const need = scheme === 'light' ? 0.03 : 0.002
+    ok(`${scheme} 四套预设的明度极差 ≥ ${need}`,
+      spread >= need, `实测 ${spread.toFixed(4)}`)
+  }
+  // 方向性：明亮轻盈 > 清爽中性 > 浓郁暖调 > 厚重深沉（浅色端）
+  const lightLum = Object.fromEntries(
+    IDS.map(id => [id, luminance(pal.buildRoles(id, 'light').base)]))
+  ok('浅色端 zhuang（明亮轻盈）比 burst（厚重深沉）亮',
+    lightLum.zhuang > lightLum.burst,
+    `${lightLum.zhuang.toFixed(4)} vs ${lightLum.burst.toFixed(4)}`)
+  ok('浅色端 cyan（清爽中性）比 burst 亮', lightLum.cyan > lightLum.burst)
+  // 深色端：厚重深沉最暗
+  const darkLum = Object.fromEntries(
+    IDS.map(id => [id, luminance(pal.buildRoles(id, 'dark').base)]))
+  ok('深色端 burst（厚重深沉）最暗',
+    darkLum.burst < darkLum.zhuang && darkLum.burst < darkLum.cyan && darkLum.burst < darkLum.wine,
+    IDS.map(id => `${id}=${darkLum[id].toFixed(4)}`).join(' '))
+
+  // 2) 色度差异化：不再全是 5/6
+  const chromas = IDS.map(id => pal.PRESET_SPECS[id].chroma)
+  ok('四套预设的 chroma 不全相同', new Set(chromas).size >= 3, chromas.join('/'))
+  ok('burst（厚重深沉）chroma 最高',
+    pal.PRESET_SPECS.burst.chroma === Math.max(...chromas))
+  ok('zhuang（明亮轻盈）chroma 最低',
+    pal.PRESET_SPECS.zhuang.chroma === Math.min(...chromas))
+
+  // 3) 边框强度（borderAlpha）真的改变了边框 token
+  const borders = Object.fromEntries(IDS.map(id => [id, pal.buildTokens(id).light['--dsw-alias-border-l1']]))
+  ok('四套预设的 border-l1 不全相同', new Set(Object.values(borders)).size >= 3,
+    JSON.stringify(borders))
+  // burst 的 0.9 应比 cyan 的 0.6 更不透明（alpha 十六进制更大）
+  const alphaOf = c => parseInt(String(c).slice(-2), 16)
+  ok('burst 的边框比 cyan 更实',
+    alphaOf(borders.burst) > alphaOf(borders.cyan),
+    `${borders.burst}(${alphaOf(borders.burst)}) vs ${borders.cyan}(${alphaOf(borders.cyan)})`)
+
+  // 4) 文字锐度（textSoft）：柔和档的三级文字与锐利档不同
+  const faint = Object.fromEntries(IDS.map(id => [id, pal.buildTokens(id).light['--dsw-alias-label-tertiary']]))
+  ok('textSoft 生效：burst/wine 的三级文字与 zhuang/cyan 不同',
+    faint.burst !== faint.zhuang && faint.wine !== faint.cyan,
+    JSON.stringify(faint))
+  ok('textSoft 幅度受控（浅色端 ≤ +2.5，实测 4.5 会击穿 4.5:1）',
+    (() => {
+      const sharp = pal.buildTokens('cyan').light['--dsw-alias-label-tertiary']
+      const soft = pal.buildTokens('burst').light['--dsw-alias-label-tertiary']
+      const lum = c => luminance(c)
+      return Math.abs(lum(soft) - lum(sharp)) < 0.02
+    })())
+
+  // 5) 圆角禁令（用户明确要求：不要加圆角）
+  for (const id of IDS) {
+    ok(`${id} 的 spec 里没有 radius 字段`, !('radius' in pal.PRESET_SPECS[id]))
+  }
+  ok('PRESET_STYLES 里没有 radius', !('radius' in pal.PRESET_STYLES.zhuang))
+  ok('发射的 token 里没有 --dsw-radius-',
+    !Object.keys(pal.buildTokens('zhuang').light).some(k => k.includes('--dsw-radius-')))
+  const hostSrcAll = fs.readFileSync(path.join(ROOT, 'index.js'), 'utf8') +
+    fs.readFileSync(path.join(ROOT, 'client.js'), 'utf8')
+  ok('index.js/client.js 里不出现 --dsw-radius-',
+    !hostSrcAll.includes('--dsw-radius-'))
+
+  // 6) PRESET_STYLES 契约（subagent 的壁纸推荐依赖它）
+  ok('PRESET_STYLES 四套齐全', IDS.every(id => pal.PRESET_STYLES[id] !== undefined))
+  ok('每套都有 style 描述', IDS.every(id => typeof pal.PRESET_STYLES[id].style === 'string' && pal.PRESET_STYLES[id].style !== ''))
+  ok('每套都有配套壁纸', IDS.every(id => typeof pal.PRESET_STYLES[id].background === 'string'))
+  ok('配套壁纸互不相同',
+    new Set(IDS.map(id => pal.PRESET_STYLES[id].background)).size === IDS.length,
+    IDS.map(id => pal.PRESET_STYLES[id].background).join('/'))
+  ok('每套都有 borderAlpha', IDS.every(id => typeof pal.PRESET_STYLES[id].borderAlpha === 'number'))
+}
+
+// 用例 55：alias 覆盖率（旧版 77/120 → 现在 118/120）
+//
+// 外壳共 120 个 alias token。**没注册的，外壳会用回自己的默认值** ——
+// 这就是「切主题只有一部分控件变色」的根因。外壳里有 2 个名字是模板字符串
+// 拼接出的非常规名（正则提取会截断成 `file-diff-` 之类），不是真实 token。
+{
+  console.log('\n--- alias 覆盖率（补全 41 个）---')
+  const pal = await import('../src/palette.js')
+  const tokens = pal.buildTokens('zhuang').light
+  const aliases = Object.keys(tokens).filter(k => k.startsWith('--dsw-alias-'))
+
+  ok('alias 数量 ≥ 118（旧版 77）', aliases.length >= 118, `实测 ${aliases.length}`)
+  ok('色阶仍是 19 级',
+    Object.keys(tokens).filter(k => k.startsWith('--dsw-static-neutral-bluish-')).length === 19)
+  ok('specific 11 个全覆盖',
+    Object.keys(tokens).filter(k => k.startsWith('--dsw-specific-')).length === 11)
+
+  // 状态色：外壳引用 261 次，旧版一个都没有
+  const STATES = [
+    'state-success-primary', 'state-success-secondary', 'state-success-tertiary',
+    'state-warn-primary', 'state-warn-secondary', 'state-warn-tertiary', 'state-warn-label',
+    'state-error-primary', 'state-error-secondary', 'state-idle-primary', 'label-error'
+  ]
+  for (const name of STATES) {
+    ok(`状态色 ${name} 已注册`,
+      typeof tokens[`--dsw-alias-${name}`] === 'string')
+  }
+  // 状态色必须**语义可辨识**：成功=绿、警告=琥珀、错误=红
+  const hueOf = c => {
+    const m = /^#([0-9a-f]{6})/i.exec(c)
+    if (m === null) return null
+    const [r, g, b] = [0, 2, 4].map(i => parseInt(m[1].slice(i, i + 2), 16) / 255)
+    const max = Math.max(r, g, b); const min = Math.min(r, g, b); const d = max - min
+    if (d === 0) return 0
+    let h
+    if (max === r) h = ((g - b) / d) % 6
+    else if (max === g) h = (b - r) / d + 2
+    else h = (r - g) / d + 4
+    return ((h * 60) + 360) % 360
+  }
+  for (const scheme of ['light', 'dark']) {
+    const r = pal.buildRoles('zhuang', scheme)
+    const hs = hueOf(r.stateSuccess); const hw = hueOf(r.stateWarn); const he = hueOf(r.stateError)
+    ok(`${scheme} 成功态落在绿区（90–175°）`, hs >= 90 && hs <= 175, `${hs.toFixed(0)}°`)
+    ok(`${scheme} 警告态落在琥珀区（25–60°）`, hw >= 25 && hw <= 60, `${hw.toFixed(0)}°`)
+    ok(`${scheme} 错误态落在红区（≤20° 或 ≥340°）`,
+      he <= 20 || he >= 340, `${he.toFixed(0)}°`)
+    ok(`${scheme} 三个状态色互不相同`,
+      r.stateSuccess !== r.stateWarn && r.stateWarn !== r.stateError &&
+      r.stateSuccess !== r.stateError)
+  }
+
+  // 补齐的其余 alias 抽查（按外壳引用次数排序的前几项）
+  const REST = [
+    'button-tool-bar-fill', 'button-tool-bar-fill-invisible', 'button-tool-bar-hover',
+    'tooltip-key-bg', 'bg-mask-1', 'bg-mask-2', 'bg-mask-3', 'bg-mask-drop', 'bg-mask-photo',
+    'bg-document-selection', 'bg-l1', 'bg-l2', 'bg-layer-4',
+    'fill-l1', 'fill-l2', 'fill-tertiary', 'fill-tsp-secondary',
+    'separator-primary', 'label-quaternary',
+    'code-diff-added', 'code-diff-deleted',
+    'file-diff-added-bg', 'file-diff-added-gutter', 'file-diff-added-marker',
+    'file-diff-deleted-bg', 'file-diff-deleted-gutter', 'file-diff-deleted-marker',
+    'label-deep-diving', 'label-deep-diving-shimmer', 'label-shimmer'
+  ]
+  const missing = REST.filter(n => typeof tokens[`--dsw-alias-${n}`] !== 'string')
+  ok(`${REST.length} 个补齐的 alias 全部存在`, missing.length === 0, missing.join(', '))
+
+  // diff 色保持「增绿删红」的通用语义
+  ok('code-diff-added 用成功色', tokens['--dsw-alias-code-diff-added'] === pal.buildRoles('zhuang', 'light').stateSuccess)
+  ok('code-diff-deleted 用错误色', tokens['--dsw-alias-code-diff-deleted'] === pal.buildRoles('zhuang', 'light').stateError)
+
+  // 白名单同步：contrast.js 的 SHELL_TOKENS 必须覆盖全部发射的 alias
+  const csrc = fs.readFileSync(path.join(ROOT, 'src', 'contrast.js'), 'utf8')
+  const wl = new Set([...csrc.matchAll(/'([a-z0-9-]+)'/g)].map(m => m[1]))
+  const notListed = aliases
+    .map(k => k.replace('--dsw-alias-', ''))
+    .filter(n => !wl.has(n))
+  ok('白名单覆盖全部发射的 alias（防「前缀写错静默失效」）',
+    notListed.length === 0, notListed.join(', '))
+}
+// 用例 56：材质深度（风格预设的第三个维度）
+//
+// 外壳不暴露 `--dsw-alias-shadow-*`，只有 `--dsw-elevation-*` 三档，且定义在
+// `body, body *` 上（特异性高，必须同选择器 + !important 才盖得住）。
+{
+  console.log('\n--- 材质深度（flat / soft / deep）---')
+  const { structureCss } = await import('../index.js')
+  const css = structureCss()
+
+  ok('CSS 含 flat 档规则', css.includes('body[data-zf-depth="flat"]'))
+  ok('CSS 含 deep 档规则', css.includes('body[data-zf-depth="deep"]'))
+  ok('覆盖的是 --dsw-elevation-panel', css.includes('--dsw-elevation-panel:'))
+  ok('覆盖的是 --dsw-elevation-prominent', css.includes('--dsw-elevation-prominent:'))
+  ok('覆盖的是 --dsw-elevation-soft', css.includes('--dsw-elevation-soft:'))
+  // 外壳定义在 `body, body *`，特异性高 → 必须用同选择器（含 `*`）+ !important
+  ok('用同选择器覆盖（含 body *，否则盖不住外壳）',
+    /body\[data-zf-depth="flat"\],body\[data-zf-depth="flat"\] \*\{/.test(css))
+  ok('带 !important（外壳特异性高）',
+    /--dsw-elevation-panel:[^;]*!important/.test(css))
+  // 描边色必须引用外壳变量（随主题变），不能硬编码颜色
+  ok('描边色引用外壳变量而非硬编码',
+    css.includes('var(--dsw-elevation-stroke-color)'))
+
+  // 预设 → 档位映射（纯函数）
+  // ⚠️ 不能 `import('../client.js')` —— 它是 DSH 模块加载器的 bundle
+  // （文件开头就调 `window.__ModuleLoader__.load`），只能在 harness 里跑。
+  const probe = await boot(baseSettings)
+  const depth = probe.mod.__test.presetDepth
+  ok('presetDepth 已导出', typeof depth === 'function')
+  ok('zhuang（明亮轻盈）→ flat', depth('zhuang') === 'flat', depth('zhuang'))
+  ok('burst（厚重深沉）→ deep', depth('burst') === 'deep', depth('burst'))
+  ok('cyan（清爽中性）→ soft', depth('cyan') === 'soft', depth('cyan'))
+  ok('wine（浓郁暖调）→ soft', depth('wine') === 'soft', depth('wine'))
+  ok('未知预设回落 soft（不坏）', depth('nope') === 'soft')
+
+  // 属性写入：flat/deep 打标记、soft 不打（官方默认，省一次写入）
+  const b1 = await boot({ ...baseSettings, preset: 'zhuang' })
+  ok("preset=zhuang 时 body 有 data-zf-depth='flat'",
+    b1.h.dom.body.getAttribute('data-zf-depth') === 'flat',
+    String(b1.h.dom.body.getAttribute('data-zf-depth')))
+  const b2 = await boot({ ...baseSettings, preset: 'burst' })
+  ok("preset=burst 时 body 有 data-zf-depth='deep'",
+    b2.h.dom.body.getAttribute('data-zf-depth') === 'deep')
+  const b3 = await boot({ ...baseSettings, preset: 'cyan' })
+  ok('preset=cyan（soft）时不打标记', !b3.h.dom.body.hasAttribute('data-zf-depth'))
+  const b4 = await boot({ ...baseSettings, preset: 'burst', enabled: false })
+  ok('插件停用时不打深度标记', !b4.h.dom.body.hasAttribute('data-zf-depth'))
+  // 切换预设要能立刻更新
+  await b3.mod.__test.save({ preset: 'burst' })
+  ok('切换预设后深度标记跟随',
+    b3.h.dom.body.getAttribute('data-zf-depth') === 'deep',
+    String(b3.h.dom.body.getAttribute('data-zf-depth')))
+}
 
 console.log(`\n合计 ${pass + fail} 项，通过 ${pass}，失败 ${fail}`)
 if (fail > 0) {

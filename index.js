@@ -22,7 +22,7 @@ import path from 'node:path'
 import os from 'node:os'
 import { fileURLToPath } from 'node:url'
 
-import { PRESET_IDS, PRESETS, buildTokens, overridesFor, themeDefinitions } from './src/palette.js'
+import { PRESET_IDS, PRESETS, PRESET_STYLES, buildTokens, overridesFor, themeDefinitions } from './src/palette.js'
 import {
   SETTINGS_VERSION,
   BACKGROUNDS,
@@ -602,6 +602,38 @@ export function structureCss () {
     '[data-zf-session-state="error"] .zf-rail__dot{ background:var(--dsw-alias-state-error-primary); }',
     '[data-zf-session-state="done"] .zf-rail__dot{ background:var(--dsw-alias-state-success-primary); }',
     '[data-zf-session-state="stopped"] .zf-rail__dot{ background:var(--dsw-alias-state-warn-primary); }',
+    /* ── 材质深度档位（由客户端按当前预设写 `data-zf-depth`）──────────
+     *
+     * 映射放在这里而不是 palette.js：`depth` 是**纯呈现档位**（三个字符串），
+     * 不是配色数据 —— 放 palette 里会让「配色模块」承担样式职责。
+     */
+    'body[data-zf-depth]{ --zf-depth-set:1; }',
+    /* ── 壁纸「本预设推荐」标记 ────────────────────────────────────────
+     *
+     * 用户明确要求：配套壁纸**只作推荐**，切换预设**不自动改**壁纸
+     * （`settings.background` 一个字节都不动）。所以这里只画一个不干扰的
+     * 小圆点，真正的选择权仍在用户手里。
+     *
+     * ⚠️ `corner-shape:round !important` 必须写：外壳有一条全局规则
+     *   @supports (corner-shape:superellipse(1.5)){
+     *     *, :before, :after{ corner-shape: var(--dsw-corner-shape) }
+     *   }
+     * 把**所有元素与伪元素**都设成超椭圆圆角，会把 `border-radius:50%`
+     * 渲染成「圆角方形」。本文件里 `.zf-rail__avatar` 与助手头像
+     * （`::before`）都踩过这个坑，处理方式一致。
+     *
+     * 注意：这个圆点是**圆形标记**（与「不要圆角」的约束不冲突）——
+     * 全仓除此之外不新增任何 border-radius。
+     */
+    '.zf-art-recommended{ position:relative; }',
+    '.zf-art-recommended::after{',
+    '  content:"";position:absolute;top:3px;right:3px;width:7px;height:7px;',
+    '  border-radius:50% !important;corner-shape:round !important;',
+    '  background:var(--dsw-alias-brand-primary);',
+    // 描边用面板底色，保证压在任何缩略图上都看得清（深浅两套自适应）
+    '  box-shadow:0 0 0 1.5px var(--dsw-alias-bg-layer-1);',
+    '  pointer-events:none;',
+    '}',
     '.zf-rail__swatches{ display:flex;flex-direction:column;gap:6px; }',
     '.zf-rail__swatch{',
     '  width:100%;height:28px;border-radius:7px;cursor:pointer;padding:0 9px;box-sizing:border-box;',
@@ -769,6 +801,33 @@ export function structureCss () {
     'body[data-zf-motion="on"] .zf-splash *{',
     '  transition:revert !important;',
     '  animation:revert !important;',
+    '}',
+    /* ── 材质深度（风格预设的第三个维度）──────────────────────────────
+     *
+     * 外壳不暴露 `--dsw-alias-shadow-*`，只有 `--dsw-elevation-*` 三档
+     * （panel / prominent / soft），且它们定义在 **`body, body *`** 上
+     * （源码实测）—— 这个选择器特异性很高，普通 `body{}` 覆盖不掉，
+     * 所以必须用**同选择器** + `!important`。
+     *
+     * 三档差异：
+     *   flat（明亮轻盈）阴影最轻、描边最淡 —— 接近「纸面」
+     *   soft（清爽中性/浓郁暖调）官方默认
+     *   deep（厚重深沉）阴影最重、描边最实 —— 接近「实体面板」
+     *
+     * ⚠️ 描边色用的是 `--dsw-alias-border-l2-darkmode-thin`（外壳的默认引用），
+     * 不是硬编码颜色 —— 这样它仍随主题变。
+     */
+    'body[data-zf-depth="flat"],body[data-zf-depth="flat"] *{',
+    '  --dsw-elevation-stroke:0 0 0 .5px color-mix(in srgb, var(--dsw-elevation-stroke-color) 55%, transparent) !important;',
+    '  --dsw-elevation-panel:var(--dsw-elevation-stroke), 0 2px 5px 0 rgba(0,0,0,.02) !important;',
+    '  --dsw-elevation-prominent:var(--dsw-elevation-stroke), 0 2px 6px 0 rgba(0,0,0,.03) !important;',
+    '  --dsw-elevation-soft:var(--dsw-elevation-stroke), 0 3px 10px 0 rgba(0,0,0,.02) !important;',
+    '}',
+    'body[data-zf-depth="deep"],body[data-zf-depth="deep"] *{',
+    '  --dsw-elevation-stroke:0 0 0 .5px var(--dsw-elevation-stroke-color) !important;',
+    '  --dsw-elevation-panel:var(--dsw-elevation-stroke), 0 5px 14px 0 rgba(0,0,0,.10), 0 0 26px 0 rgba(0,0,0,.07) !important;',
+    '  --dsw-elevation-prominent:var(--dsw-elevation-stroke), 0 6px 18px 0 rgba(0,0,0,.14), 0 0 32px 0 rgba(0,0,0,.10) !important;',
+    '  --dsw-elevation-soft:var(--dsw-elevation-stroke), 0 6px 22px 0 rgba(0,0,0,.10), 0 0 34px 0 rgba(0,0,0,.07) !important;',
     '}'
   ].join('\n')
 }
@@ -902,6 +961,10 @@ export function apply (ctx, config) {
           accentHue,
           themes: themeDefinitions(accentHue),
           presets: PRESET_IDS,
+          // 每套预设的「风格摘要」（显示名 / 材质倾向 / 推荐壁纸）。
+          // 客户端用它：① 预设下拉显示「本体黄绿 · 明亮轻盈」；
+          // ② 在壁纸选择器上给当前预设的推荐壁纸打标记（**只提示，不自动切换**）。
+          presetStyles: PRESET_STYLES,
           overrides: Object.fromEntries(PRESET_IDS.map(id => [id, overridesFor(id, accentHue)])),
           roles: Object.fromEntries(PRESET_IDS.map(id => [id, PRESETS[id].light !== undefined
             ? { light: PRESETS[id].light, dark: PRESETS[id].dark }
