@@ -62,11 +62,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/CHANGE-ME/dsh-zhuang-fangyi.git"
+    "url": "git+https://github.com/yangwenjie1231/dsh-zhuang-fangyi.git"
   },
-  "homepage": "https://github.com/CHANGE-ME/dsh-zhuang-fangyi#readme",
+  "homepage": "https://github.com/yangwenjie1231/dsh-zhuang-fangyi#readme",
   "bugs": {
-    "url": "https://github.com/CHANGE-ME/dsh-zhuang-fangyi/issues"
+    "url": "https://github.com/yangwenjie1231/dsh-zhuang-fangyi/issues"
   },
   "publishConfig": {
     "access": "public"
@@ -118,5 +118,9 @@
       "hotReload": null,
       "remove": null
     }
+  },
+  "author": {
+    "name": "yangwenjie1231",
+    "url": "https://github.com/yangwenjie1231"
   }
 }

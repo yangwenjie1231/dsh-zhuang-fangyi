@@ -6,7 +6,7 @@
 
 | 渠道 | 命令 / 方式 | 状态 |
 |---|---|---|
-| **GitHub 直装** | `dsh plugin --profile desktop add github:<owner>/dsh-zhuang-fangyi` | ⏳ **需先推仓库**（当前无 git remote） |
+| **GitHub 直装** | `dsh plugin --profile desktop add github:yangwenjie1231/dsh-zhuang-fangyi` | ⏳ **需先推仓库**（当前无 git remote） |
 | **awesome-dsh-plugin** | PR 往列表仓加 `data/plugins/<owner>__dsh-zhuang-fangyi.yml` | ✅ 投稿文件已备（`submission/`），⏳ 需推仓库 + 仓库满 1 天 |
 | **dsh-market 社区索引** | PR 往 `zhu1090093659/dsh-community-plugins` 的 `community.json` 追加一条 | ⏳ 需先推仓库 |
 | **OMDSH Hub** | `package.json#dshWorkshop` + 钉 40 位 commit 的投稿 Issue | ✅ `dshWorkshop` 已就位并通过自检，⏳ 需推仓库后生成清单 |
@@ -32,17 +32,17 @@
 
 ```powershell
 cd D:\Users\A\Downloads\仿通行证\dsh-zhuang-fangyi
-git remote add origin <你的仓库地址>
+git remote add origin https://github.com/yangwenjie1231/dsh-zhuang-fangyi.git
 git push -u origin master
 ```
 
 推完给仓库加 topic（索引站按 topic 抓，`dsh-plugin` 是硬要求）：
 
 ```powershell
-gh repo edit <owner>/dsh-zhuang-fangyi --add-topic dsh-plugin,deepseek-harness,dsh,dsh-theme
+gh repo edit yangwenjie1231/dsh-zhuang-fangyi --add-topic dsh-plugin,deepseek-harness,dsh,dsh-theme
 ```
 
-**同时要改** `package.json` 里三个 `CHANGE-ME` 占位：
+**同时要改** `package.json` 里三个 `yangwenjie1231` 占位：
 - `repository.url`
 - `homepage`
 - `bugs.url`
@@ -83,7 +83,7 @@ gh repo edit <owner>/dsh-zhuang-fangyi --add-topic dsh-plugin,deepseek-harness,d
 
 ### 4. npm 发布（可选，但市场「按包名安装」需要）
 
-需要 npm 账号 + 2FA 处理。发布前确认 `CHANGE-ME` 已替换、README 里的
+需要 npm 账号 + 2FA 处理。发布前确认 `yangwenjie1231` 已替换、README 里的
 **仓库相对链接**换成绝对 URL（npmjs 不提供仓库文件，相对链接会 404）。
 
 ## 自检命令

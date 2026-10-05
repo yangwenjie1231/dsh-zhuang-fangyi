@@ -1,7 +1,7 @@
 # awesome-dsh-plugin 投稿文件
 #
 # 用法：把本文件复制到列表仓的同名路径
-#     data/plugins/<owner>__dsh-zhuang-fangyi.yml
+#     data/plugins/yangwenjie1231__dsh-zhuang-fangyi.yml
 # 然后提 PR。文件跟代码放在一起（随仓库版本化），避免与实际能力脱节。
 #
 # ⚠️ entry 允许的键**只有** url / name / category / description / tarball / file。
@@ -13,7 +13,7 @@
 #   2. 仓库有 dsh-plugin topic
 #   3. 仓库满 1 天
 
-url: https://github.com/CHANGE-ME/dsh-zhuang-fangyi
+url: https://github.com/yangwenjie1231/dsh-zhuang-fangyi
 name: 庄方宜主题
 category: ui
 description: >-
