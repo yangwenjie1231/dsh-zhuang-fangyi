@@ -1,9 +1,28 @@
 ﻿# 庄方宜主题 · 部署到 DSH profile
 #
-# 用法：
-#   pwsh -File tools/deploy.ps1              # 部署到默认 profile（desktop）
-#   pwsh -File tools/deploy.ps1 -Profile web
-#   pwsh -File tools/deploy.ps1 -DryRun      # 只看会做什么
+# 用法（**用当前 shell 直接跑，别去拼解释器路径**）：
+#   .\tools\deploy.ps1                    # 部署到默认 profile（desktop）
+#   .\tools\deploy.ps1 -Profile web
+#   .\tools\deploy.ps1 -DryRun            # 只看会做什么
+#
+# ── 关于 PowerShell 版本（实测澄清）────────────────────────────────────────
+#
+# 本脚本**与版本无关**，在 PS 5.1 与 PS 7 下都能跑（已在 7.6.6 Core 实测通过）。
+#
+# 但**不要**用 `& "$PSHOME\powershell.exe" -File ...` 这种方式调用它：
+# `$PSHOME` 会随会话而变 —— 会话在 PS7 下时它是 `C:\Program Files\PowerShell\7`，
+# 那里只有 `pwsh.exe`，`powershell.exe` 不存在 → 命令静默失败（实测踩过：
+# 以为部署成功，其实一个文件都没复制）。要指定 5.1 就用绝对路径：
+#   $env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe
+#
+# 编码要求：**PS 5.1 需要本文件带 UTF-8 BOM**（它把无 BOM 的 UTF-8 .ps1
+# 当 ANSI/GBK 解码，中文注释会乱码甚至语法错误）；**PS 7 不需要**，且能正确
+# 读无 BOM 文件。
+#
+# ⚠️ `edit`/`write` 一类工具**会剥掉 BOM**（实测：改一次注释就没了）。
+# 剥掉后 PS7 照常工作，退回 5.1 才会坏。所以在 5.1 下用之前先跑：
+#     python tools/ensure-bom.py
+# 本仓库统一用 PS7，所以这通常不必做 —— 该脚本只是保留 5.1 兼容的退路。
 #
 # 为什么需要脚本而不是一句 Copy-Item：
 #
