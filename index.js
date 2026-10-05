@@ -655,30 +655,45 @@ export function structureCss () {
      * 头像用 CSS `::before` 打在 `[data-chat-flow-kind="assistant-step"]` 上 ——
      * 这是**语义锚点**（桌面壳 456 个 data-* 之一），比类名稳。
      *
-     * ── 关键是「不要干预折叠」（实测踩过，用户截图反馈空白）────────────
+     * ── 关键是「不要干预折叠」（实测踩过两次）──────────────────────────
      *
      * 聊天区是**虚拟化列表**，外壳自己有一条折叠规则：
      *
      *   [class*="_flowItem"]:is(:empty,
      *     :has(>[data-slot="conversation.chat.node"]:empty)){ height:0 }
      *
-     * 注意它是**两个条件**：行本身空 **或** 它的 slot 子节点空。过程块
-     * （工具调用、推理）折叠后正是第二种 —— 行还在，但子节点空了。
+     * 它是**两个条件**：行本身空 **或** 它的 slot 子节点空。
      *
-     * 我最初写 `min-height:48px; padding:22px 0 2px 58px`，用 `min-height`
-     * 强行撑开了本该 `height:0` 的行 → 折叠后留下一大片空白；虚拟化列表的
-     * 高度估算也会因此失准。
+     * **第一次踩坑**（用户截图反馈空白）：我最初写 `min-height:48px;
+     * padding:22px 0 2px 58px`，用 `min-height` 强行撑开了本该 `height:0`
+     * 的行 → 折叠后留下大片空白，虚拟化列表的高度估算也失准。
+     * 修法：用与外壳相同的折叠条件**取反**，只在真的没折叠时才加占位。
      *
-     * 正确做法：**用与外壳相同的折叠条件取反**，只在「真的没折叠」时才
-     * 加左侧占位。这样我的规则与外壳的折叠语义严格互补，不可能打架。
+     * **第二次踩坑**（用户截图反馈「折叠效果很奇怪」）：光靠上面那两条
+     * **不够** —— 折叠的「思考」行**不是空的**，它有自己的 24px 摘要行
+     * （`▾ 思考 · The user wants me to...`）。于是：
+     *   · `:not(:empty)` 通过 → 我们加了 44px 左内距 + 28px 头像
+     *   · 但该行实际高度只有 24px（外壳的 `contain:size layout` +
+     *     `height:calc(24px + var(--dsh-content-font-delta))`）
+     *   · 结果头像与摘要行**挤在一起**、文字被右推
+     *
+     * 外壳其实给了**专用语义标记**（源码实测）：
+     *
+     *   const processHidden = controllerInactive || foldable && processMember && !processOpen
+     *   ...
+     *   "data-turn-process-hidden": processHidden || void 0,
+     *
+     * 折叠时该属性**存在**（`true`），展开时不存在（`void 0` → 不渲染属性）。
+     * 所以正确判据是**三条并列排除**：行非空 **且** 子节点非空 **且**
+     * 不是折叠中的过程块。
      *
      * 另外**不加 `min-height`**：行高由内容决定，我只在一旁放头像。
      * ══════════════════════════════════════════════════════════════════ */
     // 「未折叠」= 非空 且 slot 子节点非空 —— 与外壳的折叠条件严格取反
-    'body[data-zf-avatar] [data-chat-flow-kind="assistant-step"]:not(:empty):not(:has(>[data-slot="conversation.chat.node"]:empty)){',
+    'body[data-zf-avatar] [data-chat-flow-kind="assistant-step"]:not([data-turn-process-hidden]):not(:empty):not(:has(>[data-slot="conversation.chat.node"]:empty)){',
     '  position:relative;padding-left:44px;',
     '}',
-    'body[data-zf-avatar] [data-chat-flow-kind="assistant-step"]:not(:empty):not(:has(>[data-slot="conversation.chat.node"]:empty))::before{',
+    'body[data-zf-avatar] [data-chat-flow-kind="assistant-step"]:not([data-turn-process-hidden]):not(:empty):not(:has(>[data-slot="conversation.chat.node"]:empty))::before{',
     '  content:"";position:absolute;top:2px;left:0;width:28px;height:28px;',
     // 去掉边框：用户反馈头像外面那圈黄绿描边难看（截图确认）。
     //
@@ -696,11 +711,13 @@ export function structureCss () {
     '}',
     // 折叠行 / 空行：完全不加任何占位，交给外壳的 height:0
     'body[data-zf-avatar] [data-chat-flow-kind="assistant-step"]:empty,',
-    'body[data-zf-avatar] [data-chat-flow-kind="assistant-step"]:has(>[data-slot="conversation.chat.node"]:empty){',
+    'body[data-zf-avatar] [data-chat-flow-kind="assistant-step"]:has(>[data-slot="conversation.chat.node"]:empty),',
+    'body[data-zf-avatar] [data-chat-flow-kind="assistant-step"][data-turn-process-hidden]{',
     '  padding-left:0;min-height:0;',
     '}',
     'body[data-zf-avatar] [data-chat-flow-kind="assistant-step"]:empty::before,',
-    'body[data-zf-avatar] [data-chat-flow-kind="assistant-step"]:has(>[data-slot="conversation.chat.node"]:empty)::before{',
+    'body[data-zf-avatar] [data-chat-flow-kind="assistant-step"]:has(>[data-slot="conversation.chat.node"]:empty)::before,',
+    'body[data-zf-avatar] [data-chat-flow-kind="assistant-step"][data-turn-process-hidden]::before{',
     '  content:none;display:none;',
     '}',
     // 用户气泡：细边框 + 圆角，去阴影
@@ -716,8 +733,8 @@ export function structureCss () {
     'body[data-zf-avatar] [data-composer-seat]{ padding-bottom:14px; }',
     // 窄屏降级
     '@media (max-width:520px){',
-    '  body[data-zf-avatar] [data-chat-flow-kind="assistant-step"]:not(:empty):not(:has(>[data-slot="conversation.chat.node"]:empty)){ padding-left:34px; }',
-    '  body[data-zf-avatar] [data-chat-flow-kind="assistant-step"]:not(:empty):not(:has(>[data-slot="conversation.chat.node"]:empty))::before{ width:22px;height:22px; }',
+    '  body[data-zf-avatar] [data-chat-flow-kind="assistant-step"]:not([data-turn-process-hidden]):not(:empty):not(:has(>[data-slot="conversation.chat.node"]:empty)){ padding-left:34px; }',
+    '  body[data-zf-avatar] [data-chat-flow-kind="assistant-step"]:not([data-turn-process-hidden]):not(:empty):not(:has(>[data-slot="conversation.chat.node"]:empty))::before{ width:22px;height:22px; }',
     '}',
     // 视口过窄时藏掉右栏，避免挤压中栏
     '@media (max-width:1180px){ .zf-rail{ display:none; } }',

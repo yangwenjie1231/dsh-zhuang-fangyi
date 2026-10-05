@@ -931,6 +931,23 @@ function shellDom (opts = {}) {
     center.appendChild(row)
   }
 
+  // 「折叠中的过程块」行 —— 外壳对过程成员且未展开的行会打上
+  // `data-turn-process-hidden`（源码：`processHidden = ... && !processOpen`
+  // 然后 `"data-turn-process-hidden": processHidden || void 0`）。
+  //
+  // ⚠️ 这种行**不是空的** —— 它有 24px 高的摘要（`▾ 思考 · 摘要…`），
+  // 所以只靠 `:not(:empty)` 判不出「已折叠」，会误加头像（用户截图反馈
+  // 「折叠的时候效果很奇怪」就是这么来的）。
+  for (const kind of opts.foldedProcess ?? []) {
+    const row = new El('div')
+    row.setAttribute('data-chat-flow-kind', kind)
+    row.setAttribute('data-turn-process-hidden', 'true')
+    const summary = new El('span')
+    summary.textContent = '思考 · 摘要文字'
+    row.appendChild(summary)
+    center.appendChild(row)
+  }
+
   // 「已停止」信号：外壳在当前回合渲染的叶子 `<span>已停止</span>`
   // （i18n `message.stopped`，interrupted 时挂在过程栏/正文里）
   if (opts.stopped) {
@@ -1420,8 +1437,8 @@ function shellDom (opts = {}) {
   console.log('\n--- 头像描边与正圆 ---')
   const { structureStyle } = await import('../index.js')
   const css = structureStyle()
-  const before = css.match(/assistant-step"\]:not\(:empty\):not\(:has\(>\[data-slot="conversation\.chat\.node"\]:empty\)\)::before\{[^}]*\}/)
-  ok('找到助手头像规则', before !== null)
+  const before = css.match(/assistant-step"\]:not\(\[data-turn-process-hidden\]\):not\(:empty\):not\(:has\(>\[data-slot="conversation\.chat\.node"\]:empty\)\)::before\{[^}]*\}/)
+  ok('找到助手头像规则（且排除折叠态）', before !== null)
 
   // 用户反馈：头像外面那圈黄绿描边难看
   ok('助手头像无 border 描边', before !== null && !/border:1px/.test(before[0]))
@@ -2723,6 +2740,63 @@ function shellDom (opts = {}) {
   const radiusUses = (csrc.match(/border-radius/g) ?? []).length
   ok('client.js 的 border-radius 用量受控（≤ 既有数量，无风格化新增）',
     radiusUses <= 6, `实测 ${radiusUses} 处`)
+}
+// 用例 58：折叠的过程块不能加头像（用户截图反馈「折叠效果很奇怪」）
+//
+// 背景：折叠的「思考」行**不是空的** —— 它有 24px 高的摘要（`▾ 思考 · 摘要…`）。
+// 所以只靠 `:not(:empty)` 判不出「已折叠」：
+//   · 旧判据 `:not(:empty):not(:has(>[data-slot]...:empty))` 通过 → 加了 44px
+//     左内距 + 28px 头像
+//   · 但该行实际只有 24px 高（外壳 `contain:size layout` +
+//     `height:calc(24px + var(--dsh-content-font-delta))`）
+//   · 结果头像与摘要行挤在一起、文字被右推
+//
+// 外壳给了专用语义标记（源码实测）：
+//   const processHidden = controllerInactive || foldable && processMember && !processOpen
+//   "data-turn-process-hidden": processHidden || void 0,
+// 折叠时属性存在，展开时不存在。所以判据必须**三条并列**。
+{
+  console.log('\n--- 折叠的过程块不加头像 ---')
+  const { structureCss } = await import('../index.js')
+  const css = structureCss()
+  const flat = css.replace(/\s+/g, '')
+
+  // 1) 三条并列判据必须都在「加头像」的选择器上
+  const avatarSel = 'body[data-zf-avatar][data-chat-flow-kind="assistant-step"]'
+  ok('加头像的规则含 :not([data-turn-process-hidden])',
+    flat.includes('assistant-step"]:not([data-turn-process-hidden]):not(:empty)'),
+    '选择器里没有排除折叠态')
+  ok('左内距规则同样排除折叠态',
+    (flat.match(/not\(\[data-turn-process-hidden\]\):not\(:empty\)/g) ?? []).length >= 2,
+    `实测 ${(flat.match(/not\(\[data-turn-process-hidden\]\):not\(:empty\)/g) ?? []).length} 处`)
+
+  // 2) 折叠行要显式清零（不能只靠「不加」—— 还要压掉可能继承的占位）
+  ok('折叠行显式清零（padding-left:0;min-height:0）',
+    /assistant-step"\]\[data-turn-process-hidden\]\{padding-left:0;min-height:0;\}/.test(flat))
+  ok('折叠行的头像伪元素被关掉（content:none）',
+    /\[data-turn-process-hidden\]::before\{content:none/.test(flat))
+
+  // 3) 与外壳折叠语义严格互补：三条件取反 vs 三条件
+  //    外壳折叠 = 空 或 子节点空 或 折叠中的过程块
+  const shellFold = ['assistant-step"]:empty', 'chat.node"]:empty)',
+    'assistant-step"][data-turn-process-hidden]']
+  for (const frag of shellFold) {
+    ok(`清零规则覆盖外壳折叠条件：${frag.slice(0, 28)}…`,
+      flat.includes(frag))
+  }
+
+  // 4) 不引入 min-height（会撑开本该 height:0 的行）
+  ok('加头像的规则不含 min-height（不撑高行）',
+    !/not\(\[data-turn-process-hidden\]\):not\(:empty\)[^{]*\{[^}]*min-height/.test(flat))
+
+  // 5) 桩里能构造折叠行，且它确实非空（复现用户场景）
+  const dom = shellDom({ kinds: ['assistant-step'], foldedProcess: ['assistant-step'] })
+  const folded = dom.center.children.filter(c =>
+    c.getAttribute('data-chat-flow-kind') === 'assistant-step' &&
+    c.hasAttribute('data-turn-process-hidden'))
+  ok('桩能构造折叠的过程块行', folded.length === 1, `实际 ${folded.length}`)
+  ok('折叠行非空（这正是旧判据误判的原因）',
+    folded[0].children.length > 0)
 }
 
 console.log(`\n合计 ${pass + fail} 项，通过 ${pass}，失败 ${fail}`)
