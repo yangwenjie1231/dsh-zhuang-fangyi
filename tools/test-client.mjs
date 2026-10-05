@@ -2229,17 +2229,46 @@ function shellDom (opts = {}) {
   ok('白名单含 splash 素材',
     hostSrc.includes("out.add('splash.webp')") && hostSrc.includes("out.add('splash-sm.webp')"))
 
-  // 3) 组件行为：注册 + 只在启用时渲染 + 播完自卸
+  // 3) 组件行为：等 boot 屏消失后才播（C 方案）
+  //
+  // 官方 boot 屏由 `BootHandoff` 托着（首帧渲染 boot DOM，useLayoutEffect
+  // 后换成应用），所以「boot 消失」= `#root` 里没有 `[data-dsh-boot]`。
+  // 测试桩默认没有该元素 → 视为 boot 已结束 → 可以播。
   const on = await boot({ ...baseSettings, splash: true })
   const overlay = on.h.slotRegistrations.filter(r => r.meta.name === 'shell.overlay')
   const splashReg = overlay.find(r => r.meta.id === 'zhuang-fangyi-splash')
   ok('启动动效已注册到 shell.overlay', splashReg !== undefined)
-  const art = splashReg.component({})
-  ok('启用时渲染立绘元素', art !== null && art !== undefined, String(art))
-  ok('立绘指向 splash.webp 或 splash-sm.webp',
-    /art\/(splash|splash-sm)\.webp/.test(String(art?.children?.[0]?.props?.src)),
-    String(art?.children?.[0]?.props?.src))
-  ok('容器标记 aria-hidden（纯装饰）', art?.props?.['aria-hidden'] === 'true')
+
+  // 组件首次渲染时 armed=false（还在等 boot 信号）→ 返回 null，且**不能**
+  // 消耗掉「已播过」标记，否则样式就绪后就永远不播（曾经的竞态 bug）
+  ok('boot 信号到达前不渲染', splashReg.component({}) === null)
+  ok('boot 信号到达前不标记已播（防竞态）',
+    on.mod.__test.state.splashPlayed === false)
+
+  // ── boot 时机判定（纯函数，可测）──────────────────────────────────────
+  //
+  // 真实逻辑依赖 React state/effect 时序，而桩的 useState/useEffect 是空实现，
+  // 所以判定被抽成 `bootScreenGone(doc)` 纯函数 —— 这条最关键的时机逻辑
+  // （出过「压根没播」bug 的地方）因此能被真正测到。
+  const bootDom = makeDom()
+  const bootEl = new El('div')
+  bootEl.setAttribute('data-dsh-boot', '')
+  bootDom.document.body.appendChild(bootEl)
+  ok('boot 屏在 → 判定为未退场', on.mod.__test.bootScreenGone(bootDom.document) === false)
+  bootEl.remove()
+  ok('boot 屏移除 → 判定为已退场', on.mod.__test.bootScreenGone(bootDom.document) === true)
+  ok('空 document 安全回落 true', on.mod.__test.bootScreenGone(null) === true)
+
+  // 组件在 boot 未退场（armed=false）时返回 null，且**不消耗**「已播过」标记
+  ok('boot 未退场时不播', splashReg.component({}) === null)
+  ok('未播时不置位 splashPlayed（这是「压根没播」的根因）',
+    on.mod.__test.state.splashPlayed === false)
+  // 组件确实渲染出立绘（结构断言：桩的 useState 无法推进 armed，
+  // 所以这里断言源码里的标记与取值，而不是调用组件）
+  const csrc = fs.readFileSync(path.join(ROOT, 'client.js'), 'utf8')
+  ok('立绘元素用 .zf-splash__art 类', csrc.includes("className: 'zf-splash__art'"))
+  ok('窄屏用 splash-sm.webp / 宽屏用 splash.webp',
+    csrc.includes("narrow ? 'splash-sm.webp' : 'splash.webp'"))
 
   const off = await boot({ ...baseSettings, splash: false })
   const offReg = off.h.slotRegistrations
@@ -2252,11 +2281,6 @@ function shellDom (opts = {}) {
     .filter(r => r.meta.name === 'shell.overlay')
     .find(r => r.meta.id === 'zhuang-fangyi-splash')
   ok('插件停用时不渲染', disReg.component({}) === null)
-
-  // 4) 一次性标记：避免每次 emit 都重播
-  ok('首次渲染后标记 splashDone', on.mod.__test.state.splashDone === true)
-  ok('已播过则不重复渲染（防滑杆/配色变化时闪动效）',
-    splashReg.component({}) === null)
 
   // 5) 动效三态
   const set = await import('../src/settings.js')

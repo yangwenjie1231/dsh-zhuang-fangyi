@@ -832,8 +832,8 @@ window.__ModuleLoader__.load({
         themeRoles: {},
         /** 壁纸清单（宿主下发）：`{ "wallpaper-x.webp": { fit, width, height } }`。 */
         wallpaperMeta: {},
-        /** 启动动效本次页面会话是否已播过（避免每次 emit 都闪一次）。 */
-        splashDone: false,
+        /** 本次页面会话是否已经播过启动动效（避免每次 emit 都闪一次）。 */
+        splashPlayed: false,
         layerDispose: null,
         registered: new Map(),
         heroDispose: null,
@@ -1944,6 +1944,28 @@ window.__ModuleLoader__.load({
       }
 
       /**
+       * 官方 boot 屏是否已经退场。
+       *
+       * 抽成**纯函数**是为了可测：真实逻辑依赖 React 的 state/effect 时序，
+       * 而测试桩的 `useState`/`useEffect` 都是空实现 —— 直接把判定留在组件里，
+       * 这条最关键的时机逻辑就永远测不到（而它恰恰是出过 bug 的地方）。
+       *
+       * 判定依据（源码实测）：`BootHandoff` 首帧渲染 `[data-dsh-boot]`，
+       * 其 `useLayoutEffect` 置位后换成应用，所以该元素消失 = boot 退场。
+       *
+       * @param {Document} doc
+       * @returns {boolean}
+       */
+      function bootScreenGone (doc) {
+        if (doc === null || doc === undefined) return true
+        try {
+          return doc.querySelector('[data-dsh-boot]') === null
+        } catch {
+          return true   // 查询失败按「已退场」处理：宁可播，也不要永远不播
+        }
+      }
+
+      /**
        * 启动动效（干员立绘入场）。
        *
        * ── 行为 ───────────────────────────────────────────────────────────
@@ -1951,7 +1973,7 @@ window.__ModuleLoader__.load({
        * 页面加载后播放一次：淡入 + 轻微放大 → 停留 → 淡出（CSS `@keyframes`
        * 一次跑完），动画结束后**组件自行卸载**（不留空壳节点）。
        *
-       * ── 为什么用 `state.splashDone` 而不是每次渲染都播 ────────────────
+       * ── 为什么用 `state.splashPlayed` 而不是每次渲染都播 ─────────────
        *
        * 组件会因为任何 `emit()`（改设置、切配色…）重渲染。若每次都播，
        * 用户每动一下滑杆就闪一次立绘。所以用一次性标记：本次页面会话里
@@ -1965,31 +1987,65 @@ window.__ModuleLoader__.load({
       function Splash () {
         const s = useStore()
         const settings = s.settings
-        // 动画时长与 CSS 的 `--zf-splash-duration` 保持一致（默认 2000ms）
-        const DURATION = 2000
+        // 动画时长与 CSS 的 `--zf-splash-duration` 保持一致（默认 2400ms）
+        const DURATION = 2400
 
-        // ── 一次性标记在**渲染期**就置位，而不是放进 useEffect ────────────
+        // ── 触发时机：等**官方 boot 屏消失**那一刻（C 方案）───────────────
         //
-        // 放 effect 里会有一个真实窗口：首次渲染 → （effect 之前）若因任何
-        // 原因重渲染 → 又判定「还没播过」→ 重播一次。渲染期置位是幂等的，
-        // 这个窗口不存在。同时它让「只播一次」这条不变量在无头测试里也可断言
-        // （测试桩的 useEffect 是空实现，依赖它的话这条根本测不到）。
-        const firstPlay = state.splashDone !== true
-        if (firstPlay) state.splashDone = true
+        // 官方 boot 屏（wordmark + spinner）由 `BootHandoff` 托着：它首帧渲染
+        // boot DOM，`useLayoutEffect` 里置位后换成应用（源码实测）：
+        //
+        //   const [ready, setReady] = useState(false)
+        //   useLayoutEffect(() => setReady(true), [])
+        //   if (ready) return props.app()
+        //   return <div data-dsh-boot="" ... />
+        //
+        // 所以「boot 屏消失」= `#root` 里的 `[data-dsh-boot]` 元素没了。
+        // 在这里接上，观感就是「开机 → 立绘 → 应用」连贯一气，
+        // 而不是「应用已经好了，再冒出一张图」（用户反馈的正是后者）。
+        //
+        // 兜底：若 boot 元素始终存在（未来壳改版），最多等 BOOT_WAIT 就播，
+        // 不能让动效因为等不到信号而永不出现。
+        const BOOT_WAIT = 1500
+        const [armed, setArmed] = useState(false)
+        useEffect(() => {
+          if (state.splashPlayed) return undefined
+          let done = false
+          const fire = () => {
+            if (done) return
+            done = true
+            setArmed(true)
+          }
+          const bootGone = () => bootScreenGone(document)
+          if (bootGone()) { fire() } else {
+            // 轮询比 MutationObserver 更稳：boot 元素可能被整体替换而非移除
+            const iv = setInterval(() => { if (bootGone()) { clearInterval(iv); fire() } }, 40)
+            const to = setTimeout(() => { clearInterval(iv); fire() }, BOOT_WAIT)
+            return () => { clearInterval(iv); clearTimeout(to) }
+          }
+          return undefined
+        }, [])
 
         const [gone, setGone] = useState(false)
         useEffect(() => {
-          if (!firstPlay) return undefined
-          const timer = setTimeout(() => setGone(true), DURATION + 120)
+          if (!armed) return undefined
+          const timer = setTimeout(() => setGone(true), DURATION + 150)
           return () => clearTimeout(timer)
-        }, [])
+        }, [armed])
 
-        if (!firstPlay || gone) return null
+        // 标记只在**真正开播**时置位。
+        //
+        // 最初写在首次渲染处，结果踩了竞态：首帧 `styleReady` 还是 false
+        // （样式表还没 fetch 回来）→ 组件 return null，但标记已被消耗 →
+        // 样式就绪后重渲染时判定「已播过」→ **永远不播**（用户反馈「启动
+        // 压根没播」就是它）。现在只在 armed 且真的要渲染时才置位。
+        if (!armed || gone) return null
         if (!state.styleReady) return null
         if (settings === null || settings.enabled !== true) return null
         // 显式关掉时不播；`reduced` 由 CSS 把动画干掉（也会立刻透明），
         // 所以这里统一让组件在 DURATION 后卸载即可。
         if (settings.splash === false) return null
+        state.splashPlayed = true
 
         const narrow = typeof window !== 'undefined' && window.innerWidth <= 900
         const file = narrow ? 'splash-sm.webp' : 'splash.webp'
@@ -2422,7 +2478,7 @@ window.__ModuleLoader__.load({
         makeModuleClass, makeMarker, readSessionState, readStats, nativeRightbarOpen,
         // 观测台路径裁决与设置同步（用例 41/42），以及官方 tab 的自动打开（用例 44）
         railOwner, resyncSettings, maybeOpenRailTab, resetToDefaults, reloadThemes, save,
-        formatElapsed, trackSessionSince,
+        formatElapsed, trackSessionSince, bootScreenGone,
         // 让测试能模拟「宿主设置被外部改动」：stub fetch 下一次 /settings 的返回
         setNextSettings (next) {
           globalThis.__zfNextSettings = next

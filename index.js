@@ -704,19 +704,32 @@ export function structureCss () {
     '.zf-splash{',
     '  position:fixed;inset:0;z-index:40;pointer-events:none;',
     '  display:flex;align-items:center;justify-content:center;',
-    '  background:transparent;overflow:hidden;',
+    // 底色用当前主题的画布色 —— 官方 boot 屏退场后，这一层立刻接管，
+    // 视觉上就是「开场还在继续」，而不是「应用好了又弹一张图」。
+    // 用 alpha 而非实色：万一动效被打断，底层应用仍能透出一点，不会像卡死。
+    '  background:color-mix(in srgb, var(--dsw-alias-bg-base, Canvas) 96%, transparent);',
+    '  overflow:hidden;',
+    '  animation:zf-splash-veil var(--zf-splash-duration, 2400ms) ease-out forwards;',
     '}',
     '.zf-splash__art{',
     '  max-width:min(88vw, 1100px);max-height:88vh;object-fit:contain;',
     '  mix-blend-mode:screen;',      /* 黑底融掉，只留立绘 */
     '  filter:drop-shadow(0 24px 60px rgba(0,0,0,.55));',
-    '  animation:zf-splash-in var(--zf-splash-duration, 2000ms) ease-out forwards;',
+    '  animation:zf-splash-in var(--zf-splash-duration, 2400ms) ease-out forwards;',
     '}',
+    // 立绘：快速淡入（0→10%），长时间停留，末尾随底一起淡出
     '@keyframes zf-splash-in{',
-    '  0%{ opacity:0; transform:scale(1.06); }',
-    '  18%{ opacity:1; transform:scale(1); }',
-    '  72%{ opacity:1; transform:scale(1.01); }',
+    '  0%{ opacity:0; transform:scale(1.05); }',
+    '  10%{ opacity:1; transform:scale(1); }',
+    '  76%{ opacity:1; transform:scale(1.012); }',
     '  100%{ opacity:0; transform:scale(1.03); }',
+    '}',
+    // 底色：前 76% 保持不透明（遮住下面已就绪的应用，避免「两套 UI 同框」），
+    // 末尾 24% 与立绘一起淡出，交出应用
+    '@keyframes zf-splash-veil{',
+    '  0%{ opacity:1; }',
+    '  76%{ opacity:1; }',
+    '  100%{ opacity:0; }',
     '}',
     // 窄屏换小图（省解码时间）
     '@media (max-width:900px){ .zf-splash__art{ max-width:94vw; } }',
