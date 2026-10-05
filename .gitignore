@@ -1,5 +1,24 @@
 node_modules/
-art/*.webp
 *.log
 __pycache__/
 dist/
+
+# 生成脚本（源素材在仓库外的 `庄方宜素材/`，不随仓库分发）：
+#   tools/prepare-art.py      → art/*.webp + art/thumbs/*.webp + art/wallpapers.json
+#   tools/prepare-splash.py   → art/splash*.webp
+#
+# ⚠️ **生成产物一律入库**（不忽略 `art/`）。
+#
+# 曾经把 `art/*.webp` 忽略掉，理由是「可以重新生成」。**那是错的**：
+#   · 源素材 `庄方宜素材/`（10.8 GB）在仓库外，别人 clone 后没有它，
+#     重跑生成脚本会直接失败；
+#   · 而 GitHub 直装（`dsh plugin add github:...`）是主要分发路径，
+#     素材缺失会让壁纸与启动动效**直接 404**（`/art/*` 路由返回 404，
+#     前端表现为背景图裂、启动动效空白）。
+#   · CI 已经抓到过这个问题（`素材 splash.webp 已生成` 断言失败）。
+#
+# 代价是仓库多 ~4 MB（16 张壁纸 3.9 MB + 16 张缩略图 35 KB + splash 361 KB），
+# 换来「clone 下来就是完整可用的主题」—— 这个交换是划算的。
+#
+# 若将来要减小仓库体积，正确做法是把源素材也纳入仓库（或改用 Git LFS），
+# 而不是忽略产物。
