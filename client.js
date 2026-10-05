@@ -2682,7 +2682,7 @@ window.__ModuleLoader__.load({
       void load()
 
       exports.__test = {
-        DICT, PRESETS, SCHEMES, BACKGROUNDS, POSITIONS,
+        DICT, PRESETS, SCHEMES, BACKGROUNDS, POSITIONS, NS,
         // 供无头测试直接验证定位/打标逻辑
         makeModuleClass, makeMarker, readSessionState, readStats, nativeRightbarOpen,
         // 观测台路径裁决与设置同步（用例 41/42），以及官方 tab 的自动打开（用例 44）

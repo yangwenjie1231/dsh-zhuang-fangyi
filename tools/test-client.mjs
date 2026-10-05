@@ -2984,6 +2984,96 @@ function shellDom (opts = {}) {
     ok(`DICT 含 font_${f}`, typeof T.DICT.zh[`font_${f}`] === 'string' && typeof T.DICT.en[`font_${f}`] === 'string')
   }
 }
+// 用例 61：无障碍（减少透明度 / 高对比）
+//
+// 依据：外壳支持 `prefers-reduced-motion`（72 处）、`prefers-reduced-transparency`
+// （1 处）、`forced-colors`（2 处），但**完全不支持** `prefers-contrast`（0 处）。
+// 所以只跟前面三个，不做 `prefers-contrast`（单方面加深文字会与官方组件割裂）。
+{
+  console.log('\n--- 无障碍（系统偏好）---')
+  const { structureCss } = await import('../index.js')
+  const css = structureCss()
+
+  // 1) 减少透明度：撤壁纸 + 三列回不透明底
+  //
+  // ⚠️ 解析**生成的 CSS**（`structureCss()` 的产物），不是源码数组 ——
+  // 源码里每行是 `'...',`，产物里是真正的换行。按大括号配平切片。
+  /** 取出 `@media <query>{...}` 的块体（按大括号配平，不靠正则贪婪）。 */
+  const mediaBlock = query => {
+    const start = css.indexOf(`@media (${query})`)
+    if (start < 0) return ''
+    const open = css.indexOf('{', start)
+    if (open < 0) return ''
+    let depth = 0
+    for (let i = open; i < css.length; i += 1) {
+      if (css[i] === '{') depth += 1
+      else if (css[i] === '}') {
+        depth -= 1
+        if (depth === 0) return css.slice(open + 1, i)
+      }
+    }
+    return ''
+  }
+  ok('响应 prefers-reduced-transparency',
+    css.includes('@media (prefers-reduced-transparency:reduce)'))
+  const rtBlock = mediaBlock('prefers-reduced-transparency:reduce')
+  ok('减少透明度时撤掉壁纸绘制层（::before / ::after）',
+    /data-zf-wallpaper\]::before/.test(rtBlock) && /data-zf-wallpaper\]::after/.test(rtBlock))
+  ok('减少透明度时三列回不透明底色', /background:var\(--dsw-alias-bg-base\)/.test(rtBlock))
+  // ⚠️ 必须覆盖两套壳（桌面 rightbarCol / Web detailsCol），只写一半会留半透明
+  for (const sel of ['_sidebarCol', '_centerCol', '_rightbarCol', '_detailsCol']) {
+    ok(`减少透明度覆盖 ${sel}`, rtBlock.includes(`[class*="${sel}"]`))
+  }
+  // 也覆盖 data-* 语义锚点（比类名稳）
+  for (const attr of ['data-zf-sidebar', 'data-zf-center', 'data-zf-rightbar']) {
+    ok(`减少透明度覆盖 [${attr}]`, rtBlock.includes(`[${attr}]`))
+  }
+
+  // 2) 高对比：撤壁纸与启动动效图（否则会盖住系统强制色）
+  ok('响应 forced-colors:active', css.includes('@media (forced-colors:active)'))
+  const fcBlock = mediaBlock('forced-colors:active')
+  ok('高对比时撤掉壁纸', /data-zf-wallpaper\]::before/.test(fcBlock))
+  ok('高对比时撤掉启动动效立绘（否则盖住强制色）',
+    /\.zf-splash__art/.test(fcBlock))
+
+  // 3) 不做 prefers-contrast（外壳不支持，单方面做会割裂）
+  ok('不单方面实现 prefers-contrast（外壳 0 处支持）',
+    !css.includes('prefers-contrast'))
+
+  // 4) 这些偏好**不改变用户设置**（只在呈现层生效）
+  //    断言：CSS 里没有写死值覆盖我们的 CSS 变量，而是整层撤掉
+  ok('减少透明度不修改用户的背景变量（整层撤掉而非改值）',
+    !/--zf-veil[^;]*:/.test(rtBlock) && !/--zf-art-src[^;]*:/.test(rtBlock))
+}
+
+// 用例 62：本地化完整性
+//
+// dsh-wallpaper-engine 的 README 自己承认「选择器文案为中英混合（尚未接入
+// locale）」—— 我们已接入（`ctx.locale.register`），这里把缺口补齐并锁住。
+{
+  console.log('\n--- 本地化完整性 ---')
+  const probe = await boot(baseSettings)
+  const T = probe.mod.__test
+  const zh = Object.keys(T.DICT.zh)
+  const en = Object.keys(T.DICT.en)
+
+  ok('DICT 中英键集合完全一致（防漏翻）',
+    zh.length === en.length && zh.every(k => en.includes(k)),
+    `zh=${zh.length} en=${en.length}`)
+  ok('DICT 无空字符串值',
+    zh.every(k => typeof T.DICT.zh[k] === 'string' && T.DICT.zh[k].trim() !== '') &&
+    en.every(k => typeof T.DICT.en[k] === 'string' && T.DICT.en[k].trim() !== ''))
+  // 中文值里不该混入英文占位（英文值里出现中文说明漏翻）
+  const cnInEn = en.filter(k => /[\u4e00-\u9fa5]/.test(T.DICT.en[k]))
+  ok('英文 DICT 里没有残留中文（漏翻检测）',
+    cnInEn.length === 0, cnInEn.join(', '))
+  ok('注册了 locale 命名空间', T.NS === 'settings.zhuangFangyi', String(T.NS))
+  // 所有注册进插槽/标签页的条目都带 locale（官方契约）
+  const hostSrc = fs.readFileSync(path.join(ROOT, 'client.js'), 'utf8')
+  ok('插槽注册带 locale 命名空间（官方契约）',
+    (hostSrc.match(/locale: NS/g) ?? []).length >= 5,
+    `实测 ${(hostSrc.match(/locale: NS/g) ?? []).length} 处`)
+}
 
 console.log(`\n合计 ${pass + fail} 项，通过 ${pass}，失败 ${fail}`)
 if (fail > 0) {

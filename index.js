@@ -768,6 +768,51 @@ export function structureCss () {
     '  --shiki-foreground:var(--dsw-alias-label-primary);',
     '}',
 
+    /* ── 无障碍：尊重系统的「减少透明度」与「高对比」偏好 ────────────────
+     *
+     * ── 为什么只做这两个（源码实测过的取舍）────────────────────────────
+     *
+     * 外壳的支持面（在 app.asar 里数出现次数）：
+     *   prefers-reduced-motion        72 处  ← 已支持（我们的动效三态跟它）
+     *   prefers-reduced-transparency   1 处  ← 支持（macOS 侧栏）
+     *   forced-colors                  2 处  ← 支持
+     *   prefers-contrast               0 处  ← **完全不支持**
+     *
+     * 所以：
+     *   · 「减少透明度」与「高对比」**要**跟 —— 它们是真实存在的系统偏好，
+     *     而我们的壁纸 + 纱层正是「大面积半透明」与「低对比文字」的来源；
+     *   · `prefers-contrast: more` **不做** —— 外壳自己都不响应，我们单方面
+     *     加深文字会让界面与官方组件风格割裂（半边深半边浅比不加深更糟）。
+     *     等外壳支持了再跟。
+     *
+     * ⚠️ 这两条都**不改变用户设置**，只在呈现层生效：用户的
+     * `backgroundOpacity` 等值原样保留，关掉系统偏好就恢复。
+     */
+    // 减少透明度：壁纸整层撤掉（半透明纱层对这类用户就是「看不清正文」），
+    // 界面回到不透明底色。这是最彻底的处置，也最符合该偏好的意图。
+    // ⚠️ 选择器必须**逐条对应**上面那组「纱」规则（含两套壳的类名与
+    // `data-zf-*` 属性锚点）—— 只写一半会让部分列留着半透明，比不撤更难看。
+    '@media (prefers-reduced-transparency:reduce){',
+    '  html[data-zf-wallpaper]::before,',
+    '  html[data-zf-wallpaper]::after{ display:none !important; }',
+    '  body[data-zf-wallpaper] [data-zf-sidebar],',
+    '  body[data-zf-wallpaper] [data-zf-center],',
+    '  body[data-zf-wallpaper] [data-zf-rightbar],',
+    '  body[data-zf-wallpaper] [class*="_sidebarCol"],',
+    '  body[data-zf-wallpaper] [class*="_centerCol"],',
+    '  body[data-zf-wallpaper] [class*="_rightbarCol"],',
+    '  body[data-zf-wallpaper] [class*="_detailsCol"]{',
+    '    background:var(--dsw-alias-bg-base) !important;',
+    '  }',
+    '}',
+    // 高对比（forced-colors）：系统会强制替换颜色，背景图会盖住强制色
+    // → 撤掉壁纸与模糊垫底，让强制色生效
+    '@media (forced-colors:active){',
+    '  html[data-zf-wallpaper]::before,',
+    '  html[data-zf-wallpaper]::after{ display:none !important; }',
+    '  .zf-splash__art{ display:none !important; }',
+    '}',
+
     /* ── 排版（风格预设的第四个维度）────────────────────────────────────
      *
      * 属性驱动：客户端按设置写 `data-zf-font` / `data-zf-font-scale`，
