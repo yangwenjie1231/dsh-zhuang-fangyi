@@ -3884,6 +3884,82 @@ function shellDom (opts = {}) {
 }
 
 
+// 用例 70：输入区「座位」的黑渐变（用户「这里的黑色渐变背景也给去掉」）
+//
+// 用户贴了输入区整棵 DOM。壳源码实测（`@deepseek-ai/dsh-client-ui-conversation/
+// lib/client.js` 里内联的 CSS）：
+//
+//   .Dc7zOa_composerSeat{ z-index:7; position:sticky; bottom:0;
+//     background:linear-gradient(180deg,
+//       color-mix(in srgb, var(--dsw-alias-bg-base) 0%, transparent) 0px,
+//       var(--dsw-alias-bg-base) 36px) }
+//
+// 用意是让滚动中的消息「消失」在输入区上方；但壁纸模式下 `bg-base` 是主题的
+// **不透明**底色 → 那里成了一条黑色渐变带，正好盖住壁纸。
+{
+  console.log('\n--- 输入区座位渐变（壁纸开启时去掉）---')
+  const { structureCss } = await import('../index.js')
+  const css = structureCss()
+  const flat = css.replace(/\s+/g, '')
+
+  ok('有座位透明规则', flat.includes('body[data-zf-wallpaper][class*="_composerSeat"]'))
+  ok('按本地名 _composerSeat 定位（该模块专有，比哈希稳）',
+    flat.includes('[class*="_composerSeat"]'))
+  ok('只在壁纸开启时生效（关掉壁纸保留官方那条渐变）',
+    /body\[data-zf-wallpaper\]\[class\*="_composerSeat"\]\{background:transparent!important;?\}/.test(flat))
+
+  // 真实引擎实测：逐字照抄壳的选择器与渐变
+  const { execFileSync } = await import('node:child_process')
+  const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
+  if (!fs.existsSync(EDGE)) {
+    console.log('  SKIP 无 Edge（Linux/CI）—— 真实引擎验证跳过')
+  } else {
+    const build = on => `<!DOCTYPE html><html>
+      <head><style>
+        body{--dsw-alias-bg-base:#161613}
+        .Dc7zOa_root{background:var(--dsw-alias-bg-base)}
+        .Dc7zOa_composerSeat{display:block;height:36px}
+        .Dc7zOa_root[data-phase=active] .Dc7zOa_composerSeat,
+        .Dc7zOa_embeddedBody[data-content-phase=active] .Dc7zOa_composerSeat{
+          background:linear-gradient(180deg, color-mix(in srgb, var(--dsw-alias-bg-base) 0%, transparent) 0px, var(--dsw-alias-bg-base) 36px)}
+        ${structureCss()}
+      </style></head><body ${on ? 'data-zf-wallpaper=""' : ''}>
+        <div class="Dc7zOa_root" data-phase="active" id="conv">
+          <div class="Dc7zOa_composerSeat" id="seat"></div>
+        </div>
+        <script>
+          // ⚠️ 别用 id="root"（插件 CSS 里有 body[data-zf-wallpaper] #root > *，
+          // ID 权重会把它压掉 —— 上一个用例就是这么白查了一轮）
+          const st = id => getComputedStyle(document.getElementById(id))
+          document.title = JSON.stringify({
+            seat: st('seat').backgroundImage, color: st('seat').backgroundColor })
+        <\/script></body></html>`
+
+    const rows = {}
+    for (const on of [true, false]) {
+      const f = path.join(os.tmpdir(), `zf-seat-${on}.html`)
+      fs.writeFileSync(f, build(on), 'utf8')
+      try {
+        const dom = execFileSync(EDGE, [
+          '--headless=new', '--disable-gpu', '--no-sandbox', '--virtual-time-budget=1200',
+          '--dump-dom', `file:///${f.replace(/\\/g, '/')}`
+        ], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] })
+        const m = /<title>([^<]*)<\/title>/.exec(dom)
+        rows[on] = m ? JSON.parse(m[1].replace(/&quot;/g, '"')) : null
+      } catch { rows[on] = null }
+    }
+    ok('拿到真实引擎计算值', rows[true] !== null && rows[false] !== null)
+    if (rows[true] !== null && rows[false] !== null) {
+      ok('壁纸开启 → 渐变没了、底色透明（黑带消失）',
+        rows[true].seat === 'none' && rows[true].color === 'rgba(0, 0, 0, 0)',
+        `${rows[true].seat} / ${rows[true].color}`)
+      ok('壁纸关闭 → 官方那条渐变照旧（不动官方设计）',
+        String(rows[false].seat).includes('linear-gradient'), rows[false].seat)
+    }
+  }
+}
+
+
 console.log(`\n合计 ${pass + fail} 项，通过 ${pass}，失败 ${fail}`)
 if (fail > 0) {
   console.log(`\n失败项：\n  ${failures.join('\n  ')}`)

@@ -563,6 +563,36 @@ export function structureCss () {
     '  background:transparent !important;',
     '}',
 
+    /* ── 输入区那条「座位」渐变（用户「这里的黑色渐变背景也给去掉」）───────
+     *
+     * 用户贴了输入区整棵 DOM。壳源码实测
+     * （`@deepseek-ai/dsh-client-ui-conversation/lib/client.js` 里内联的 CSS）：
+     *
+     *   .Dc7zOa_composerSeat{ z-index:7; position:sticky; bottom:0;
+     *     background: linear-gradient(180deg,
+     *       color-mix(in srgb, var(--dsw-alias-bg-base) 0%, transparent) 0px,
+     *       var(--dsw-alias-bg-base) 36px); }        ← 36px 内渐到不透明底色
+     *
+     * 这条的**用意是好的**：输入条坐在一个 sticky/absolute 的「座位」上，消息会
+     * 从它底下滚过去，渐到不透明底色能让文字消失在输入区上方，不至于糊在卡片边。
+     * 但壁纸模式下 `--dsw-alias-bg-base` 是我们主题的**不透明**底色 —— 于是那里
+     * 成了一条**黑色渐变带**，正好盖住壁纸。
+     *
+     * 处理：壁纸开启时不涂（透明），那条带子露出它下面中栏的纱 —— 与周围同色，
+     * 不再有「另一块底」的边界。
+     *
+     * ⚠️ 代价如实记下：座位不再遮滚动中的文字，消息会显示到卡片上沿；卡片本身
+     * 不透明，所以只有它上方那圈留白里看得到。若嫌吵，可改成「渐到纱色」或
+     * 「backdrop-filter 糊一道」——两者都比现在这条黑带轻。
+     *
+     * 锚点：`_composerSeat` 是这个模块专有的本地名，比哈希稳；官方两条规则
+     * （`_root[data-phase=active]` 与 `_embeddedBody[data-content-phase=active]`）
+     * 都带 `!important` 压得过。
+     */
+    'body[data-zf-wallpaper] [class*="_composerSeat"]{',
+    '  background:transparent !important;',
+    '}',
+
     /* ── 去掉 Windows 中栏左上角那个「悬浮圆角」（用户反馈）──────────────
      *
      * 官方 Windows 壳有一条设计（源码实测）：
