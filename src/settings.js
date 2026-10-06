@@ -55,8 +55,9 @@ export const BG_OPACITY_MAX = 90
  *   v1 → v2：加入观测栏 / 头像气泡重绘（顶栏后来移除）
  *   v2 → v3：加入强调色色相覆盖（`accentHue`）与动效模式（`motion`）
  *   v3 → v4：加入排版（`fontFamily` / `fontScale`）
+ *   v4 → v5：加入阅读宽度（`contentWidth`）
  */
-export const SETTINGS_VERSION = 4
+export const SETTINGS_VERSION = 5
 
 /**
  * 动效模式取值。
@@ -72,6 +73,20 @@ export const MOTION_MODES = ['on', 'auto', 'reduced']
 
 /** 右侧观测栏宽度范围（px）。 */
 export const RAIL_WIDTH = { min: 240, max: 380, default: 288 }
+
+/**
+ * 阅读宽度（正文列宽）三档。
+ *
+ * 外壳把 `--dsh-chat-content-width` 声明在**承载它的那个元素自己**身上
+ * （实测源码：`[data-conversation-content]` 上写着
+ * `--dsh-chat-content-width: var(--dsh-chat-user-width, clamp(680px, calc(列宽 * .64), 920px))`）。
+ * 自定义属性按最近祖先解析 —— 元素**自己的**声明永远赢过继承值，所以
+ * 写 `html` / `body` 都没用，必须覆盖到那个元素（客户端用 `!important` 行内写）。
+ *
+ * `auto` = 不干预，交还外壳（列宽的 64%，上限 920px）。
+ */
+export const CONTENT_WIDTH_MODES = ['auto', 'compact', 'wide']
+export const CONTENT_WIDTH_PX = { compact: '760px', wide: '1080px' }
 
 /** 默认设置。 */
 export function defaultSettings () {
@@ -96,6 +111,8 @@ export function defaultSettings () {
     // v4 新增：排版（风格预设的第四个维度）
     fontFamily: 'default',
     fontScale: 1,
+    // v5 新增：阅读宽度（正文列宽三档）
+    contentWidth: 'auto',
     // v2 新增：皮肤层（顶栏已移除，字段不再使用）
     rail: true,
     railWidth: RAIL_WIDTH.default,
@@ -143,6 +160,8 @@ export function normalizeSettings (input) {
   // v4：排版（非法值一律回落默认，保证不会给出坏字体栈/坏字号）
   out.fontFamily = normalizeFontFamily(input.fontFamily)
   out.fontScale = normalizeFontScale(input.fontScale)
+  // v5：阅读宽度（白名单三档，非法回落 auto = 交还外壳）
+  if (CONTENT_WIDTH_MODES.includes(input.contentWidth)) out.contentWidth = input.contentWidth
   out.railWidth = clamp(input.railWidth, RAIL_WIDTH.min, RAIL_WIDTH.max, base.railWidth)
   out.version = SETTINGS_VERSION
   return out

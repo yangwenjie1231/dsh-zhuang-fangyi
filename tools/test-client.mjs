@@ -4340,6 +4340,220 @@ function shellDom (opts = {}) {
 }
 
 
+// 用例 74：阅读宽度三档（B7）
+//
+// 用户选「还可以怎么完善」里的「阅读宽度」：长文一行太宽。
+//
+// 关键实测（外壳源码）：`--dsh-chat-content-width` 声明在
+// `[data-conversation-content]` **自己**身上：
+//
+//   .Dc7zOa_body{ --dsh-chat-content-width:
+//     var(--dsh-chat-user-width, clamp(680px, calc(列宽 * .64), 920px)) }
+//
+// 而且外壳自己还会往容器写行内 `--dsh-chat-user-width`（宽度手柄）。所以：
+//   · 写 html / body 一律无效（元素自己的声明赢过继承值）；
+//   · 必须写在**那个元素**上、而且要 `!important`（否则输给外壳那条声明）。
+{
+  console.log('\n--- 阅读宽度（正文列宽三档）---')
+  const set = await import('../src/settings.js')
+  const csrc = fs.readFileSync(path.join(ROOT, 'client.js'), 'utf8')
+  const ssrc = fs.readFileSync(path.join(ROOT, 'src/settings.js'), 'utf8')
+
+  // 1) 设置契约
+  ok('设置结构版本升到 5', set.SETTINGS_VERSION === 5, String(set.SETTINGS_VERSION))
+  ok('三档白名单', set.CONTENT_WIDTH_MODES.join(',') === 'auto,compact,wide',
+    set.CONTENT_WIDTH_MODES.join(','))
+  ok('默认交还外壳（auto）', set.normalizeSettings({}).contentWidth === 'auto')
+  ok('非法值回落 auto', set.normalizeSettings({ contentWidth: 'huge' }).contentWidth === 'auto')
+  ok('合法值保留', set.normalizeSettings({ contentWidth: 'wide' }).contentWidth === 'wide')
+  // v4 → v5 无损迁移：老文件没有这个键，其它字段必须原样保留
+  const migrated = set.normalizeSettings({ version: 4, preset: 'wine', contentWidth: undefined, fontScale: 1.05 })
+  ok('v4 老文件 → v5：新键补默认值', migrated.contentWidth === 'auto', migrated.contentWidth)
+  ok('v4 老文件 → v5：已有字段全部保留',
+    migrated.preset === 'wine' && migrated.fontScale === 1.05 && migrated.version === 5,
+    JSON.stringify({ preset: migrated.preset, fontScale: migrated.fontScale, v: migrated.version }))
+
+  // 2) 客户端与宿主两份常量必须一致（手写 bundle 不能 import）
+  const T = SHARED_MOD.__test
+  ok('客户端 CONTENT_WIDTHS 与 settings.CONTENT_WIDTH_PX 相等',
+    JSON.stringify(T.CONTENT_WIDTHS) === JSON.stringify(set.CONTENT_WIDTH_PX),
+    `${JSON.stringify(T.CONTENT_WIDTHS)} vs ${JSON.stringify(set.CONTENT_WIDTH_PX)}`)
+  ok('客户端三档列表与宿主一致',
+    Array.isArray(T.CONTENT_WIDTH_MODES) && T.CONTENT_WIDTH_MODES.join(',') === set.CONTENT_WIDTH_MODES.join(','))
+  ok('客户端确实按 data-conversation-content 定位（语义锚点）',
+    csrc.includes("querySelector?.('[data-conversation-content]')"))
+  ok('写的是行内 + important（否则输给外壳那条声明）',
+    csrc.includes("setProperty('--dsh-chat-content-width', value, 'important')"))
+  ok('auto 是「移除属性」而不是写一个值（把外壳的宽度手柄还回去）',
+    csrc.includes("removeProperty('--dsh-chat-content-width')"))
+  ok('停用主题时也交还外壳', csrc.includes('applyContentWidth(document, undefined)'))
+  ok('refresh 里会补写（切会话时容器会重建）',
+    csrc.includes('applyContentWidth(doc, state.settings?.contentWidth)'))
+
+  // 3) 行为单测（真实 client.js + 桩 DOM）
+  const dom = makeDom()
+  const convBody = new El('div')
+  convBody.setAttribute('data-conversation-content', '')
+  dom.body.appendChild(convBody)
+
+  T.applyContentWidth(dom.document, 'compact')
+  ok('紧凑档写入 760px',
+    convBody.style.getPropertyValue('--dsh-chat-content-width') === '760px',
+    convBody.style.getPropertyValue('--dsh-chat-content-width'))
+  T.applyContentWidth(dom.document, 'wide')
+  ok('宽松档覆盖为 1080px',
+    convBody.style.getPropertyValue('--dsh-chat-content-width') === '1080px',
+    convBody.style.getPropertyValue('--dsh-chat-content-width'))
+  T.applyContentWidth(dom.document, 'auto')
+  ok('auto → 移除属性（交还外壳）',
+    convBody.style.getPropertyValue('--dsh-chat-content-width') === '')
+  const empty = makeDom()
+  let threw = false
+  try { T.applyContentWidth(empty.document, 'wide') } catch { threw = true }
+  ok('容器还不存在时不抛错（首帧/切会话瞬间）', threw === false)
+
+  // 4) 真实引擎：为什么必须写在那个元素上 + 为什么必须 !important
+  const { execFileSync } = await import('node:child_process')
+  const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
+  if (!fs.existsSync(EDGE)) {
+    console.log('  SKIP 无 Edge（Linux/CI）—— 真实引擎验证跳过')
+  } else {
+    // 逐字照抄外壳那条声明 + 外壳自己写的行内 user-width
+    const html = `<!DOCTYPE html><html>
+      <head><style>
+        :root{--dsh-conversation-column-width:1200px}
+        .convBody{--dsh-chat-content-width:var(--dsh-chat-user-width, clamp(680px, calc(var(--dsh-conversation-column-width) * .64), 920px))}
+      </style></head><body>
+        <div class="convBody" data-conversation-content id="ours" style="--dsh-chat-user-width:900px"></div>
+        <div class="convBody" data-conversation-content id="weak" style="--dsh-chat-user-width:900px"></div>
+        <div class="convBody" data-conversation-content id="inherit"></div>
+        <script>
+          // 我们的写法：那个元素 + important；对照：不加 important
+          document.getElementById('ours').style.setProperty('--dsh-chat-content-width', '760px', 'important')
+          document.getElementById('weak').style.setProperty('--dsh-chat-content-width', '760px')
+          const v = id => getComputedStyle(document.getElementById(id)).getPropertyValue('--dsh-chat-content-width').trim()
+          document.title = JSON.stringify({ ours: v('ours'), weak: v('weak'), inherit: v('inherit') })
+        <\/script></body></html>`
+    const f = path.join(os.tmpdir(), 'zf-width.html')
+    fs.writeFileSync(f, html, 'utf8')
+    let r = null
+    try {
+      const dom2 = execFileSync(EDGE, [
+        '--headless=new', '--disable-gpu', '--no-sandbox', '--virtual-time-budget=1200',
+        '--dump-dom', `file:///${f.replace(/\\/g, '/')}`
+      ], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] })
+      const m = /<title>([^<]*)<\/title>/.exec(dom2)
+      r = m ? JSON.parse(m[1].replace(/&quot;/g, '"')) : null
+    } catch { r = null }
+    ok('拿到真实引擎计算值', r !== null)
+    if (r !== null) {
+      ok('行内写 → 我方 760px 生效', r.ours === '760px', r.ours)
+      // 实测更正：行内（哪怕不带 important）也压得过外壳那条**样式表**声明 ——
+      // 外壳只往该元素写 `--dsh-chat-user-width`，content-width 仍是样式表规则。
+      // 我们仍加 important，是防它以后改成行内写。
+      ok('不加 important 实测也赢（行内 > 作者样式表）', r.weak === '760px', r.weak)
+      // 自定义属性的计算值是**替换后的原文** —— 未设置 user-width 时就是那句
+      // `clamp(...)` 本身，不会被算成 px（第一版按 768px 断言，误报）
+      ok('不干预时仍是外壳那句 clamp（我们没碰它）',
+        String(r.inherit).includes('clamp('), r.inherit)
+    }
+  }
+}
+
+
+// 用例 75：逐图取景（B8）
+//
+// 用户选「还可以怎么完善」里的「逐图取景」：清单里只有 fit/宽高，取景统一
+// `center 22%`（竖图）或 `center`（横图）—— 主体偏在一侧的图会被裁到。
+//
+// 这次给清单加了逐图 `focus`（会成为 `background-position`）。⚠️ 它**只在画面
+// 被裁切时才有可见效果**（窗口宽高比 ≠ 图片宽高比）：16:9 图铺在 16:9 窗口里
+// 没有裁切，写什么值都一样 —— 真正救场的是「主体偏一侧」+ 超宽屏窗口。
+//
+// 值的来源是视觉测量（主体包围盒 + 面部位置），**只采纳多次测量一致的结论**：
+// 同一张图两次量出来的包围盒差很多（pool 一次 43–96、一次 20–78），
+// 所以只有 `contour`（两次都指向「主体在右半、左侧留白多」）写了 focus，
+// 其余保持居中 —— 宁可少写，也不把噪声写进清单。
+{
+  console.log('\n--- 逐图取景 ---')
+  const csrc = fs.readFileSync(path.join(ROOT, 'client.js'), 'utf8')
+  const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'art/wallpapers.json'), 'utf8'))
+  const art = manifest.wallpapers
+  const T = SHARED_MOD.__test
+
+  // 1) 清单契约
+  const focused = Object.entries(art).filter(([, v]) => v.focus !== undefined)
+  ok('清单里有 focus 字段（功能不是空的）', focused.length > 0, `${focused.length} 张`)
+  ok('focus 都是合法的 `x% y%`（0–100）',
+    focused.every(([, v]) => {
+      const m = /^(\d{1,3})% (\d{1,3})%$/.exec(v.focus)
+      return m !== null && Number(m[1]) <= 100 && Number(m[2]) <= 100
+    }),
+    focused.map(([k, v]) => `${k}=${v.focus}`).join(', '))
+  ok('同一张图的明暗两版 focus 相同（构图是同一张）',
+    focused.every(([k]) => {
+      const mate = k.endsWith('-dark.webp') ? k.replace('-dark.webp', '.webp') : k.replace('.webp', '-dark.webp')
+      return art[mate] === undefined || art[mate].focus === art[k].focus
+    }))
+  ok('生成器会写出 focus（重跑 prepare-art.py 不会丢）',
+    fs.readFileSync(path.join(ROOT, 'tools/prepare-art.py'), 'utf8')
+      .includes("entry['focus'] = focus"))
+
+  // 2) 取景优先级（纯函数，逐条钉死）
+  const P = T.artPosition
+  ok('导出 artPosition（可测）', typeof P === 'function')
+  ok('平铺 → `0 0`（平铺不裁切，位置没意义）',
+    P({ tiled: true, pos: 'cover', fit: 'cover', focus: '65% 50%' }) === '0 0')
+  ok('默认位置 + 有 focus → 用 focus',
+    P({ tiled: false, pos: 'cover', fit: 'cover', focus: '65% 50%' }) === '65% 50%')
+  ok('默认位置 + 无 focus → `center`',
+    P({ tiled: false, pos: 'cover', fit: 'cover', focus: undefined }) === 'center')
+  ok('用户显式选「靠右」→ 尊重用户，不被 focus 顶掉',
+    P({ tiled: false, pos: 'right', fit: 'cover', focus: '65% 50%' }) === 'right center')
+  ok('竖图无 focus → `center 22%`（历史取值，纵向留边时偏上）',
+    P({ tiled: false, pos: 'cover', fit: 'contain', focus: undefined }) === 'center 22%')
+  ok('focus 是空白串时按「没有」处理',
+    P({ tiled: false, pos: 'cover', fit: 'cover', focus: '   ' }) === 'center')
+  ok('focus 两侧空格会被去掉',
+    P({ tiled: false, pos: 'cover', fit: 'cover', focus: ' 65% 50% ' }) === '65% 50%')
+
+  // 3) 接线：applyStyleVars 真的把清单里的 focus 传进去了
+  ok('applyStyleVars 从清单读 focus 并交给 artPosition',
+    csrc.includes('artPosition({ tiled, pos, fit, focus: meta?.[artFile]?.focus })'))
+
+  // 4) 真实引擎：focus 经 `--zf-art-position` 落到合成层的 background-position
+  const { execFileSync } = await import('node:child_process')
+  const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
+  if (!fs.existsSync(EDGE)) {
+    console.log('  SKIP 无 Edge（Linux/CI）—— 真实引擎验证跳过')
+  } else {
+    const { structureCss } = await import('../index.js')
+    const html = `<!DOCTYPE html><html data-zf-wallpaper="" data-zf-art-fit="cover"
+        style="--zf-art-src:none;--zf-art-position:65% 50%;--zf-art-size:cover;--zf-art-repeat:no-repeat">
+      <head><style>${structureCss()}</style></head><body>
+        <script>
+          document.title = getComputedStyle(document.documentElement, '::before').backgroundPosition
+        <\/script></body></html>`
+    const f = path.join(os.tmpdir(), 'zf-focus.html')
+    fs.writeFileSync(f, html, 'utf8')
+    let r = null
+    try {
+      const dumped = execFileSync(EDGE, [
+        '--headless=new', '--disable-gpu', '--no-sandbox', '--virtual-time-budget=1000',
+        '--dump-dom', `file:///${f.replace(/\\/g, '/')}`
+      ], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] })
+      const m = /<title>([^<]*)<\/title>/.exec(dumped)
+      r = m ? m[1] : null
+    } catch { r = null }
+    ok('拿到真实引擎计算值', r !== null, String(r))
+    if (r !== null) {
+      ok('合成层的 background-position 实测就是清单里的 focus',
+        r === '65% 50%', r)
+    }
+  }
+}
+
+
 console.log(`\n合计 ${pass + fail} 项，通过 ${pass}，失败 ${fail}`)
 if (fail > 0) {
   console.log(`\n失败项：\n  ${failures.join('\n  ')}`)

@@ -3,12 +3,14 @@
   "wallpapers": {
     "wallpaper-contour-dark.webp": {
       "fit": "cover",
+      "focus": "65% 50%",
       "height": 1440,
       "ratio": 1.778,
       "width": 2560
     },
     "wallpaper-contour.webp": {
       "fit": "cover",
+      "focus": "65% 50%",
       "height": 1440,
       "ratio": 1.778,
       "width": 2560

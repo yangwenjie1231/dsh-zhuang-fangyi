@@ -243,6 +243,38 @@ def head_crop(im):
     return im.crop(box).resize((512, 512), Image.LANCZOS)
 
 
+
+# ── 逐图取景（B8）──────────────────────────────────────────────────────────
+#
+# 清单里的 `focus` 会成为 CSS 的 `background-position`，**只在画面被裁切时才
+# 起作用**（窗口宽高比 ≠ 图片宽高比）：宽窗口横向裁、窄窗口纵向裁。
+# 16:9 图铺在 16:9 窗口里没有裁切，写什么值都一样 —— 值真正救场的是
+# 「主体偏在一侧」的图 + 超宽屏窗口。
+#
+# 这些值怎么来的：视觉测量（主体包围盒 + 面部水平位置），**只采纳多次测量
+# 一致的结论**。同一张图两次问出来的包围盒差别很大（pool 一次 43–96、
+# 一次 20–78），所以只认大信号，不把噪声写进清单。
+#
+# 值的语法就是 `background-position` 的百分比写法（`x% y%`）。
+ART_FOCUS = {
+    # 主体在右半（两次测量 50–98 / 43–93，且左侧留白明显更多）→ 取景右移，
+    # 让 21:9 这类窗口裁切后仍完整包住主体（居中会切掉伸出的手臂末端）
+    'contour': '65% 50%',
+}
+
+
+def focus_of(base):
+    """`wallpaper-contour-dark.webp` → `ART_FOCUS['contour']`；没有则 None。"""
+    name = base
+    if name.startswith('wallpaper-'):
+        name = name[len('wallpaper-'):]
+    if name.endswith('.webp'):
+        name = name[:-len('.webp')]
+    if name.endswith('-dark'):
+        name = name[:-len('-dark')]
+    return ART_FOCUS.get(name)
+
+
 def main():
     parser = argparse.ArgumentParser(description='从庄方宜素材生成主题 art/')
     parser.add_argument('--only', help='只重建指定的一项（如 sakura）')
@@ -333,13 +365,17 @@ def main():
             continue
         w, h = size
         ratio = w / h if h else 1.0
-        manifest['wallpapers'][base] = {
+        entry = {
             'width': w,
             'height': h,
             'ratio': round(ratio, 3),
             # 竖图/近方图用 contain（完整显示），横图用 cover（铺满）
             'fit': 'contain' if ratio < 0.87 else 'cover',
         }
+        focus = focus_of(base)
+        if focus:
+            entry['focus'] = focus
+        manifest['wallpapers'][base] = entry
     mpath = os.path.join(ART, 'wallpapers.json')
     with open(mpath, 'w', encoding='utf-8') as fh:
         json.dump(manifest, fh, ensure_ascii=False, indent=2, sort_keys=True)

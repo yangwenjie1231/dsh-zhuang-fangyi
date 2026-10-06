@@ -97,6 +97,11 @@ window.__ModuleLoader__.load({
         fontScale_1: '标准',
         fontScale_1_05: '宽松',
         fontFamilyHint: '整套界面的字族（不影响代码块与终端 —— 它们用等宽字体，改了会错位）',
+        contentWidth: '阅读宽度',
+        contentWidthHint: '正文一行的最大宽度。「标准」= 交还外壳（列宽的 64%，上限 920px）',
+        contentWidth_auto: '标准',
+        contentWidth_compact: '紧凑',
+        contentWidth_wide: '宽松',
         fontScale: '字号',
         fontScaleHint: '正文与行高的整体缩放（±5%，幅度小是刻意的：再大就会撑破固定高度的行）',
         accentHue: '强调色色相',
@@ -186,6 +191,11 @@ window.__ModuleLoader__.load({
         fontScale_1: 'Normal',
         fontScale_1_05: 'Roomy',
         fontFamilyHint: 'Typeface for the whole UI (code blocks and terminals keep their monospace font)',
+        contentWidth: 'Reading width',
+        contentWidthHint: 'Max width of one line of text. "Normal" hands control back to the shell (64% of the column, capped at 920px)',
+        contentWidth_auto: 'Normal',
+        contentWidth_compact: 'Compact',
+        contentWidth_wide: 'Wide',
         fontScale: 'Text size',
         fontScaleHint: 'Overall scale of body text and line height (±5% — deliberately small, larger breaks fixed-height rows)',
         accentHue: 'Accent hue',
@@ -397,6 +407,44 @@ window.__ModuleLoader__.load({
     }
 
     /* ------------------------------------------------------------------ *
+     * 阅读宽度（B7）
+     *
+     * 外壳把 `--dsh-chat-content-width` 声明在 `[data-conversation-content]`
+     * **自己**身上，而且它自己还会往容器写行内 `--dsh-chat-user-width`
+     * （源码实测）。所以：
+     *   · 写 `html` / `body` 一律无效（元素自己的声明赢过继承值）；
+     *   · 只能在那**一个元素**上写行内 + `!important`，才能压过外壳那条声明。
+     *
+     * `auto` → 把属性移除，交还外壳（列宽 64%、上限 920px，也把外壳自己的
+     * 宽度手柄还回去）。
+     *
+     * 关于 `!important`：实测**行内不带 important 也已经能压过外壳那条样式表
+     * 声明**（行内 > 作者样式表）。这里仍然加上，是防外壳哪天把
+     * `--dsh-chat-content-width` 也改成行内写（它现在只往该元素写
+     * `--dsh-chat-user-width`）。
+     *
+     * ⚠️ 这两个字面量必须与 `src/settings.js` 的 `CONTENT_WIDTH_PX` 一致 ——
+     * client.js 是手写 bundle（不能 import），有测试断言两处相同。
+     */
+    const CONTENT_WIDTHS = { compact: '760px', wide: '1080px' }
+    /** 三档白名单（与 `src/settings.js` 的 `CONTENT_WIDTH_MODES` 一致，有测试断言）。 */
+    const CONTENT_WIDTH_MODES = ['auto', 'compact', 'wide']
+
+    function applyContentWidth (doc, mode) {
+      const el = doc?.querySelector?.('[data-conversation-content]')
+      if (el === null || el === undefined || el.style === undefined) return
+      const value = CONTENT_WIDTHS[mode]
+      if (typeof value === 'string') {
+        // 值相同就不重复写（本函数在 refresh 里会被频繁调用）
+        if (el.style.getPropertyValue('--dsh-chat-content-width') === value) return
+        el.style.setProperty('--dsh-chat-content-width', value, 'important')
+      } else {
+        if (el.style.getPropertyValue('--dsh-chat-content-width') === '') return
+        el.style.removeProperty('--dsh-chat-content-width')
+      }
+    }
+
+    /* ------------------------------------------------------------------ *
      * 代码高亮的 token 色（B9）
      *
      * 外壳给的是**写死的 OpenColor 字面色**（关键字粉、函数紫、字符串绿），
@@ -428,6 +476,25 @@ window.__ModuleLoader__.load({
       }
     }
 
+    /**
+     * 壁纸的 `background-position`（B8：逐图取景）。
+     *
+     * 优先级（**顺序本身就是设计**，别随手调）：
+     *   1. 用户选了「平铺」→ `0 0`：平铺不裁切，位置没有意义；
+     *   2. 清单里有逐图 `focus` **且**用户没显式选位置（仍是默认的 `cover`）→ 用 focus；
+     *      ——「靠右」是用户的明确表达，必须尊重，不能被 focus 顶掉；
+     *   3. 竖图（contain 完整显示）→ `center 22%`：纵向留边时偏上，保住头部；
+     *   4. 其余 → `right center` / `center`。
+     *
+     * `focus` 只在**画面被裁切**时才有可见效果（窗口宽高比 ≠ 图片宽高比）。
+     */
+    function artPosition ({ tiled, pos, fit, focus }) {
+      if (tiled === true) return '0 0'
+      if (pos === 'cover' && typeof focus === 'string' && focus.trim() !== '') return focus.trim()
+      if (fit === 'contain') return 'center 22%'
+      return pos === 'right' ? 'right center' : 'center'
+    }
+
     function applyStyleVars (settings, roles, theme, meta) {
       const root = document.documentElement
       const body = document.body
@@ -445,6 +512,8 @@ window.__ModuleLoader__.load({
         root.removeAttribute('data-zf-font-scale')
         // 代码高亮 token 色也撤掉 → 回到外壳那套默认色
         applyCodeTokens(body, null)
+        // 阅读宽度也交还外壳（列宽回到它自己的 64%）
+        applyContentWidth(document, undefined)
         return
       }
 
@@ -455,6 +524,8 @@ window.__ModuleLoader__.load({
 
       // B9：代码高亮 token 色（随预设 + 明暗；与壁纸无关，所以放在壁纸分支之外）
       applyCodeTokens(body, roles?.[settings.preset]?.[currentScheme(theme)]?.shiki)
+      // B7：阅读宽度（同样与壁纸无关；那个元素可能还没渲染出来 —— refresh 里还会再试）
+      applyContentWidth(document, settings.contentWidth)
 
       const hasWallpaper = settings.background !== 'none'
 
@@ -503,10 +574,9 @@ window.__ModuleLoader__.load({
         // 模糊会把四边糊出去，轻微放大补上；不模糊时不放大，避免无谓重采样
         root.style.setProperty('--zf-art-scale', blur > 0 ? '1.04' : '1')
         root.style.setProperty('--zf-art-size', effectiveFit)
+        // B8：清单里的逐图 `focus` 优先（用户显式选「靠右」时不覆盖它）
         root.style.setProperty('--zf-art-position',
-          tiled ? '0 0'
-            : fit === 'contain' ? 'center 22%'   // 竖图取景偏上，保住头部
-              : pos === 'right' ? 'right center' : 'center')
+          artPosition({ tiled, pos, fit, focus: meta?.[artFile]?.focus }))
         root.style.setProperty('--zf-art-repeat', tiled ? 'repeat' : 'no-repeat')
         // 垫底层：只有 contain 时才需要（横图铺满，没有空隙）
         root.style.setProperty('--zf-art-backdrop',
@@ -1069,6 +1139,8 @@ window.__ModuleLoader__.load({
         // 会话状态（右栏状态点与读数）—— 经 trackSessionSince 维护运行计时
         trackSessionSince(state, readSessionState(doc))
         state.stats = readStats(doc)
+        // B7：切会话时正文容器会重建，行内覆盖要跟着补上（幂等，值没变就不写）
+        applyContentWidth(doc, state.settings?.contentWidth)
         if (body !== null) body.setAttribute('data-zf-session-state', state.sessionState)
 
         runtime.onLayout?.()
@@ -2150,6 +2222,12 @@ window.__ModuleLoader__.load({
               })),
               onChange: v => set({ fontScale: Number(v) })
             })),
+          h(Row, { label: t('contentWidth'), hint: t('contentWidthHint') },
+            h(Segmented, {
+              value: String(settings.contentWidth ?? 'auto'),
+              options: CONTENT_WIDTH_MODES.map(m => ({ value: m, label: t(`contentWidth_${m}`) })),
+              onChange: v => set({ contentWidth: v })
+            })),
           h(Row, { label: t('accentHue'), hint: t('accentHueHint') },
             h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', justifyContent: 'flex-end' } },
               h('button', {
@@ -2344,6 +2422,29 @@ window.__ModuleLoader__.load({
                 h('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } },
                   PRESET_LABELS[p]?.['zh'] ?? p)),
               settings.preset === p ? h('span', null, '✓') : null)))),
+          h('div', { className: 'zf-rail__group' },
+            h('div', { className: 'zf-rail__label' }, t('contentWidth')),
+            h('div', { className: 'zf-rail__row', style: { display: 'flex', gap: 6 } },
+              ...CONTENT_WIDTH_MODES.map(m => h('button', {
+                key: m,
+                type: 'button',
+                'aria-pressed': (settings.contentWidth ?? 'auto') === m ? 'true' : 'false',
+                onClick: () => set({ contentWidth: m }),
+                style: {
+                  flex: '1 1 0',
+                  cursor: 'pointer',
+                  fontSize: 11,
+                  padding: '5px 6px',
+                  borderRadius: 7,
+                  border: '1px solid var(--dsw-alias-border-l2)',
+                  background: (settings.contentWidth ?? 'auto') === m
+                    ? 'var(--dsw-alias-brand-primary)'
+                    : 'transparent',
+                  color: (settings.contentWidth ?? 'auto') === m
+                    ? 'var(--dsw-alias-label-primary-foreground)'
+                    : 'var(--dsw-alias-label-secondary)'
+                }
+              }, t(`contentWidth_${m}`))))),
           h('div', { className: 'zf-rail__group' },
             h('div', { className: 'zf-rail__label' }, t('groupWallpaper')),
             h('div', { className: 'zf-rail__row' },
@@ -2950,6 +3051,10 @@ window.__ModuleLoader__.load({
         readArtPaint, armArtFade, artFadeAllowed,
         // 代码高亮的 token 色（用例 73）
         SHIKI_TOKEN_KEYS, applyCodeTokens,
+        // 阅读宽度（用例 74）
+        CONTENT_WIDTHS, CONTENT_WIDTH_MODES, applyContentWidth,
+        // 逐图取景（用例 75）
+        artPosition,
         // 让测试能模拟「宿主设置被外部改动」：stub fetch 下一次 /settings 的返回
         setNextSettings (next) {
           globalThis.__zfNextSettings = next
