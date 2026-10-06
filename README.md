@@ -102,6 +102,9 @@ Invoke-WebRequest http://127.0.0.1:19387/api/zhuang-fangyi/themes | % Content
 
 ### 从发行 ZIP 安装（用户视角）
 
+从 [Releases](https://github.com/yangwenjie1231/dsh-zhuang-fangyi/releases) 下载
+`dsh-zhuang-fangyi-<版本>.zip`（附 `.sha256` 与包内 `SHA256SUMS.txt`），解压后：
+
 ```powershell
 # 解压发行包后，先校验再安装：
 .\install.ps1 -DshPath 'D:\path\to\DeepSeek Harness' -CheckOnly
@@ -110,7 +113,8 @@ Invoke-WebRequest http://127.0.0.1:19387/api/zhuang-fangyi/themes | % Content
 
 `install.ps1` 会把插件写入 `profiles/desktop/node_modules`、更新 profile 的依赖与
 bundles 条目，并**备份 `package.json` 原始字节**供 `uninstall.ps1` 还原。
-发行包由 `tools/package.ps1` 生成（ZIP + `SHA256SUMS.txt`，按明确文件清单打包）。
+发行包由 `tools/package.ps1` 生成（ZIP + `SHA256SUMS.txt`）—— 文件清单**从
+`package.json#files` 派生**，不手抄（手抄的会漂移：曾经因此让发行包漏掉 `LICENSE`）。
 
 ## 设置
 

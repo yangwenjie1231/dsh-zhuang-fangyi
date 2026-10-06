@@ -7,6 +7,7 @@
 | 渠道 | 命令 / 方式 | 状态 |
 |---|---|---|
 | **GitHub 直装** | `dsh plugin --profile desktop add github:yangwenjie1231/dsh-zhuang-fangyi` | ✅ **已可用**（仓库已公开、CI 全绿、clone 后素材齐全） |
+| **GitHub Release** | <https://github.com/yangwenjie1231/dsh-zhuang-fangyi/releases> | ✅ **v0.4.2 已发布**（附 ZIP + `.sha256`，标 latest） |
 | **awesome-dsh-plugin** | PR 往列表仓加 `data/plugins/<owner>__dsh-zhuang-fangyi.yml` | ✅ 投稿文件已备（`submission/`），⏳ 需仓库满 1 天 |
 | **dsh-market 社区索引** | PR 往 `zhu1090093659/dsh-community-plugins` 的 `community.json` 追加一条 | ⏳ 未投稿 |
 | **OMDSH Hub** | `package.json#dshWorkshop` + 钉 40 位 commit 的投稿 Issue | ✅ `dshWorkshop` 已就位并通过自检，⏳ 未投稿 |
@@ -23,10 +24,20 @@
 - ✅ `dsh.engines.dsh = >=0.2.0-rc.2`（只声明实测过的版本，不猜）
 - ✅ `files` 白名单（含 `LICENSE`）
 - ✅ CI（语法 + 对比度 + 无头测试 + 清单自检）
-- ✅ `tools/check-manifest.mjs` 自检（26 项，防「声明与事实脱节」）
+- ✅ `tools/check-manifest.mjs` 自检（38 项，防「声明与事实脱节」）
 - ✅ `CHANGELOG.md`（0.2.0 起逐版记录；自检会校验「当前版本有带日期的条目」，
       防止改了 `version` 忘记写日志）
+- ✅ **发布清单从 `package.json#files` 派生**（`tools/package.ps1` 与 `install.ps1`）
+      —— 自检会断言这两处**没有**改回手写
 - ✅ `submission/` 投稿文件
+
+> **踩过的坑（发布清单手抄）**：`tools/package.ps1` 与 `install.ps1` 各自手抄了
+> 一份文件清单，注释还写着「两处同步维护」。0.4.0 给 `files` 加了 `LICENSE`、
+> 0.4.2 加了 `CHANGELOG.md`，两份清单都没跟上 —— 于是**发行 ZIP 与装出来的
+> profile 目录一直没有 `LICENSE`**（MIT 要求随分发提供授权文本），直到建
+> Release 前逐文件比对才发现。两处已改为派生，并加了闸门（`check-manifest.mjs`
+> 第 9 组）与产物级断言（打包后逐项确认 `files` 的每一项都真的进了包）。
+> 教训：**同一份信息抄两遍，就一定会漂移**。
 
 ## ⏳ 待办（需要用户操作或授权）
 
@@ -87,7 +98,7 @@
 ## 自检命令
 
 ```powershell
-node tools/check-manifest.mjs    # 发行清单与仓库事实一致性（26 项）
+node tools/check-manifest.mjs    # 发行清单与仓库事实一致性（38 项）
 node src/contrast.js             # 392 对比度 + 672 色相扫描
 node tools/test-client.mjs       # 933 无头测试（无 Edge 的环境 868 项）
 .\tools\package.ps1              # 打 ZIP（含 SHA256SUMS + 构建标记）
