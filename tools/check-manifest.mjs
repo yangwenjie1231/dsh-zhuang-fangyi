@@ -200,6 +200,42 @@ for (const f of ['index.js', 'client.js']) {
   else fail(`缺 ${f}`)
 }
 
+// ── 8) files 声明的每一项都真实存在 ──────────────────────────────────
+// 打包/安装清单都从 files 派生，所以 files 里写错一个名字会**静默少打包**。
+// 这里显式挡住。
+for (const f of pkg.files ?? []) {
+  if (fs.existsSync(path.join(ROOT, f))) pass(`files 声明存在：${f}`)
+  else fail(`package.json 的 files 声明了 ${f}，但仓库里没有 —— 打包会静默漏掉它`)
+}
+
+// ── 9) 打包/安装清单必须是**派生**的，不许改回手抄 ────────────────────
+//
+// 这条锁的是一个真实事故：`tools/package.ps1` 与 `install.ps1` 各自手抄了一份
+// 文件清单，注释还写着「两处同步维护」—— 但 0.4.0 给 files 加了 LICENSE、
+// 0.4.2 又加了 CHANGELOG.md，两份清单都没跟上，于是**发行 ZIP 里一直没有
+// LICENSE**（MIT 要求随分发提供授权文本），直到建 Release 前逐文件比对才发现。
+//
+// 手抄的清单一定会漂移，所以这里断言它们读的是 `$pkg.files`：
+// 谁改回手写，CI 直接失败并看到原因。
+const DERIVED_LISTS = {
+  'tools/package.ps1': '$pkg.files',
+  'install.ps1': '$pkg.files'
+}
+for (const [file, needle] of Object.entries(DERIVED_LISTS)) {
+  if (!fs.existsSync(path.join(ROOT, file))) {
+    fail(`缺 ${file}（清单派生断言的目标文件）`)
+    continue
+  }
+  const src = read(file)
+  if (src.includes(needle)) {
+    pass(`${file} 的发布清单从 ${needle} 派生（不是手抄）`)
+  } else {
+    fail(`${file} 里找不到 ${needle} —— 发布清单被改回手写了。` +
+      '手抄的清单会与 package.json 的 files 漂移（曾经因此让发行包漏掉 LICENSE），' +
+      '必须改成从 $pkg.files 派生')
+  }
+}
+
 console.log()
 if (failed === 0) {
   console.log('全部通过。')

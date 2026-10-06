@@ -29,13 +29,17 @@ $pkg = Get-Content (Join-Path $Src 'package.json') -Raw -Encoding UTF8 | Convert
 $Ver = $pkg.version
 if ([string]::IsNullOrWhiteSpace($Ver)) { throw 'package.json 缺少 version' }
 
-# 与 package.json 的 files 字段保持同源的发布清单（+ 文档 + 安装脚本）
-$RootFiles = @(
-  'index.js', 'client.js', 'package.json', 'cordis.patch.yml',
-  'README.md', 'CHANGELOG.md', 'PRIVACY.md', 'ASSETS-NOTICE.md',
-  'install.ps1', 'uninstall.ps1'
-)
-$Dirs = @('src', 'art')
+# 发布清单**从 package.json 的 files 字段推导**，再加包装层自带的东西。
+#
+# ⚠️ 这里原来是手抄的清单，注释写着「与 files 字段保持同源」—— 但手抄的从来不会
+# 同源：0.4.0 给 package.json 加了 `LICENSE`，这份清单没跟着加，于是 0.4.x 的
+# ZIP **一直缺 LICENSE**（MIT 授权的包不带授权文本）。直到建 Release 前逐文件
+# 比对才发现。现在改成推导，并加了「files 里每一项都必须真的进包」的校验。
+$pkgFiles = @($pkg.files)
+$Dirs = @($pkgFiles | Where-Object { Test-Path (Join-Path $Src $_) -PathType Container })
+$RootFiles = @($pkgFiles | Where-Object { Test-Path (Join-Path $Src $_) -PathType Leaf })
+# 包装层自带（不进 package.json 的 files —— 它们是给 ZIP 解压后用的）
+$RootFiles += @('package.json', 'install.ps1', 'uninstall.ps1')
 $DocFiles = @('docs/双壳适配说明.md')
 
 # ── 0. 测试（跳过打包前的测试 = 发布事故，所以默认强制）───────────────────
@@ -74,6 +78,19 @@ foreach ($f in $DocFiles) {
   New-Item -ItemType Directory -Path (Split-Path $to) -Force | Out-Null
   Copy-Item $from $to -Force
 }
+
+# ── 1a. 产物级校验：package.json 的 files 每一项都必须真的落到暂存目录 ────
+#
+# 查的是**产物**，不是源码里的清单文本 —— 文本写对了但复制逻辑漏了，文本断言
+# 照样通过。这一条才是「声明 = 事实」的落点。
+$missingInStage = @()
+foreach ($f in $pkgFiles) {
+  if (-not (Test-Path (Join-Path $Stage $f))) { $missingInStage += $f }
+}
+if ($missingInStage.Count -gt 0) {
+  throw "package.json 的 files 声明了但没进包：$($missingInStage -join ', ')"
+}
+Write-Host "  files 声明 $($pkgFiles.Count) 项，全部已进包"
 
 # ── 1b. 剔除空目录（工作区可能有预留占位，如 art/icons/；发行包只收内容）
 $empty = Get-ChildItem $Stage -Recurse -Directory | Where-Object {

@@ -31,12 +31,20 @@ $ErrorActionPreference = 'Stop'
 
 $Here = $PSScriptRoot
 
-# ── 清单（与 tools/package.ps1 同源，两处同步维护）───────────────────────
-$RootFiles = @(
-  'index.js', 'client.js', 'package.json', 'cordis.patch.yml',
-  'README.md', 'PRIVACY.md', 'ASSETS-NOTICE.md'
-)
-$Dirs = @('src', 'art')
+# ── 清单：**从 package.json 的 files 派生**，不手抄 ──────────────────────
+#
+# 这里原来是手抄的清单，注释写着「与 tools/package.ps1 同源，两处同步维护」——
+# 手抄的从来不会同步：0.4.0 给 files 加了 `LICENSE`、0.4.2 又加了 `CHANGELOG.md`，
+# 这份清单都没跟上。于是 ZIP 里缺授权文本（MIT 要求随分发提供），装出来的
+# 目录也缺 —— 而两个脚本各自都「看着是对的」。
+#
+# 现在两处都从 files 派生，且 check-manifest.mjs 会断言它们**没有**改回手写。
+$pkg = Get-Content (Join-Path $Here 'package.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+$pkgFiles = @($pkg.files)
+$Dirs      = @($pkgFiles | Where-Object { Test-Path (Join-Path $Here $_) -PathType Container })
+$RootFiles = @($pkgFiles | Where-Object { Test-Path (Join-Path $Here $_) -PathType Leaf })
+# package.json 自身要装（profile 依赖解析要用），但它不在自己的 files 里
+$RootFiles += @('package.json')
 $DocFiles = @('docs/双壳适配说明.md')
 
 # ── 路径解析 ──────────────────────────────────────────────────────────────
@@ -54,8 +62,7 @@ foreach ($f in $RootFiles + $DocFiles) {
 foreach ($d in $Dirs) {
   if (-not (Test-Path (Join-Path $Here $d))) { $missing += $d }
 }
-# 版本读取（来自包内 package.json）
-$pkg = Get-Content (Join-Path $Here 'package.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+# 版本号来自上面已读的 $pkg（清单派生时读过了，这里不再重复读一次）
 
 Write-Host "包:     $Here  (dsh-zhuang-fangyi $($pkg.version))"
 Write-Host "目标:   $ProfileDir"
