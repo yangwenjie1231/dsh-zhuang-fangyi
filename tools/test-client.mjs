@@ -3335,6 +3335,93 @@ function shellDom (opts = {}) {
   }
 }
 
+
+// 用例 65：去掉 Windows 中栏左上角那个「悬浮圆角」（用户截图反馈）
+//
+// 官方 Windows 壳的设计（源码实测）：
+//   [data-windows-titlebar] .BynINW_frame{ --dsh-windows-content-radius:16px }
+//   [data-windows-titlebar] .BynINW_centerCol{
+//     border-radius:var(--dsh-windows-content-radius) 0 0 0; corner-shape:round }
+// 用意：标题栏铺 sidebar-fill（不透明色），中栏左上切圆角 → 中栏"浮"在
+// 标题栏上，类似 macOS 红绿灯留白。
+//
+// 但在主题里标题栏已透明（透出壁纸）、中栏也透明 → 圆角两侧是同一张壁纸，
+// 它不再表达层次，只剩一个莫名缺口（用户截图：「左上角的圆角看起来很奇怪」）。
+//
+// 判据：**只在壁纸开启时**归零 —— 关掉壁纸时界面回到官方不透明配色，
+// 那时圆角仍有意义，不该动官方设计。
+//
+// 做法：改**变量本身**（`--dsh-windows-content-radius`）而不是覆盖
+// `border-radius` —— 官方把它做成变量就是留给主题调的，而且它有**两个**
+// 消费者（中栏 + ui-sidebar-right 的全屏面板），改变量能一并覆盖。
+{
+  console.log('\n--- Windows 悬浮圆角（壁纸开启时去掉）---')
+  const { structureCss } = await import('../index.js')
+  const css = structureCss()
+  const flat = css.replace(/\s+/g, '')
+
+  ok('有归零规则', flat.includes('--dsh-windows-content-radius:0px'))
+  // 必须挂在 frame 上（两个消费者都是它的后代 → 靠继承覆盖）
+  ok('挂在 frame 上（两个消费者都是它的后代）',
+    /body\[data-zf-wallpaper\]\[data-zf-frame\],body\[data-zf-wallpaper\]\[class\*="_frame"\]\{[^}]*--dsh-windows-content-radius:0px/.test(flat))
+  // 只在壁纸开启时（`:not([data-zf-wallpaper])` 时不动官方）
+  ok('只在壁纸开启时归零（不动官方设计）',
+    flat.includes('body[data-zf-wallpaper][data-zf-frame]'))
+  // 用变量而不是硬覆盖 border-radius（尊重官方取值方式）
+  ok('改的是变量而非 border-radius（覆盖两个消费者）',
+    !/body\[data-zf-wallpaper\][^{]*\[class\*="_centerCol"\][^{]*\{[^}]*border-radius/.test(flat))
+  // 两套壳的类名都要覆盖
+  ok('覆盖 data-zf-frame 与 _frame 两种锚点',
+    flat.includes('body[data-zf-wallpaper][data-zf-frame]') &&
+    flat.includes('body[data-zf-wallpaper][class*="_frame"]'))
+
+  // 真实引擎实测：确认两个消费者的计算值都是 0
+  const { execFileSync } = await import('node:child_process')
+  const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
+  const edgeOk = fs.existsSync(EDGE)
+  if (!edgeOk) {
+    console.log('  SKIP 无 Edge（Linux/CI）—— 真实引擎验证跳过；本地 Windows 会执行')
+  } else {
+    const html = `<!DOCTYPE html><html data-windows-titlebar=""><head><style>
+      [data-windows-titlebar] .BynINW_frame{--dsh-windows-content-radius:16px;padding-top:40px;
+        background:var(--dsw-specific-sidebar-fill,#16181c)}
+      [data-windows-titlebar] .BynINW_centerCol{background:var(--dsw-alias-bg-base,#111);height:80px;
+        border-radius:var(--dsh-windows-content-radius) 0 0 0;corner-shape:round}
+      [data-windows-titlebar] .OUqwTW_panel[data-sidebar-right-panel=fullscreen]
+        [data-dockkit-column="0"][data-dockkit-pane]{height:80px;
+        border-radius:var(--dsh-windows-content-radius) 0 0 0;corner-shape:round}
+      ${structureCss()}
+    </style></head><body data-zf-wallpaper="">
+      <div class="BynINW_frame" data-zf-frame>
+        <div class="BynINW_centerCol" id="c">中栏</div>
+        <div class="OUqwTW_panel" data-sidebar-right-panel="fullscreen">
+          <div data-dockkit-column="0" data-dockkit-pane id="p">面板</div>
+        </div>
+      </div>
+      <script>
+        const g = id => getComputedStyle(document.getElementById(id)).borderTopLeftRadius
+        document.title = JSON.stringify({ c: g('c'), p: g('p') })
+      <\/script></body></html>`
+    const f = path.join(os.tmpdir(), 'zf-rad-e2e.html')
+    fs.writeFileSync(f, html, 'utf8')
+    let r = null
+    try {
+      const dom = execFileSync(EDGE, [
+        '--headless=new', '--disable-gpu', '--no-sandbox', '--virtual-time-budget=1200',
+        '--dump-dom', `file:///${f.replace(/\\/g, '/')}`
+      ], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] })
+      const m = /<title>([^<]*)<\/title>/.exec(dom)
+      if (m) r = JSON.parse(m[1].replace(/&quot;/g, '"'))
+    } catch { r = null }
+    ok('拿到真实引擎计算值', r !== null)
+    if (r !== null) {
+      ok('中栏左上角归零（实测）', r.c === '0px', r.c)
+      ok('ui-sidebar-right 全屏面板也归零（实测量）',
+        r.p === '0px', `改变量自动覆盖两个消费者；实测 ${r.p}`)
+    }
+  }
+}
+
 console.log(`\n合计 ${pass + fail} 项，通过 ${pass}，失败 ${fail}`)
 if (fail > 0) {
   console.log(`\n失败项：\n  ${failures.join('\n  ')}`)

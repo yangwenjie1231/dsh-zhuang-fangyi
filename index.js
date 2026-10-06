@@ -472,6 +472,37 @@ export function structureCss () {
     'body[data-zf-wallpaper] [class*="_detailsCol"]{',
     '  background:var(--zf-veil) !important;',
     '}',
+    /* ── 去掉 Windows 中栏左上角那个「悬浮圆角」（用户反馈）──────────────
+     *
+     * 官方 Windows 壳有一条设计（源码实测）：
+     *
+     *   [data-windows-titlebar] .BynINW_frame{ --dsh-windows-content-radius:16px }
+     *   [data-windows-titlebar] .BynINW_centerCol{
+     *     background: var(--dsw-alias-bg-base);
+     *     border-radius: var(--dsh-windows-content-radius) 0 0 0;  ← 左上 16px
+     *     corner-shape: round
+     *   }
+     *
+     * **它的用意**：标题栏那条 40px 带子铺 `--dsw-specific-sidebar-fill`
+     * （一个不透明色），中栏左上角切个圆角，让中栏"浮"在标题栏上 ——
+     * 类似 macOS 红绿灯那片留白。
+     *
+     * **为什么在主题里要去掉**：我们已经让标题栏透明（`--zf-veil-sidebar`
+     * 的纱层透出壁纸），中栏也透明 —— **圆角两侧都是同一张壁纸**，
+     * 于是它不再表达任何"层次"，只剩一个莫名的缺口（用户截图反馈
+     * 「左上角的圆角看起来很奇怪」）。
+     *
+     * 判据：**只在壁纸开启时**去掉。关掉壁纸时界面回到官方不透明配色，
+     * 那时圆角仍有意义（标题栏色 vs 中栏色），不该动官方的设计。
+     *
+     * 用 `--dsh-windows-content-radius:0` 而不是覆盖 `border-radius` ——
+     * 尊重官方的取值方式（它把这个半径做成了变量，就是留给主题调的）。
+     */
+    'body[data-zf-wallpaper] [data-zf-frame],',
+    'body[data-zf-wallpaper] [class*="_frame"]{',
+    '  --dsh-windows-content-radius:0px;',
+    '}',
+
     // Windows 标题栏拖拽区（frame 的 ::before，40px 高）也带一层纱，
     // 否则那一条会是全透明，与下面的侧栏/中栏不一致。
     'body[data-zf-wallpaper]:not([data-zf-opaque-titlebar]) [data-zf-frame]::before,',
