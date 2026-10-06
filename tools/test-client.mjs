@@ -3519,52 +3519,55 @@ function shellDom (opts = {}) {
     }
   }
 
-  // 观测栏本身更透（用户同时要求）
+  // 观测栏本身：**不自己涂一层**（用户「观测栏的透明度跟随全局，不要单独设置」）
   //
-  // ⚠️ 在**原始 css**（不 strip 空格）上匹配：`color-mix(in srgb, …)` 函数
-  // 内部本身就有空格，strip 之后反而对不上（这条断言因此误报过一次）。
-  //
-  // 现在观测栏的背景走 `--zf-rail-veil`（跟随滑杆），不再硬编码 62% ——
-  // 那条由用例 67 详细覆盖，这里只确认「确实是变量驱动 + 有兜底」。
-  ok('观测栏背景由 --zf-rail-veil 驱动（不再硬编码）',
-    /\.zf-rail\{[^}]*var\(--zf-rail-veil, 62%\)/.test(css),
-    '未找到变量驱动的观测栏背景')
-  ok('观测栏模糊提到 18px（配套：透更多但保住可读性）',
+  // 原先它走自己的变量（`--zf-rail-veil`）与自己的底色：数值虽与滑杆同源，
+  // 却是在中栏那层纱**之上又涂一层**，两层相乘后观感明显更实。现在背景透明，
+  // 露出的就是它下面中栏那层纱 —— 详见用例 67。
+  ok('观测栏不再自己涂一层（背景透明 → 所见即全局那档）',
+    /\.zf-rail\{[^}]*background:transparent/.test(flat),
+    '观测栏若仍带自己的 background，就会在中栏的纱上再叠一层')
+  ok('观测栏模糊保留 18px（它不改变透明度，是可读性保险）',
     /\.zf-rail\{[^}]*backdrop-filter:blur\(18px\)/.test(flat))
 }
 
 
-// 用例 67：观测台与侧栏的透明度跟随滑杆（用户「能不能是透明的」）
+// 用例 67：观测栏透明度跟随全局（不再自己算一档）
 //
-// 用户要求「观测台和侧栏能不能是透明的」。
+// 用户：「观测栏的透明度跟随全局，不要单独设置」。
 //
-// 原先两者不一致：
-//   · 侧栏   = `--zf-veil-sidebar`，跟随滑杆（`keep = 1 - 滑杆值`）
-//   · 观测台 = **硬编码 62%**，与滑杆无关 → 拖满也够不到「透明」
+// 原先观测栏走的是自己的一套：自己的变量 `--zf-rail-veil` + 自己的底色
+// `--dsw-alias-bg-layer-1` + 自己的兜底 62%。它的**数值**确实来自同一个滑杆
+// （`keep = 1 - 背景不透明度`），但它是在中栏那层纱**之上又涂一层**：
 //
-// 现在观测台改用 `--zf-rail-veil`（同一个 `keep` 算出的百分比），两者同源。
-// 同时把 `BG_OPACITY_MAX` 45 → 90：45% 时纱仍有 55% 不透明，够不到「透明」。
+//   · 14% 档：中栏 0.86 叠观测栏 0.86 → 0.98（几乎全实）
+//   · 90% 档：中栏 0.10 叠 0.10 → 约 0.19（仍比别处实）
 //
-// ⚠️ `BG_OPACITY_MAX` 在 settings.js 与 client.js 里各有一份 ——
-// client.js 是手写 bundle（走 DSH 模块加载器）**不能 import**，所以只能是
-// 字面量。有断言锁住两处相等（改一处漏一处会被抓）。
+// 数值同源 ≠ 观感同源 —— 用户看到的就是这个差。现在观测栏背景**透明**，
+// 露出的就是它下面中栏那层纱：所见即全局那一档，结构上不可能再不一致。
 {
-  console.log('\n--- 观测台/侧栏透明度跟随滑杆 ---')
+  console.log('\n--- 观测栏透明度跟随全局（不再单独一档）---')
   const { structureCss } = await import('../index.js')
   const set = await import('../src/settings.js')
   const css = structureCss()
-
-  // 1) 观测台用变量而不是硬编码
-  ok('观测台背景用 --zf-rail-veil（跟随滑杆）',
-    /\.zf-rail\{[^}]*background:color-mix\(in srgb, var\(--dsw-alias-bg-layer-1\) var\(--zf-rail-veil, 62%\), transparent\)/.test(css),
-    '仍是硬编码 → 拖滑杆不会变')
-  ok('有兜底 62%（变量没写上时不会全透明压不住字）',
-    css.includes('var(--zf-rail-veil, 62%)'))
-  ok('观测台保留 backdrop-filter（纱变薄后靠模糊保住可读性）',
-    /\.zf-rail\{[^}]*backdrop-filter:blur\(18px\)/.test(css))
-
-  // 2) 上限对齐（settings 与 client 各一份，必须相等）
+  const flat = css.replace(/\s+/g, '')
   const csrc = fs.readFileSync(path.join(ROOT, 'client.js'), 'utf8')
+
+  // 1) 观测栏不再有自己的背景
+  ok('观测栏背景透明（不自己涂一层）',
+    /\.zf-rail\{[^}]*background:transparent/.test(flat),
+    '仍带自己的 background → 会在中栏的纱上再叠一层')
+  ok('CSS 里不再引用 --zf-rail-veil（那套私有变量已删）',
+    !css.includes('--zf-rail-veil'))
+  ok('CSS 里也不再有 62% 那个私有兜底',
+    !css.includes('--zf-rail-veil, 62%'))
+  ok('客户端不再写 / 清理 --zf-rail-veil',
+    !csrc.includes('--zf-rail-veil'),
+    '只要还有一处，观测栏就仍留着自己那一档')
+  ok('观测栏保留 backdrop-filter（不改透明度，只是可读性保险）',
+    /\.zf-rail\{[^}]*backdrop-filter:blur\(18px\)/.test(flat))
+
+  // 2) 全局那套：上限对齐仍在（三处字面量必须等于 BG_OPACITY_MAX）
   const MAX = set.BG_OPACITY_MAX
   ok('BG_OPACITY_MAX 提到 90（45% 够不到透明）', MAX === 90, String(MAX))
   const clientMaxes = [...csrc.matchAll(/Math\.min\((\d+), settings\.backgroundOpacity\)/g)].map(m => Number(m[1]))
@@ -3577,25 +3580,26 @@ function shellDom (opts = {}) {
     sliderMax !== null && Number(sliderMax[1]) === MAX,
     `滑杆=${sliderMax?.[1]} settings=${MAX}`)
 
-  // 3) 客户端确实写了 --zf-rail-veil（两处 + 停用清理）
-  const writes = (csrc.match(/setProperty\('--zf-rail-veil'/g) ?? []).length
-  ok('客户端有两处写 --zf-rail-veil（applyStyleVars + syncSchemeWallpaper）',
-    writes === 2, `实测 ${writes} 处`)
-  ok('写的是百分比字符串（color-mix 的第二个参数是百分比，不是 alpha）',
-    csrc.includes("`${Math.round(keep * 100)}%`"))
-  ok('停用时清理 --zf-rail-veil（回落 CSS 兜底）',
-    csrc.includes("removeProperty('--zf-rail-veil')"))
-
-  // 4) 真实引擎实测：滑杆不同档位下的实际 alpha
+  // 3) 真实引擎实测：观测栏恒透明，透过去看到的就是全局那一档
   const { execFileSync } = await import('node:child_process')
   const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
   if (!fs.existsSync(EDGE)) {
     console.log('  SKIP 无 Edge（Linux/CI）—— 真实引擎验证跳过')
   } else {
+    // color-mix 的计算值是 `color(srgb … / a)`，不是 rgba —— 两种都要认
+    const alphaOf = c => {
+      const s = String(c ?? '')
+      let m = /rgba?\(([^)]+)\)/.exec(s)
+      if (m !== null) {
+        const p = m[1].split(',').map(x => parseFloat(x))
+        return p.length === 4 ? p[3] : 1
+      }
+      m = /color\(srgb[^)]*\/\s*([\d.]+)\s*\)/.exec(s)
+      return m !== null ? parseFloat(m[1]) : null
+    }
     const build = op => {
       const keep = 1 - Math.max(0, Math.min(MAX, op)) / 100
       return `<!DOCTYPE html><html data-zf-wallpaper="" style="
-        --zf-rail-veil:${Math.round(keep * 100)}%;
         --zf-veil:rgba(22,22,19,${keep.toFixed(3)});
         --zf-veil-sidebar:rgba(28,28,21,${keep.toFixed(3)});
         --zf-rail-width:240px;">
@@ -3609,30 +3613,23 @@ function shellDom (opts = {}) {
       </style></head><body data-zf-wallpaper="">
         <div class="BynINW_frame" data-zf-frame>
           <div class="BynINW_sidebarCol" data-zf-sidebar id="sb">s</div>
-          <div class="BynINW_centerCol" data-zf-center id="cc">c</div>
+          <div class="BynINW_centerCol" data-zf-center id="cc">c
+            <aside class="zf-rail" id="rail"><div class="zf-rail__body">r</div></aside>
+          </div>
         </div>
-        <div class="zf-rail" id="rail">r</div>
         <script>
-          const g = id => getComputedStyle(document.getElementById(id)).backgroundColor
-          document.title = JSON.stringify({ rail: g('rail'), sb: g('sb'), cc: g('cc') })
+          const st = id => getComputedStyle(document.getElementById(id))
+          document.title = JSON.stringify({
+            rail: st('rail').backgroundColor,
+            sb: st('sb').backgroundColor,
+            cc: st('cc').backgroundColor,
+            filter: st('rail').backdropFilter || st('rail').webkitBackdropFilter || 'none'
+          })
         <\/script></body></html>`
-    }
-    // ⚠️ color-mix 的计算值是 `color(srgb r g b / a)`，**不是** rgba() ——
-    // 解析器要两种都认（第一版只认 rgba，导致 4 条断言误报）
-    const alphaOf = c => {
-      const s = String(c ?? '')
-      let m = /rgba?\(([^)]+)\)/.exec(s)
-      if (m !== null) {
-        const p = m[1].split(',').map(x => parseFloat(x))
-        return p.length === 4 ? p[3] : 1
-      }
-      m = /color\(srgb[^)]*\/\s*([\d.]+)\s*\)/.exec(s)
-      if (m !== null) return parseFloat(m[1])
-      return null
     }
     const rows = {}
     for (const op of [14, 45, 90]) {
-      const f = path.join(os.tmpdir(), `zf-trans-${op}.html`)
+      const f = path.join(os.tmpdir(), `zf-rail-${op}.html`)
       fs.writeFileSync(f, build(op), 'utf8')
       try {
         const dom = execFileSync(EDGE, [
@@ -3645,20 +3642,23 @@ function shellDom (opts = {}) {
     }
     ok('拿到真实引擎计算值', rows[14] !== null && rows[90] !== null)
     if (rows[14] !== null && rows[90] !== null) {
-      const a14 = alphaOf(rows[14].rail); const a90 = alphaOf(rows[90].rail)
-      ok('14% 时观测台 alpha≈0.86（默认观感不变）',
-        a14 !== null && Math.abs(a14 - 0.86) < 0.02, String(a14))
-      ok('90% 时观测台 alpha≈0.10（接近全透 —— 用户要的「透明」）',
-        a90 !== null && Math.abs(a90 - 0.10) < 0.02, String(a90))
-      ok('90% 时侧栏也 alpha≈0.10（与观测台同步）',
-        Math.abs(alphaOf(rows[90].sb) - 0.10) < 0.02, String(alphaOf(rows[90].sb)))
-      ok('观测台与侧栏在每一档都同步',
+      ok('观测栏在每一档都自身透明（不参与叠加）',
+        [14, 45, 90].every(op => alphaOf(rows[op].rail) === 0),
+        [14, 45, 90].map(op => `${op}:${alphaOf(rows[op].rail)}`).join(' '))
+      ok('14% 档：透过去是全局那层纱 alpha≈0.86',
+        Math.abs(alphaOf(rows[14].cc) - 0.86) < 0.02, String(alphaOf(rows[14].cc)))
+      ok('90% 档：透过去是全局那层纱 alpha≈0.10（用户要的「透明」）',
+        Math.abs(alphaOf(rows[90].cc) - 0.10) < 0.02, String(alphaOf(rows[90].cc)))
+      ok('中栏与侧栏在每一档都同档（同一个 keep）',
         [14, 45, 90].every(op =>
-          Math.abs(alphaOf(rows[op].rail) - alphaOf(rows[op].sb)) < 0.02),
-        [14, 45, 90].map(op => `${op}:${alphaOf(rows[op].rail)}/${alphaOf(rows[op].sb)}`).join(' '))
+          Math.abs(alphaOf(rows[op].cc) - alphaOf(rows[op].sb)) < 0.02),
+        [14, 45, 90].map(op => `${op}:${alphaOf(rows[op].cc)}/${alphaOf(rows[op].sb)}`).join(' '))
+      ok('观测栏仍有模糊（可读性保险，且它不改透明度）',
+        String(rows[90].filter).includes('blur(18px)'), String(rows[90].filter))
     }
   }
 }
+
 
 // 用例 68：右栏 dockkit pane 透明（用户「开始页 / tab 条背景还是黑的」）
 //
@@ -3787,6 +3787,102 @@ function shellDom (opts = {}) {
     }
   }
 }
+
+// 用例 69：左栏内层组件那层底（用户「这个地方也变成透明的」）
+//
+// 用户贴了左栏整棵 DOM（`_2H3hWW_root _2H3hWW_quietBars`）说「这个地方也变成
+// 透明的」。壳源码实测三个模块的规则：
+//
+//   .BynINW_sidebarCol{ background:var(--dsw-specific-sidebar-fill); … }
+//   ._2H3hWW_root    { background:var(--dsw-specific-sidebar-fill); … }  ← 内层又铺一层
+//   [data-platform=darwin] ._2H3hWW_root{ background:0 0 }               ← 只有 macOS 透明
+//
+// 也就是 Windows 上列与内层是**两层同色不透明底**：纱画在列上，内层盖回去。
+// macOS 那条 `0 0` 正好证明结构是「列铺面、内层透明」，官方只是没给 Windows
+// 写后一半。
+//
+// 修法：**在列上把 token 置透明**（自定义属性按最近祖先解析），而不是点名
+// 内层组件 —— 内层本地名是 `root`，太通用（`[class*="_root"]` 实测会把整个
+// 侧栏刷透明），而 token 这一招不依赖任何哈希，且纯 CSS 首帧生效。
+{
+  console.log('\n--- 左栏内层底（列上改 token）---')
+  const { structureCss } = await import('../index.js')
+  const css = structureCss()
+  const flat = css.replace(/\s+/g, '')
+
+  ok('在侧栏列上把 --dsw-specific-sidebar-fill 置透明',
+    /body\[data-zf-wallpaper\]\[class\*="_sidebarCol"\]\{[^}]*--dsw-specific-sidebar-fill:transparent/.test(flat))
+  ok('带 !important（外壳 presenter 的 token 是行内样式写的）',
+    flat.includes('--dsw-specific-sidebar-fill:transparent!important'))
+  ok('只在壁纸开启时改（关掉壁纸不动官方配色）',
+    /body\[data-zf-wallpaper\][^{]*\{[^}]*--dsw-specific-sidebar-fill:transparent/.test(flat))
+  ok('不点名内层组件的类名（本地名 root 太通用）',
+    !/\[class\*="_root"\]/.test(css),
+    '写 [class*="_root"] 会误伤一大片（实测把侧栏整个刷透明）')
+  ok('列的纱照旧（token 变透明不等于列也透明）',
+    /body\[data-zf-wallpaper\]\[class\*="_sidebarCol"\]\{[^}]*background:var\(--zf-veil-sidebar\)!important/.test(flat))
+  ok('会话列表底部渐隐改为渐到纱色（否则 token 透明后整条失效）',
+    /\[class\*="_sidebarCol"\]\[class\*="_fade"\]\{background:linear-gradient\(tobottom,transparent,var\(--zf-veil-sidebar\)\)!important;?\}/.test(flat))
+
+  // 真实引擎实测：照抄壳的三条规则，量计算值
+  const { execFileSync } = await import('node:child_process')
+  const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
+  if (!fs.existsSync(EDGE)) {
+    console.log('  SKIP 无 Edge（Linux/CI）—— 真实引擎验证跳过')
+  } else {
+    const build = on => `<!DOCTYPE html><html style="--zf-veil-sidebar:rgba(28,28,21,0.86)">
+      <head><style>
+        body{--dsw-specific-sidebar-fill:#1c1c15}
+        .BynINW_sidebarCol{background:var(--dsw-specific-sidebar-fill);height:80px}
+        ._2H3hWW_root{background:var(--dsw-specific-sidebar-fill);height:80px}
+        ._9lTDKa_fade{background:linear-gradient(to bottom, transparent, var(--dsw-specific-sidebar-fill));height:24px}
+        ${structureCss()}
+      </style></head><body ${on ? 'data-zf-wallpaper=""' : ''}>
+        <div class="BynINW_sidebarCol" data-zf-sidebar id="sbCol">
+          <div class="_2H3hWW_root _2H3hWW_quietBars" id="sbRoot">
+            <div class="_9lTDKa_fade" id="sbFade"></div>
+          </div>
+        </div>
+        <script>
+          // ⚠️ id 不能叫 root：插件 CSS 里有 body[data-zf-wallpaper] #root > *
+          // （外壳根元素的 id 就是 root），ID 选择器权重压过这里的 !important ——
+          // 实测会把渐隐压成 background-image:none，白查一轮。
+          // （模板字符串里不能出现反引号，这条注释因此崩过一次。）
+          const st = id => getComputedStyle(document.getElementById(id))
+          document.title = JSON.stringify({
+            col: st('sbCol').backgroundColor, root: st('sbRoot').backgroundColor,
+            fade: st('sbFade').backgroundImage })
+        <\/script></body></html>`
+
+    const rows = {}
+    for (const on of [true, false]) {
+      const f = path.join(os.tmpdir(), `zf-sidebar-${on}.html`)
+      fs.writeFileSync(f, build(on), 'utf8')
+      try {
+        const dom = execFileSync(EDGE, [
+          '--headless=new', '--disable-gpu', '--no-sandbox', '--virtual-time-budget=1200',
+          '--dump-dom', `file:///${f.replace(/\\/g, '/')}`
+        ], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] })
+        const m = /<title>([^<]*)<\/title>/.exec(dom)
+        rows[on] = m ? JSON.parse(m[1].replace(/&quot;/g, '"')) : null
+      } catch { rows[on] = null }
+    }
+    ok('拿到真实引擎计算值', rows[true] !== null && rows[false] !== null)
+    if (rows[true] !== null && rows[false] !== null) {
+      ok('壁纸开启 → 内层组件透明（黑色那层没了）',
+        rows[true].root === 'rgba(0, 0, 0, 0)', rows[true].root)
+      ok('壁纸开启 → 列上仍是那层纱（内层透明后露出的就是它）',
+        rows[true].col === 'rgba(28, 28, 21, 0.86)', rows[true].col)
+      ok('壁纸开启 → 底部渐隐渐到纱色（不是透明→透明）',
+        String(rows[true].fade).includes('rgba(28, 28, 21, 0.86)'), rows[true].fade)
+      ok('壁纸关闭 → 内层回到官方填充色（不动官方设计）',
+        rows[false].root === 'rgb(28, 28, 21)', rows[false].root)
+      ok('壁纸关闭 → 列也还是官方填充色',
+        rows[false].col === 'rgb(28, 28, 21)', rows[false].col)
+    }
+  }
+}
+
 
 console.log(`\n合计 ${pass + fail} 项，通过 ${pass}，失败 ${fail}`)
 if (fail > 0) {

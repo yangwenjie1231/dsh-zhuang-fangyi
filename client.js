@@ -310,8 +310,6 @@ window.__ModuleLoader__.load({
         body.removeAttribute('data-zf-depth')
         root.removeAttribute('data-zf-font')
         root.removeAttribute('data-zf-font-scale')
-        // 观测台的纱也撤掉（回落 CSS 的兜底 62%，不是全透明）
-        root.style.removeProperty('--zf-rail-veil')
         return
       }
 
@@ -331,10 +329,6 @@ window.__ModuleLoader__.load({
         if (preset !== undefined) {
           root.style.setProperty('--zf-veil', toRgba(preset.base, keep))
           root.style.setProperty('--zf-veil-sidebar', toRgba(preset.sidebar, keep))
-        // 观测台的背景也跟同一个 keep 走（用户要求「观测台能透明」）。
-        // 写成**百分比字符串**而不是颜色 —— `.zf-rail` 用 `color-mix` 取它，
-        // 那里的第二个参数是百分比，不是 alpha。
-        root.style.setProperty('--zf-rail-veil', `${Math.round(keep * 100)}%`)
         }
 
         // ── 竖图用 contain + 模糊垫底（见 index.js 的 `::after` 层）────────
@@ -446,8 +440,6 @@ window.__ModuleLoader__.load({
         const keep = 1 - Math.max(0, Math.min(90, settings.backgroundOpacity)) / 100
         document.documentElement.style.setProperty('--zf-veil', toRgba(preset.base, keep))
         document.documentElement.style.setProperty('--zf-veil-sidebar', toRgba(preset.sidebar, keep))
-      // 同上：观测台背景跟随滑杆
-      document.documentElement.style.setProperty('--zf-rail-veil', `${Math.round(keep * 100)}%`)
       }
     }
 

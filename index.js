@@ -460,9 +460,48 @@ export function structureCss () {
     // 配合 `_root` 后缀会误伤一大片元素（实测把侧栏整个刷透明了）。
     'body[data-zf-wallpaper] [data-zf-content],',
     'body[data-zf-wallpaper] [data-zf-scroll]{ background:transparent !important; }',
+    /* 左栏：**内层组件那层底也要跟着走**（用户：「这个地方也变成透明的」）
+     *
+     * 壳源码实测（app.asar 里 AppFrame 与 SidebarRoot 两个模块）：
+     *
+     *   .BynINW_sidebarCol{ background:var(--dsw-specific-sidebar-fill); … }
+     *   ._2H3hWW_root    { background:var(--dsw-specific-sidebar-fill); … }  ← 内层再铺一层
+     *   [data-platform=darwin] ._2H3hWW_root{ background:0 0 }               ← 只有 macOS 透明
+     *
+     * 也就是 Windows 上侧栏是**两层同色不透明底**叠着：纱画在 `sidebarCol` 上，
+     * 内层组件再铺一层不透明同色 → 纱被打回去，左栏看着是实的。
+     *
+     * macOS 那条 `background:0 0` 恰好证明了结构：**列负责铺面、内层组件透明**，
+     * 官方只是没给 Windows 写后一半（因为 Windows 的列本来不透明）。
+     *
+     * ── 修法：在列上把 token 改掉，而不是去点名内层组件 ─────────────────
+     *
+     * 自定义属性按**最近祖先**解析：在列上把 `--dsw-specific-sidebar-fill`
+     * 置为透明，内层组件引用的那个变量就地变透明。好处：
+     *   · **不依赖类名哈希**（内层组件的本地名是 `root`，太通用，写不得 ——
+     *      `[class*="_root"]` 这类模糊兜底实测会把整个侧栏刷透明）
+     *   · 纯 CSS，**首帧**就生效，不用等客户端打标
+     *   · 内层以后再多包一层同样的底，也一起透明
+     *
+     * ⚠️ 加 `!important`：外壳 presenter 会把 token 写成**行内样式**（见上文
+     * 「纱为什么不能改 token」）。行内样式只对它所在的那个元素有优先级，
+     * 但为防 presenter 把这条写到了列元素自己身上，这里直接按 important 来。
+     *
+     * ⚠️ 只在壁纸开启时改：关掉壁纸时界面回到官方不透明配色，那时内层那层底
+     * 是官方设计的一部分（列与内层同色，本就看不出来），不该动。
+     */
     'body[data-zf-wallpaper] [data-zf-sidebar],',
     'body[data-zf-wallpaper] [class*="_sidebarCol"]{',
+    '  --dsw-specific-sidebar-fill:transparent !important;',
     '  background:var(--zf-veil-sidebar) !important;',
+    '}',
+    /* 会话列表底部的渐隐：官方是「透明 → `--dsw-specific-sidebar-fill`」，
+     * 用来把列表淡入侧栏底色。上面把那个 token 置透明后，这条会**整条失效**
+     * （透明渐到透明），列表底部变成硬切。改成渐到同一层纱色 ——
+     * 该淡出的照样淡出，而且渐的终点正好等于它背后的颜色。 */
+    'body[data-zf-wallpaper] [data-zf-sidebar] [class*="_fade"],',
+    'body[data-zf-wallpaper] [class*="_sidebarCol"] [class*="_fade"]{',
+    '  background:linear-gradient(to bottom, transparent, var(--zf-veil-sidebar)) !important;',
     '}',
     // 右栏两套壳名字不同：桌面 `rightbarCol`、Web `detailsCol`。都要写。
     'body[data-zf-wallpaper] [data-zf-center],',
@@ -670,21 +709,29 @@ export function structureCss () {
     '  position:fixed;top:0;bottom:0;right:0;',
     '  width:var(--zf-rail-width);box-sizing:border-box;',
     '  display:flex;flex-direction:column;gap:14px;padding:16px 14px;overflow-y:auto;',
-    /* ── 观测台背景：跟着「背景不透明度」滑杆走 ────────────────────────
+    /* ── 观测栏背景：**不再自己算一档**（用户：「跟随全局，不要单独设置」）──
      *
-     * 用户要求「观测台和侧栏能不能是透明的」。原先这里是**硬编码 62%**，
-     * 与用户的滑杆无关 —— 拖到 90% 也还是 62%，够不到「透明」。
+     * 原先这里走自己的一套 —— 自己的变量 `--zf-rail-veil` + 自己的底色
+     * `--dsw-alias-bg-layer-1`：
      *
-     * 现在改用 `--zf-rail-veil`：客户端按同一个 `keep`（= 1 - 滑杆值）
-     * 算出来写进 html，**与三列的纱同源**。滑杆拖满 → 观测台也接近全透。
+     *   background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) <keep>%, transparent)
      *
-     * 兜底 `62%`：变量尚未写上时（插件未接管 / 样式表先到）保持一个可读的
-     * 值，不会变成全透明导致文字压不住。
+     * 它的**数值**确实来自同一个滑杆（`keep = 1 - 背景不透明度`），但它是
+     * **又涂一层** —— 观测栏浮在中栏之上，中栏自己已经有一层纱：
      *
-     * `backdrop-filter` 是**可读性的保险**：纱变薄后靠模糊把壁纸细节糊掉，
-     * 文字才不会与壁纸打架。18px 是实测下观感与性能的折中。
+     *   · 14% 档：中栏 alpha 0.86，观测栏再叠 0.86 → 合起来 0.98（几乎全实）
+     *   · 90% 档：中栏 0.10 叠 0.10 → 约 0.19（仍比别处实一截）
+     *
+     * 所以「数值跟随全局」并不等于「看起来跟随全局」，用户看到的就是这个差。
+     *
+     * 现在**什么都不涂**：观测栏背景透明，露出的就是它下面中栏那层纱 ——
+     * 所见即全局那一档，结构上不可能再不一致。分隔由 `border-left` 负责。
+     *
+     * `backdrop-filter` 保留：它**不改变透明度**（纱是一层纯色，模糊它还是那个
+     * 色），只把壁纸细节糊掉 —— 是高档位下小字号的可读性保险（见
+     * `src/settings.js` 里 90% 上限那段说明）。18px 是实测的观感/性能折中。
      */
-    '  background:color-mix(in srgb, var(--dsw-alias-bg-layer-1) var(--zf-rail-veil, 62%), transparent);',
+    '  background:transparent;',
     '  border-left:1px solid var(--dsw-alias-border-l2);',
     '  backdrop-filter:blur(18px) saturate(1.1);',
     '  font-size:12px;color:var(--dsw-alias-label-primary);',
