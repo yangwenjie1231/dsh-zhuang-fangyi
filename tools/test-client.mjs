@@ -4642,6 +4642,333 @@ function shellDom (opts = {}) {
 }
 
 
+// 用例 76：会话读数的权威来源（C11，宿主侧）
+//
+// 观测台的六项读数原本全靠解析 DOM 文字 —— 已经因为「外壳结构变了」栽过三次
+// （右栏 pane / 左栏内层 / 输入区座位）。这里改成订阅宿主事件并推 SSE：
+// `makeSessionStream` 用桩 ctx + 假 res 直接测帧协议，不必拉起整个插件。
+//
+// 三条要钉死的东西：
+//   ① 折叠正确（轮/步/用量/缓存/上下文/状态枚举）；
+//   ② **隐私白名单**：载荷字段集是写死的，喂进去带正文的事件也一个字都带不出来；
+//   ③ 传输行为：合并、心跳、断开清理、`once=1` 退路、停用关流。
+{
+  console.log('\n--- 会话读数：宿主事件 → SSE（C11）---')
+  const S = await import('../src/sessionState.js')
+  const { makeSessionStream } = await import('../index.js')
+
+  // ── 1) 折叠 ──────────────────────────────────────────────────────────
+  const log = [
+    { type: 'turn/start', seq: 1, time: 1000, data: { turn: 1 } },
+    { type: 'step/start', seq: 2, time: 1010, data: { turn: 1, step: 1 } },
+    { type: 'assistant/message', seq: 3, time: 1020, data: { turn: 1, step: 1, usage: { inputTokens: 100, outputTokens: 40, cacheReadTokens: 300 } } },
+    { type: 'tool/call', seq: 4, time: 1030, data: { turn: 1, step: 1, callId: 'c1', name: 'read' } },
+    { type: 'tool/result', seq: 5, time: 1040, data: { turn: 1, step: 1, callId: 'c1' } },
+    { type: 'step/end', seq: 6, time: 1050, data: { turn: 1, step: 1 } },
+    { type: 'request/context', seq: 7, time: 1060, data: { provider: 'deepseek', model: 'V4', contextWindow: 10000 } },
+    { type: 'turn/end', seq: 8, time: 1070, data: { turn: 1, reason: { kind: 'completed' } } }
+  ]
+  const fold = S.foldEvents(log)
+  ok('轮数取最大值', fold.turns === 1, String(fold.turns))
+  ok('步数按 step/start 计数', fold.steps === 1, String(fold.steps))
+  ok('日志位置取最大 seq', fold.rev === 8, String(fold.rev))
+  ok('用量累加（in/out/缓存读）',
+    fold.usage.input === 100 && fold.usage.output === 40 && fold.usage.cacheRead === 300,
+    JSON.stringify(fold.usage))
+  ok('缓存命中率 = cacheRead / (input + cacheRead)',
+    Math.abs(fold.cacheHit - 300 / 400) < 1e-9, String(fold.cacheHit))
+  ok('token 总量累加', fold.tokensTotal === 440, String(fold.tokensTotal))
+  ok('上下文窗口与模型名从 request/context 取',
+    fold.contextWindow === 10000 && fold.model === 'V4' && fold.provider === 'deepseek')
+  ok('工具计数成对归零', fold.openTools === 0, String(fold.openTools))
+  ok('回合开始时刻记下来（运行计时用它）', fold.lastTurnStart === 1000, String(fold.lastTurnStart))
+
+  // 状态枚举：与客户端 DOM 判定那套同名同义
+  const stateOf = (f, running) => S.deriveState(f, running)
+  ok('没有轮次 → idle', stateOf(S.emptyFold(), false) === 'idle')
+  ok('正在跑 → running', stateOf(fold, true) === 'running')
+  ok('有工具在飞 → tool（优先于 running）', stateOf(S.foldEvents([...log, { type: 'tool/call', seq: 9, data: { turn: 1, step: 2 } }]), true) === 'tool')
+  ok('completed → done', stateOf(fold, false) === 'done')
+  ok('interrupted/aborted/blocked → stopped',
+    ['interrupted', 'aborted', 'blocked'].every(kind =>
+      stateOf(S.foldEvents([{ type: 'turn/start', seq: 1, data: { turn: 1 } }, { type: 'turn/end', seq: 2, data: { turn: 1, reason: { kind } } }]), false) === 'stopped'))
+  ok('error / max-tokens → error',
+    ['error', 'max-tokens'].every(kind =>
+      stateOf(S.foldEvents([{ type: 'turn/start', seq: 1, data: { turn: 1 } }, { type: 'turn/end', seq: 2, data: { turn: 1, reason: { kind } } }]), false) === 'error'))
+  ok('有轮次但没 turn/end → ready',
+    stateOf(S.foldEvents([{ type: 'turn/start', seq: 1, data: { turn: 1 } }]), false) === 'ready')
+
+  // 上下文占比与速率
+  ok('上下文占比 = 表面 token / 窗口', Math.abs(S.contextUsedOf(2500, 10000) - 0.25) < 1e-9)
+  ok('窗口缺失 → null（那一格回退 DOM）', S.contextUsedOf(2500, 0) === null)
+  ok('超出窗口夹到 1', S.contextUsedOf(12000, 10000) === 1)
+  const samples = [{ time: 0, tokens: 0 }, { time: 5000, tokens: 500 }, { time: 10000, tokens: 1000 }]
+  ok('速率按滑窗算（1000 tok / 10s = 100 tok/s）', S.rateOf(samples, 10000) === 100, String(S.rateOf(samples, 10000)))
+  ok('窗口内没有增量 → null（不假装有读数）', S.rateOf([{ time: 0, tokens: 5 }], 10000) === null)
+
+  // ── 2) 隐私白名单（**字段集写死**，加一个泄漏字段就会失败）────────────
+  const dirty = [
+    { type: 'user/message', seq: 1, time: 1, data: { role: 'user', content: '私密正文甲' } },
+    { type: 'assistant/message', seq: 2, time: 2, data: { turn: 1, step: 1, message: { role: 'assistant', content: '私密正文乙' }, usage: { outputTokens: 3 } } },
+    { type: 'tool/call', seq: 3, time: 3, data: { turn: 1, step: 1, name: 'read', arguments: '{"path":"/私密/路径"}' } },
+    { type: 'tool/result', seq: 4, time: 4, data: { turn: 1, step: 1, message: { role: 'tool', content: '私密工具输出' } } }
+  ]
+  const payload = S.buildPayload({ fold: S.foldEvents(dirty), state: 'done', sessionId: 's1' })
+  const dumped = JSON.stringify(payload)
+  ok('载荷里没有消息正文', !dumped.includes('私密正文甲') && !dumped.includes('私密正文乙'))
+  ok('载荷里没有工具参数与输出', !dumped.includes('私密/路径') && !dumped.includes('私密工具输出'))
+  ok('载荷字段集是写死的白名单',
+    Object.keys(payload).join(',') === 'v,session,live,rev,state,turns,steps,usage,tokensTotal,cacheHit,rate,context,model,turnStartedAt,source',
+    Object.keys(payload).join(','))
+  ok('usage 子字段也是白名单',
+    Object.keys(payload.usage).join(',') === 'input,output,cacheRead,cacheWrite,total',
+    Object.keys(payload.usage).join(','))
+
+  // ── 3) 传输：桩 ctx + 假 res ──────────────────────────────────────────
+  const makeCtx = (session) => {
+    const handlers = new Map()
+    return {
+      handlers,
+      on (name, fn) { handlers.set(name, [...(handlers.get(name) ?? []), fn]); return () => {} },
+      get (name) {
+        if (name === 'sessions') return { get: id => (id === session?.id ? session : undefined) }
+        if (name === 'tokenMeter') return { measure: () => ({ totalTokens: 2500 }) }
+        return undefined
+      },
+      fire (name, ...args) { for (const fn of handlers.get(name) ?? []) fn(...args) }
+    }
+  }
+  const makeRes = () => {
+    const chunks = []
+    const closers = []
+    return {
+      chunks,
+      writeHead (status, headers) { chunks.push({ kind: 'head', status, headers }) },
+      write (text) { chunks.push({ kind: 'data', text }) },
+      // ⚠️ 必须接住 `end(body)` 的参数：`once=1` 那条 JSON 就是 end(body) 发出去的
+      end (payload) {
+        if (payload !== undefined) chunks.push({ kind: 'data', text: String(payload) })
+        chunks.push({ kind: 'end' })
+      },
+      on (name, fn) { if (name === 'close') closers.push(fn) },
+      close () { for (const fn of closers) fn() },
+      text: () => chunks.filter(c => c.kind === 'data').map(c => c.text).join(''),
+      frames: () => chunks.filter(c => c.kind === 'data').map(c => c.text)
+    }
+  }
+  const session = {
+    id: 's1',
+    snapshotEvents: () => log,
+    requestContext: () => ({ provider: 'deepseek', model: 'V4', contextWindow: 10000 })
+  }
+  const ctx = makeCtx(session)
+  const stream = makeSessionStream(ctx, { coalesceMs: 5, heartbeatMs: 20, contextMinMs: 1 })
+
+  const res = makeRes()
+  stream.attach({ on: () => {} }, res, new URL('http://x/api/zhuang-fangyi/stream?session=s1'))
+  const head = res.chunks[0]
+  ok('响应头是 SSE 且禁止中间层缓冲',
+    head.status === 200 &&
+    head.headers['content-type'].includes('text/event-stream') &&
+    head.headers['cache-control'].includes('no-transform') &&
+    head.headers['x-accel-buffering'] === 'no',
+    JSON.stringify(head.headers))
+  ok('先发 retry（重连间隔交给 EventSource）', res.text().includes('retry: 3000'))
+  ok('发 hello（带 build，便于判断跑的是哪版）',
+    /event: hello\ndata: \{"v":1,"build":"[^"]*","session":"s1","live":true\}/.test(res.text()),
+    res.text().slice(0, 120))
+  ok('连接即给一帧 state（不用等变化）', res.text().includes('event: state'))
+  ok('首帧就带上读数（轮/步/token）',
+    /"turns":1/.test(res.text()) && /"steps":1/.test(res.text()) && /"tokensTotal":440/.test(res.text()))
+  ok('上下文占比按 tokenMeter 算（2500/10000 = 25%）', res.text().includes('"used":0.25'), res.text().slice(-160))
+  ok('载荷里没有正文（传输层再验一次）', !res.text().includes('私密'))
+
+  // 合并：窗口内连发多次，只应多出一帧
+  const before = res.frames().length
+  for (let i = 0; i < 5; i += 1) {
+    ctx.fire('session/event', session, { type: 'step/start', seq: 100 + i, time: 2000 + i, data: { turn: 2, step: i + 1 } })
+  }
+  await new Promise(r => setTimeout(r, 40))
+  const added = res.frames().filter(f => f.includes('event: state')).length -
+    res.frames().slice(0, before).filter(f => f.includes('event: state')).length
+  ok('200ms 窗口内多次变化合并成一帧', added === 1, `实测多出 ${added} 帧`)
+
+  // 状态变化：宿主说在跑 → running
+  ctx.fire('api-session/status', 's1', true)
+  await new Promise(r => setTimeout(r, 40))
+  ok('agent 状态推送会更新 state（running）', /"state":"running"/.test(res.text()), res.text().slice(-200))
+
+  // 心跳
+  await new Promise(r => setTimeout(r, 60))
+  ok('心跳按间隔发 `: ping`', res.text().includes(': ping'))
+
+  // 断开即清理
+  res.close()
+  ok('最后一个订阅者断开 → tracker 被回收（不留计时器）',
+    stream.trackerCount() === 0, String(stream.trackerCount()))
+
+  // 非活跃会话：明说 not-live，让客户端走 DOM 兜底
+  const res2 = makeRes()
+  stream.attach({ on: () => {} }, res2, new URL('http://x/api/zhuang-fangyi/stream?session=missing'))
+  ok('会话不在宿主 → hello(live:false) + unavailable',
+    res2.text().includes('"live":false') && res2.text().includes('event: unavailable'),
+    res2.text().slice(0, 160))
+  res2.close()
+
+  // `once=1` 退路：单个 JSON 快照（也是改轮询的入口）
+  const res3 = makeRes()
+  stream.attach({ on: () => {} }, res3, new URL('http://x/api/zhuang-fangyi/stream?session=s1&once=1'))
+  const onceHead = res3.chunks[0]
+  const onceBody = res3.frames()[0]
+  ok('once=1 回 JSON（不是 SSE）',
+    onceHead.headers['content-type'].includes('application/json') &&
+    onceBody.trim().startsWith('{'), onceHead.headers['content-type'])
+  ok('once=1 的载荷与 SSE 同形', JSON.parse(onceBody).turns === 1)
+  ok('once=1 不留下 tracker（没有订阅者）', stream.trackerCount() === 0, String(stream.trackerCount()))
+
+  // 停用：关掉所有流
+  const res4 = makeRes()
+  stream.attach({ on: () => {} }, res4, new URL('http://x/api/zhuang-fangyi/stream?session=s1'))
+  stream.dispose()
+  ok('停用时关掉所有流', res4.chunks.some(c => c.kind === 'end'))
+  ok('停用后 tracker 清空', stream.trackerCount() === 0)
+  ok('停用后再来事件不炸', (() => {
+    try { ctx.fire('session/event', session, { type: 'step/start', seq: 999, data: { turn: 1, step: 1 } }); return true } catch { return false }
+  })())
+}
+
+
+// 用例 77：客户端消费权威推送 + 字段级回退（C11）
+//
+// 观测台的读数改走宿主推送后，**回退语义**必须钉死：载荷里给不出的那一格
+// （`cacheHit` / `rate` / `context.used` 可以是 null）用 DOM 那份；整条流不可用
+// 时六项全回退 —— 也就是「换之前的行为」一字不差地保留着。
+{
+  console.log('\n--- 客户端：宿主推送与 DOM 兜底 ---')
+  const T = SHARED_MOD.__test
+  const csrc = fs.readFileSync(path.join(ROOT, 'client.js'), 'utf8')
+
+  // 1) token 总量的显示
+  ok('1104000000 → 1104M', T.formatTokens(1104000000) === '1104M', T.formatTokens(1104000000))
+  ok('9600000 → 9.6M', T.formatTokens(9600000) === '9.6M', T.formatTokens(9600000))
+  ok('328000 → 328K', T.formatTokens(328000) === '328K', T.formatTokens(328000))
+  ok('999 → 999（不进位）', T.formatTokens(999) === '999', T.formatTokens(999))
+  // 与外壳统计条同单位（实测它显示 `1104M tok`）—— 不升 G/T，否则两边数字看起来不一样
+  ok('5e9 仍是 M（与外壳一致，不升 G）', T.formatTokens(5000000000) === '5000M', T.formatTokens(5000000000))
+  ok('0 / 负 / NaN → —', T.formatTokens(0) === '—' && T.formatTokens(-1) === '—' && T.formatTokens(NaN) === '—')
+
+  // 2) 字段级回退：`dom` 用可辨识的假值，好断言「这一格到底用了谁」
+  const domStats = { turns: 'D轮', steps: 'D步', cache: 'D缓', rate: 'D率', tokens: 'D量', context: 'D上' }
+  const full = T.formatStats(
+    { turns: 107, steps: 2566, rate: 186, tokensTotal: 1104000000, cacheHit: 0.875, context: { used: 0.25 } },
+    domStats)
+  ok('宿主给全 → 六项全用宿主',
+    full.turns === '107' && full.steps === '2566' && full.rate === '186' &&
+    full.tokens === '1104M' && full.cache === '88%' && full.context === '25%',
+    JSON.stringify(full))
+  const empty = T.formatStats(
+    { turns: 0, steps: 0, rate: null, tokensTotal: 0, cacheHit: null, context: { used: null } },
+    domStats)
+  ok('宿主给不出 → **逐格**回退 DOM',
+    empty.turns === 'D轮' && empty.steps === 'D步' && empty.rate === 'D率' &&
+    empty.tokens === 'D量' && empty.cache === 'D缓' && empty.context === 'D上',
+    JSON.stringify(empty))
+  const mixed = T.formatStats(
+    { turns: 12, steps: 0, rate: 30, tokensTotal: 0, cacheHit: 0.5, context: { used: null } },
+    domStats)
+  ok('混合：有值的用宿主、没值的回退',
+    mixed.turns === '12' && mixed.steps === 'D步' && mixed.rate === '30' &&
+    mixed.tokens === 'D量' && mixed.cache === '50%' && mixed.context === 'D上',
+    JSON.stringify(mixed))
+  ok('空载荷也不炸（全回退）',
+    T.formatStats(undefined, domStats).turns === 'D轮')
+
+  // 3) 会话 id 从哪读
+  const dom = makeDom()
+  ok('没有会话容器 → 空串（不连流，行为同换之前）', T.sessionIdOf(dom.document) === '')
+  const conv = new El('div')
+  conv.setAttribute('data-conversation-session', 'session-42')
+  dom.body.appendChild(conv)
+  ok('从 data-conversation-session 读当前会话 id',
+    T.sessionIdOf(dom.document) === 'session-42', T.sessionIdOf(dom.document))
+
+  // 4) 生命周期：无 EventSource / 连上 / 陈旧 / 关闭
+  const savedES = globalThis.EventSource
+  let reason = null
+  try {
+    delete globalThis.EventSource
+    T.closeSessionStream('reset')
+    T.syncSessionStream(dom.document)
+    reason = T.streamDiag().reason
+  } finally {
+    if (savedES !== undefined) globalThis.EventSource = savedES
+  }
+  ok('环境没有 EventSource → 记 no-eventsource 并留在 DOM', reason === 'no-eventsource', String(reason))
+
+  class FakeES {
+    constructor (url) {
+      this.url = url
+      this.listeners = new Map()
+      this.closed = false
+      FakeES.instances.push(this)
+    }
+
+    addEventListener (type, fn) {
+      if (!this.listeners.has(type)) this.listeners.set(type, new Set())
+      this.listeners.get(type).add(fn)
+    }
+
+    close () { this.closed = true }
+
+    emit (type, payload) {
+      for (const fn of [...(this.listeners.get(type) ?? [])]) fn({ data: JSON.stringify(payload) })
+    }
+  }
+  FakeES.instances = []
+  globalThis.EventSource = FakeES
+  T.closeSessionStream('reset')
+  T.syncSessionStream(dom.document)
+  const es = FakeES.instances.at(-1)
+  ok('按会话 id 打开流',
+    es !== undefined && es.url === '/api/zhuang-fangyi/stream?session=session-42',
+    String(es?.url))
+  ok('连上但还没帧 → 仍旧走 DOM（不显示空读数）', T.streamPayload() === null)
+  ok('同一会话重复 refresh 不会重复连',
+    (() => { T.syncSessionStream(dom.document); return FakeES.instances.length === 1 })(),
+    String(FakeES.instances.length))
+
+  es.emit('state', {
+    v: 1, state: 'running', turns: 5, steps: 9, rate: 120, tokensTotal: 9600000,
+    cacheHit: 0.875, context: { used: 0.25 }, turnStartedAt: Date.now() - 5000
+  })
+  ok('收到帧 → 新鲜可用（source=sse）',
+    T.streamPayload() !== null && T.streamDiag().source === 'sse', T.streamDiag().reason)
+  ok('帧里的读数直接可用', T.formatStats(T.streamPayload(), domStats).turns === '5')
+
+  T.streamState.at = Date.now() - (T.STREAM_FRESH_MS + 1000)
+  ok('超过 10s 没帧 → 判定不新鲜、回退 DOM（不显示陈旧数字）',
+    T.streamPayload() === null && T.streamDiag().hasPayload === true)
+
+  T.closeSessionStream('dispose')
+  ok('关闭后连接被关、载荷清空、来源回 DOM',
+    es.closed === true && T.streamState.payload === null && T.streamDiag().source === 'dom')
+  delete globalThis.EventSource
+
+  // 5) 接线（refresh 里的取舍与诊断）
+  ok('有新鲜帧 → 用宿主读数并标记 sse',
+    csrc.includes('formatStats(live, domStats)') && csrc.includes("state.statsSource = 'sse'"))
+  ok('无帧 → 明确回到 DOM 解析（换之前的行为一字不差）',
+    csrc.includes('state.stats = domStats') && csrc.includes("state.statsSource = 'dom'"))
+  ok('运行计时用宿主回合开始时刻（刷新页面不再从零开始）',
+    csrc.includes('state.sessionSince = live.turnStartedAt'))
+  ok('/diag 同时报读数来源与流状态',
+    csrc.includes('statsSource: state.statsSource') && csrc.includes('stream: streamDiag()'))
+  ok('卸载时关流（不给宿主留悬挂连接）', csrc.includes("closeSessionStream('dispose')"))
+  ok('主机端留了 once=1 退路（载体不吃流式时可改轮询，载荷同形）',
+    fs.readFileSync(path.join(ROOT, 'index.js'), 'utf8').includes("url?.searchParams?.get('once') === '1'"))
+}
+
+
 console.log(`\n合计 ${pass + fail} 项，通过 ${pass}，失败 ${fail}`)
 if (fail > 0) {
   console.log(`\n失败项：\n  ${failures.join('\n  ')}`)

@@ -508,6 +508,191 @@ window.__ModuleLoader__.load({
       return pos === 'right' ? 'right center' : 'center'
     }
 
+    /* ------------------------------------------------------------------ *
+     * 会话读数：优先用宿主的权威推送（C11），DOM 抓取降级为兜底
+     *
+     * ── 为什么要换 ──────────────────────────────────────────────────────
+     * 观测台的六个读数与状态点原本全靠解析 DOM 文字。那套东西已经因为
+     * 「外壳结构变了」栽过三次（右栏 pane / 左栏内层 / 输入区座位），
+     * 每次都是同一个病：**读的不是权威来源**。
+     *
+     * ── 两条路的边界（**字段级回退**）──────────────────────────────────
+     *   · 流新鲜（10s 内有帧）→ 六项读数与状态用宿主的；任一字段宿主给不出
+     *     （`cacheHit` / `rate` / `context.used` 可以是 `null`）→ 那一格用 DOM 的；
+     *   · 流不可用（没连上 / 会话不在宿主 / 断了且退避中 / 环境没有 EventSource）
+     *     → 整条回退 DOM，行为与换之前**完全一样**。
+     *
+     * ── 环境差异 ────────────────────────────────────────────────────────
+     * 桌面壳的渲染进程直接从磁盘读 index.html（`dsh-app://`），`/style.css`
+     * 那条路已经证明同源 HTTP 可用；若某个载体不吃流式响应，`onerror` 会立刻
+     * 把它记进 `reason`，客户端回退 DOM、并按 3s/10s/30s 退避重试 ——
+     * 退路是宿主的 `?once=1` 单次快照（改一行就能改成轮询）。
+     *
+     * ⚠️ 状态放在**模块级** `streamState`：`refresh()` 在 apply 内，而这些函数
+     * 在模块作用域 —— 反过来读 `state` 会直接 ReferenceError（仓库里踩过三次）。
+     */
+    const STREAM_FRESH_MS = 10000
+    const STREAM_RETRY_MS = [3000, 10000, 30000]
+    const streamState = {
+      es: null,
+      sessionId: '',
+      payload: null,
+      at: 0,
+      retry: 0,
+      timer: null,
+      reason: 'idle',
+      source: 'dom'
+    }
+
+    /** 当前会话 id（壳把 id 写在会话容器上：`data-conversation-session`）。 */
+    function sessionIdOf (doc) {
+      const el = doc?.querySelector?.('[data-conversation-session]')
+      const id = el?.getAttribute?.('data-conversation-session')
+      return typeof id === 'string' ? id : ''
+    }
+
+    /**
+     * token 总量的显示：`1104M` / `9.6M` / `328K`。
+     *
+     * ⚠️ **最大单位就是 M**，不升到 G/T —— 外壳自己那条统计条就是这么显示的
+     * （实测它的 DOM 文案是 `1104M tok`、`328M tok`）。两边显示同一个量级时，
+     * 单位一致才好对照；`1.1G` 与 `1104M` 摆在一起会让人以为数字不一样。
+     */
+    function formatTokens (n) {
+      if (typeof n !== 'number' || Number.isFinite(n) !== true || n <= 0) return '—'
+      const units = [[1e6, 'M'], [1e3, 'K']]
+      for (const [size, suffix] of units) {
+        if (n >= size) {
+          const v = n / size
+          return `${v >= 100 ? Math.round(v) : Math.round(v * 10) / 10}${suffix}`
+        }
+      }
+      return String(Math.round(n))
+    }
+
+    /**
+     * 把宿主载荷格式化成与 `readStats()` **同形**的六项字符串。
+     * 宿主给不出的那一格用 DOM 的值（`dom` 由调用方传进来，就是今天的解析结果）。
+     */
+    function formatStats (payload, dom) {
+      const t = payload ?? {}
+      const used = t.context?.used
+      return {
+        turns: typeof t.turns === 'number' && t.turns > 0 ? String(t.turns) : dom.turns,
+        steps: typeof t.steps === 'number' && t.steps > 0 ? String(t.steps) : dom.steps,
+        rate: typeof t.rate === 'number' && t.rate > 0 ? String(Math.round(t.rate)) : dom.rate,
+        tokens: typeof t.tokensTotal === 'number' && t.tokensTotal > 0
+          ? formatTokens(t.tokensTotal)
+          : dom.tokens,
+        cache: typeof t.cacheHit === 'number' && Number.isFinite(t.cacheHit)
+          ? `${Math.round(t.cacheHit * 100)}%`
+          : dom.cache,
+        context: typeof used === 'number' && Number.isFinite(used)
+          ? `${Math.round(used * 100)}%`
+          : dom.context
+      }
+    }
+
+    /** 新鲜才算数：10s 没帧就当作不可用（回退 DOM），而不是显示陈旧数字。 */
+    function streamPayload () {
+      if (streamState.payload === null) return null
+      return Date.now() - streamState.at < STREAM_FRESH_MS ? streamState.payload : null
+    }
+
+    function closeSessionStream (reason) {
+      if (streamState.timer !== null) { clearTimeout(streamState.timer); streamState.timer = null }
+      if (streamState.es !== null) {
+        try { streamState.es.close() } catch { /* 已关 */ }
+        streamState.es = null
+      }
+      streamState.sessionId = ''
+      streamState.payload = null
+      streamState.at = 0
+      streamState.source = 'dom'
+      if (typeof reason === 'string') streamState.reason = reason
+    }
+
+    function openSessionStream (id) {
+      let es = null
+      try {
+        es = new EventSource(`${ROUTE}/stream?session=${encodeURIComponent(id)}`)
+      } catch {
+        streamState.reason = 'open-failed'
+        return
+      }
+      streamState.es = es
+      streamState.sessionId = id
+      streamState.reason = 'connecting'
+      const onState = event => {
+        try {
+          streamState.payload = JSON.parse(event.data)
+          streamState.at = Date.now()
+          streamState.source = 'sse'
+          streamState.reason = 'ok'
+          streamState.retry = 0
+        } catch { streamState.reason = 'bad-frame' }
+      }
+      const onHello = event => {
+        try {
+          const info = JSON.parse(event.data)
+          if (info?.live === false) streamState.reason = 'not-live'
+        } catch { /* 头帧只做诊断，坏了不影响 */ }
+      }
+      const onUnavailable = () => { streamState.reason = 'not-live'; streamState.payload = null }
+      if (typeof es.addEventListener === 'function') {
+        es.addEventListener('state', onState)
+        es.addEventListener('hello', onHello)
+        es.addEventListener('unavailable', onUnavailable)
+      }
+      es.onerror = () => {
+        // 断开（含服务端关闭、载体不吃流式）：回退 DOM + 退避重连
+        const delay = STREAM_RETRY_MS[Math.min(streamState.retry, STREAM_RETRY_MS.length - 1)]
+        streamState.retry += 1
+        streamState.reason = streamState.reason === 'ok' ? 'closed' : streamState.reason
+        closeSessionStream(streamState.reason)
+        if (streamState.retry > STREAM_RETRY_MS.length) {
+          // 连续失败到上限就停手（别再骚扰宿主），下次会话切换再试
+          streamState.reason = 'gave-up'
+          return
+        }
+        streamState.timer = setTimeout(() => {
+          streamState.timer = null
+          openSessionStream(id)
+        }, delay)
+      }
+    }
+
+    /** 每次 refresh 调一次：会话 id 变了就换连接；环境不支持则什么都不做。 */
+    function syncSessionStream (doc) {
+      if (typeof EventSource !== 'function') {
+        streamState.reason = 'no-eventsource'
+        return
+      }
+      const id = sessionIdOf(doc)
+      if (id === '') {
+        if (streamState.es !== null) closeSessionStream('no-session')
+        else streamState.reason = 'no-session'
+        return
+      }
+      if (streamState.es !== null && streamState.sessionId === id) return
+      closeSessionStream('switch')
+      streamState.retry = 0
+      openSessionStream(id)
+    }
+
+    /** `/diag` 用：只报状态，不带任何内容。 */
+    function streamDiag () {
+      return {
+        source: streamState.source,
+        reason: streamState.reason,
+        sessionId: streamState.sessionId,
+        hasPayload: streamState.payload !== null,
+        ageMs: streamState.at === 0 ? null : Date.now() - streamState.at,
+        retry: streamState.retry,
+        hasEventSource: typeof EventSource === 'function'
+      }
+    }
+
     function applyStyleVars (settings, roles, theme, meta) {
       const root = document.documentElement
       const body = document.body
@@ -1149,9 +1334,26 @@ window.__ModuleLoader__.load({
         doc.documentElement.style.setProperty(
           '--zf-avatar-image', `url("${ROUTE}/art/avatar.webp")`)
 
-        // 会话状态（右栏状态点与读数）—— 经 trackSessionSince 维护运行计时
-        trackSessionSince(state, readSessionState(doc))
-        state.stats = readStats(doc)
+        // 会话状态（右栏状态点与读数）—— 有权威推送就用它，否则回退 DOM。
+        syncSessionStream(doc)
+        const live = streamPayload()
+        const domStats = readStats(doc)
+        if (live !== null) {
+          // 运行计时用**宿主的回合开始时刻**：刷新页面也不再从零开始，
+          // 而且 running ↔ tool 之间不会被打断（turnStartedAt 是同一个回合）
+          if (typeof live.turnStartedAt === 'number' && ACTIVE_STATES.includes(live.state)) {
+            state.sessionSince = live.turnStartedAt
+            state.sessionState = live.state
+          } else {
+            trackSessionSince(state, live.state)
+          }
+          state.stats = formatStats(live, domStats)
+          state.statsSource = 'sse'
+        } else {
+          trackSessionSince(state, readSessionState(doc))
+          state.stats = domStats
+          state.statsSource = 'dom'
+        }
         // B7：切会话时正文容器会重建，行内覆盖要跟着补上（幂等，值没变就不写）
         applyContentWidth(doc, state.settings?.contentWidth)
         if (body !== null) body.setAttribute('data-zf-session-state', state.sessionState)
@@ -1294,6 +1496,8 @@ window.__ModuleLoader__.load({
         /** 运行起始时刻（ms）。活跃状态下为 Date.now()，非活跃为 null。 */
         sessionSince: null,
         stats: { turns: '—', steps: '—', cache: '—', rate: '—', tokens: '—', context: '—' },
+        /** 读数的来源（C11）：`sse` = 宿主权威推送，`dom` = 兜底解析。 */
+        statsSource: 'dom',
         /**
          * 渲染计数（诊断用）。
          *
@@ -1538,6 +1742,9 @@ window.__ModuleLoader__.load({
             render: { ...state.renderCounts },
             // 换壁纸交叉淡入触发次数（诊断「看不出淡入」：0 = 压根没建层）
             artFades: artStats.fades,
+            // 观测台读数走的是哪条路（C11）：`sse` = 宿主权威推送，`dom` = 兜底
+            statsSource: state.statsSource,
+            stream: streamDiag(),
             // 官方右栏 tab 的注册结果（主路径是否走通）
             officialTab: {
               ...state.tabDiag,
@@ -3030,6 +3237,8 @@ window.__ModuleLoader__.load({
         try {
           document.querySelector('.zf-art-fade')?.remove()
         } catch { /* 已移除 */ }
+        // C11：关掉读数推送，别给宿主留一条悬挂连接
+        closeSessionStream('dispose')
         for (const key of [
           'heroDispose', 'brandMarkDispose', 'brandNameDispose',
           // 官方 tab 的两个 disposer 也必须释放，否则重新启用插件时
@@ -3072,6 +3281,9 @@ window.__ModuleLoader__.load({
         artPosition,
         // 交叉淡入计数（诊断）
         artStats,
+        // 会话读数推送（C11，用例 77）
+        formatTokens, formatStats, streamPayload, sessionIdOf, streamDiag,
+        streamState, STREAM_FRESH_MS, syncSessionStream, closeSessionStream,
         // 让测试能模拟「宿主设置被外部改动」：stub fetch 下一次 /settings 的返回
         setNextSettings (next) {
           globalThis.__zfNextSettings = next

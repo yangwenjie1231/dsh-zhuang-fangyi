@@ -23,6 +23,8 @@ import os from 'node:os'
 import { fileURLToPath } from 'node:url'
 
 import { PRESET_IDS, PRESETS, PRESET_STYLES, buildTokens, codeTokens, overridesFor, themeDefinitions } from './src/palette.js'
+// C11：会话读数的权威来源 —— 纯 reducer（不碰 DOM/网络，可被测试直接 import）
+import { buildPayload, contextUsedOf, deriveState, emptyFold, foldEvent, foldEvents, rateOf } from './src/sessionState.js'
 import { fontCss } from './src/fonts.js'
 import {
   SETTINGS_VERSION,
@@ -1343,6 +1345,284 @@ export function structureStyle () {
  * ------------------------------------------------------------------ */
 
 /**
+ * 会话读数的权威推送（C11）：订阅宿主事件 → 给客户端推 SSE。
+ *
+ * ── 为什么走 SSE 而不是让客户端继续读 DOM ─────────────────────────────
+ * 观测台的六个读数与状态点原本都靠解析 DOM 文字。那套东西已经因为「外壳结构
+ * 变了」栽过三次（右栏 pane、左栏内层、输入区座位），而每次都是同一个病：
+ * **读的不是权威来源**。宿主事件是权威的，而且契约稳定（见 `src/sessionState.js`
+ * 顶部的白名单）。
+ *
+ * ── 传输 ────────────────────────────────────────────────────────────
+ * `webServer.register` 的 handler 拿到的是 **Node 原生** `req`/`res`
+ * （`IncomingMessage` / `ServerResponse`），所以可以直接 `res.write()` 流式推 ——
+ * 不需要 WebSocket，也不新增任何权限（复用既有的 `web:http-route`）。
+ *
+ *   GET /api/zhuang-fangyi/stream?session=<id>      SSE
+ *   GET /api/zhuang-fangyi/stream?session=<id>&once=1   单个 JSON 快照
+ *
+ * `once=1` 是**退路**：万一某个载体的协议处理不吃流式响应，客户端改成轮询这个
+ * 接口即可（载荷形状完全一样）。它也是测试与诊断最方便的入口。
+ *
+ * ── 成本控制（空闲时零成本）──────────────────────────────────────────
+ *   · 只有**有人订阅的会话**才会被折叠：`session/event` 进来先查 Map，O(1) 过滤；
+ *   · 变化按 `coalesceMs`（默认 200ms）合并成一帧，不给每步都推一次；
+ *   · 上下文占比调 `tokenMeter.measure()`（文档写明是 O(surface)）——按
+ *     `contextMinMs` 限流，回合结束时强制重算一次；
+ *   · 全部订阅者断开即删掉 tracker 与所有计时器；插件停用时关掉所有流。
+ *
+ * 时序参数做成可注入的，测试才能用毫秒级值把「合并 / 心跳 / 清理」都跑一遍。
+ */
+export function makeSessionStream (ctx, options = {}) {
+  const coalesceMs = options.coalesceMs ?? 200
+  const heartbeatMs = options.heartbeatMs ?? 15000
+  const contextMinMs = options.contextMinMs ?? 2000
+  const rateWindowMs = options.rateWindowMs ?? 10000
+
+  /** sessionId → { fold, subscribers, timer, heartbeat, … } */
+  const trackers = new Map()
+  const disposers = []
+
+  const sessionsOf = () => ctx.get('sessions')
+  const meterOf = () => ctx.get('tokenMeter')
+
+  /** 取一个「活着的」会话（可选依赖：服务不存在就当作没有）。 */
+  function liveSession (id) {
+    if (typeof id !== 'string' || id === '') return undefined
+    const sessions = sessionsOf()
+    if (sessions === undefined || typeof sessions.get !== 'function') return undefined
+    try { return sessions.get(id) } catch { return undefined }
+  }
+
+  /** 一次性回填：把已经写进日志的事件折一遍（重放/分叉的旧事件也在里面）。 */
+  function foldOf (session) {
+    const fold = emptyFold()
+    if (session === undefined) return fold
+    try { foldEvents(session.snapshotEvents(), fold) } catch { /* 读不到日志就先空着 */ }
+    try {
+      const info = typeof session.requestContext === 'function' ? session.requestContext() : undefined
+      // 复用同一条白名单路径，而不是另写一套赋值
+      if (info !== undefined && info !== null) foldEvent(fold, { type: 'request/context', data: info })
+    } catch { /* 同上 */ }
+    return fold
+  }
+
+  /** 当前表面 token（`tokenMeter` 是可选依赖，缺了就当作没有）。 */
+  function surfaceOf (session) {
+    if (session === undefined) return 0
+    const meter = meterOf()
+    if (meter === undefined || typeof meter.measure !== 'function') return 0
+    try { return Number(meter.measure(session)?.totalTokens ?? 0) } catch { return 0 }
+  }
+
+  /** 连接时的一次性回填：把已经写进日志的事件折一遍。 */
+  function trackerFor (id, sessionMaybe) {
+    const existing = trackers.get(id)
+    if (existing !== undefined) return existing
+    const session = sessionMaybe ?? liveSession(id)
+    const fold = foldOf(session)
+    const tracker = {
+      id,
+      fold,
+      subscribers: new Set(),
+      dirty: false,
+      timer: null,
+      heartbeat: null,
+      running: false,
+      samples: [],
+      lastOutput: fold.usage.output,
+      contextUsed: null,
+      contextAt: 0
+    }
+    trackers.set(id, tracker)
+    return tracker
+  }
+
+  function pushSample (tracker) {
+    const output = tracker.fold.usage.output
+    if (output === tracker.lastOutput) return
+    tracker.lastOutput = output
+    tracker.samples.push({ time: Date.now(), tokens: output })
+    if (tracker.samples.length > 64) tracker.samples.splice(0, tracker.samples.length - 64)
+  }
+
+  /** 组装载荷（含限流的上下文占比与滑窗速率）。 */
+  function payloadOf (tracker, session) {
+    const now = Date.now()
+    if (tracker.contextAt === 0 || now - tracker.contextAt >= contextMinMs) {
+      tracker.contextAt = now
+      tracker.contextUsed = contextUsedOf(surfaceOf(session), tracker.fold.contextWindow)
+    }
+    return buildPayload({
+      fold: tracker.fold,
+      state: deriveState(tracker.fold, tracker.running),
+      contextUsed: tracker.contextUsed,
+      rate: rateOf(tracker.samples, rateWindowMs),
+      sessionId: session?.id ?? tracker.id,
+      live: true
+    })
+  }
+
+  /**
+   * 不需要订阅的一次性快照（`once=1` / 诊断）。
+   *
+   * ⚠️ **绝不能走 `trackerFor`**：那会为每次快照留下一个永不回收的 tracker，
+   * 之后每条 `session/event` 都会往它里面折叠 —— 正是「空闲零成本」要避免的。
+   * 实测被测试抓到过（`once=1 不留下 tracker`）。
+   */
+  function snapshot (id) {
+    const session = liveSession(id)
+    if (session === undefined) {
+      return buildPayload({ fold: null, state: 'idle', sessionId: typeof id === 'string' ? id : null, live: false })
+    }
+    const fold = foldOf(session)
+    return buildPayload({
+      fold,
+      state: deriveState(fold, false),
+      contextUsed: contextUsedOf(surfaceOf(session), fold.contextWindow),
+      rate: null,
+      sessionId: session.id,
+      live: true
+    })
+  }
+
+  function write (res, chunk) {
+    try { res.write(chunk) } catch { /* 对端已断开 */ }
+  }
+
+  function frame (event, payload) {
+    return `event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`
+  }
+
+  /** 推一帧给所有订阅者；推完即认为「干净」。 */
+  function flush (tracker) {
+    if (tracker.subscribers.size === 0) return
+    const session = liveSession(tracker.id)
+    if (session === undefined) {
+      for (const res of tracker.subscribers) write(res, frame('unavailable', { session: tracker.id, reason: 'not-live' }))
+      return
+    }
+    const text = frame('state', payloadOf(tracker, session))
+    for (const res of tracker.subscribers) write(res, text)
+  }
+
+  /** 合并窗口：多次变化只推一帧。 */
+  function markDirty (tracker) {
+    if (tracker.timer !== null) return
+    tracker.timer = setTimeout(() => {
+      tracker.timer = null
+      flush(tracker)
+    }, coalesceMs)
+    tracker.timer?.unref?.()
+  }
+
+  function detach (tracker, res) {
+    tracker.subscribers.delete(res)
+    if (tracker.subscribers.size > 0) return
+    if (tracker.timer !== null) { clearTimeout(tracker.timer); tracker.timer = null }
+    if (tracker.heartbeat !== null) { clearInterval(tracker.heartbeat); tracker.heartbeat = null }
+    trackers.delete(tracker.id)
+  }
+
+  /**
+   * 处理一次 `/stream` 请求。`once=1` 直接回 JSON；否则挂上 SSE。
+   *
+   * 响应头里的 `no-transform` / `x-accel-buffering: no` 是给中间层看的：
+   * 不这么写，某些代理会攒够一批才吐，看起来就像「SSE 不动」。
+   */
+  function attach (req, res, url) {
+    const id = url?.searchParams?.get('session') ?? ''
+    if (url?.searchParams?.get('once') === '1') {
+      const body = Buffer.from(JSON.stringify(snapshot(id)), 'utf8')
+      res.writeHead(200, {
+        'content-type': 'application/json; charset=utf-8',
+        'content-length': String(body.length),
+        'cache-control': 'no-store'
+      })
+      res.end(body)
+      return
+    }
+
+    res.writeHead(200, {
+      'content-type': 'text/event-stream; charset=utf-8',
+      'cache-control': 'no-cache, no-transform',
+      connection: 'keep-alive',
+      'x-accel-buffering': 'no'
+    })
+    // 断线重连间隔交给浏览器（EventSource 会自己重连）
+    write(res, 'retry: 3000\n\n')
+
+    const session = liveSession(id)
+    const tracker = trackerFor(id, session)
+    write(res, frame('hello', {
+      v: 1,
+      build: PLUGIN_BUILD,
+      session: id,
+      live: session !== undefined
+    }))
+    if (session === undefined) {
+      // 会话不在宿主（打开的是历史会话 / 服务缺失）：明说，让客户端走 DOM 兜底
+      write(res, frame('unavailable', { session: id, reason: 'not-live' }))
+    } else {
+      write(res, frame('state', payloadOf(tracker, session)))
+    }
+
+    tracker.subscribers.add(res)
+    if (tracker.heartbeat === null) {
+      tracker.heartbeat = setInterval(() => {
+        for (const sub of tracker.subscribers) write(sub, ': ping\n\n')
+      }, heartbeatMs)
+      tracker.heartbeat?.unref?.()
+    }
+    const done = () => detach(tracker, res)
+    if (typeof res.on === 'function') res.on('close', done)
+    if (typeof req?.on === 'function') req.on('close', done)
+  }
+
+  // ── 事件订阅（`emit` 模式：只观察，不参与决策链）──────────────────────
+  const onSessionEvent = (session, event) => {
+    const id = session?.id
+    const tracker = id === undefined ? undefined : trackers.get(id)
+    // 没有订阅者 → 一次 Map 查询就返回（空闲零成本）
+    if (tracker === undefined) return
+    try {
+      foldEvent(tracker.fold, event)
+      pushSample(tracker)
+      // 回合结束强制重算上下文（那一刻数字最值得更新）
+      if (event?.type === 'turn/end') tracker.contextAt = 0
+    } catch { /* 折叠失败不该影响会话本身 */ }
+    markDirty(tracker)
+  }
+  const onStatus = (sessionId, running) => {
+    const tracker = trackers.get(sessionId)
+    if (tracker === undefined) return
+    tracker.running = running === true
+    markDirty(tracker)
+  }
+  const keep = (disposer) => { if (typeof disposer === 'function') disposers.push(disposer) }
+  keep(ctx.on('session/event', onSessionEvent))
+  keep(ctx.on('api-session/status', onStatus))
+
+  /** 插件停用：关掉所有流、清空计时器（否则会留下悬挂连接）。 */
+  function dispose () {
+    for (const tracker of trackers.values()) {
+      if (tracker.timer !== null) clearTimeout(tracker.timer)
+      if (tracker.heartbeat !== null) clearInterval(tracker.heartbeat)
+      for (const res of tracker.subscribers) {
+        try { res.end() } catch { /* 已断开 */ }
+      }
+      tracker.subscribers.clear()
+    }
+    trackers.clear()
+    for (const off of disposers.splice(0)) {
+      try { off() } catch { /* 已释放 */ }
+    }
+  }
+
+  return { attach, snapshot, dispose, trackerCount: () => trackers.size }
+}
+
+/**
  * @param {import('@deepseek-ai/cordis').Context} ctx
  * @param {object} config
  */
@@ -1366,6 +1646,11 @@ export function apply (ctx, config) {
   }
 
   ctx.effect(() => () => settings.dispose(), 'zhuang-fangyi: settings store')
+
+  // C11：会话读数推送（宿主事件 → SSE）。空闲时零成本（无订阅者不折叠日志），
+  // 停用时由 ctx.effect 关闭所有流。
+  const sessionStream = makeSessionStream(ctx, {})
+  ctx.effect(() => () => sessionStream.dispose(), 'zhuang-fangyi: session stream')
 
   /**
    * 客户端自检上报的存放处（仅内存，不落盘）。
@@ -1416,6 +1701,13 @@ export function apply (ctx, config) {
     const route = url.pathname.slice(ROUTE_PREFIX.length) || '/'
 
     try {
+      // 会话读数（C11）：SSE 或 `?once=1` 的单次快照。
+      // 走既有的前缀路由 —— **不新增权限**（仍是 `web:http-route`）。
+      if (route === '/stream') {
+        sessionStream.attach(req, res, url)
+        return
+      }
+
       if (route === '/settings') {
         if (req.method === 'GET') {
           sendJson(res, 200, { settings: settings.get(), presets: PRESET_IDS })

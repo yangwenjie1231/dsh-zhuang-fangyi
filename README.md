@@ -151,6 +151,38 @@ bundles 条目，并**备份 `package.json` 原始字节**供 `uninstall.ps1` �
 设置结构版本 v3（v1→v2 加观测栏/气泡，v2→v3 加强调色色相与静止模式）；
 旧文件会**无损升级**（新键补默认值，已有字段全部保留）。
 
+### 观测台的读数从哪来（权威推送 + DOM 兜底）
+
+六个读数（轮 / 步 / tok/s / token 总量 / 缓存命中 / 上下文占比）与状态点**优先来自宿主**：
+
+```
+宿主事件：turn/start · turn/end · step/start · assistant/message.usage
+         tool/call · tool/result · request/context · api-session/status
+   ↓  src/sessionState.js 折叠（**白名单**：只取数字与枚举）
+GET /api/zhuang-fangyi/stream?session=<id>    SSE（200ms 合并 · 15s 心跳）
+   ↓
+客户端 EventSource：有新鲜帧（10s 内）就用它；否则回退解析 DOM
+```
+
+**为什么要换**：这些数字原本全靠解析 DOM 文字 —— 已经因为「外壳结构变了」栽过三次
+（右栏 pane / 左栏内层 / 输入区座位），每次都是同一个病：**读的不是权威来源**。
+
+**字段级回退**：`cacheHit` / `rate` / `context.used` 宿主可能给不出（provider 没报、
+上下文窗口未知）—— 那几格用 DOM 的值，其余仍用宿主的。整条流不可用（没连上 / 打开的
+是历史会话不在宿主 / 环境没有 EventSource / 断了正在退避）→ 六项全回退，也就是
+**换之前的行为一字不差**。
+
+**隐私**：载荷**逐字段写出**（绝不 spread 事件对象），只有数字读数与状态枚举；
+消息正文、工具参数、流式文本一律不读。有断言盯着字段集 —— 想加一个泄漏字段就会失败。
+
+**退路**：`?once=1` 返回同形的单个 JSON 快照。万一某个载体的协议不吃流式响应，
+客户端改成轮询即可（一行）。`/api/zhuang-fangyi/diag` 里的 `statsSource`
+（`sse` / `dom`）能一眼看出当前走的是哪条路。
+
+**成本**：只有**有人订阅的会话**才折叠事件（先查 Map，其他会话零开销）；变化按 200ms
+合并；上下文占比调 `tokenMeter.measure()`（O(surface)）按 2s 限流、回合结束时补一次；
+订阅者断完即回收 tracker 与计时器。
+
 ### 风格预设：为什么「只换配色」不够，以及怎么修
 
 用户反馈「切换主题就改个配色会不会太少了」。**实测证实了这个判断**：
