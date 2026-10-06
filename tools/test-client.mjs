@@ -3422,6 +3422,106 @@ function shellDom (opts = {}) {
   }
 }
 
+
+// 用例 66：Windows 原生标题栏条带透明（用户「壁纸覆盖更大区域」）
+//
+// 用户截图量出的现象：同一条 40px 标题栏带子，左半透壁纸（亮度 67–74）、
+// 右半恒定暗色（亮度 27，`rgb(28,28,21)`）。分界线正是观测栏左边缘。
+//
+// 那块是**原生标题栏条带**（Electron `titleBarOverlay`，浏览器进程画在
+// 网页之上，z-index 碰不到）。但它的颜色**可以**改 —— 桌面 preload 建了一个
+// 隐藏探针 span，把它的 computed 颜色经 IPC 交给
+// `setTitleBarOverlay({color, symbolColor})`（源码实测）。
+// 主进程的颜色校验接受 alpha，preload 用 canvas 归一化成 rgba ——
+// 所以把探针底色设成透明，条带就透明。
+//
+// ⚠️ 两个实测确认的细节（都踩过）：
+//   ① 必须**直接选中探针元素**改 background-color，不能只改变量 ——
+//      探针的 background-color 是行内样式且引用 var(...)，而自定义属性按
+//      **最近祖先**解析：`--dsw-specific-sidebar-fill` 定义在 body 上，
+//      在 html 上写 !important 压不过 body 的普通声明（550c 记录的坑）。
+//   ② 属性值里冒号**后面有空格**（`style.cssText` 的序列化结果）：
+//        "position: fixed; visibility: hidden; pointer-events: none; …"
+//      写 `[style*="visibility:hidden"]`（无空格）会 **0 命中** ——
+//      实测确认。用 `[style*="visibility"]` 不依赖空格与属性顺序。
+{
+  console.log('\n--- Windows 原生标题栏条带透明 ---')
+  const { structureCss } = await import('../index.js')
+  const css = structureCss()
+  const flat = css.replace(/\s+/g, '')
+
+  ok('有探针透明规则', flat.includes('background-color:transparent!important'))
+  ok('只在壁纸开启时生效（不动官方设计）',
+    flat.includes('body[data-zf-wallpaper]>span[style*="visibility"]'))
+  ok('用 [style*="visibility"]（不依赖空格 —— 实测无空格会 0 命中）',
+    flat.includes('[style*="visibility"]'),
+    '写成 visibility:hidden 会命中 0 个元素')
+  ok('带 :not([class])（不误伤同形元素）',
+    flat.includes('span[style*="visibility"]:not([class])'))
+  ok('限定 body 直接子元素（探针是 body > span）',
+    flat.includes('body[data-zf-wallpaper]>span'))
+
+  // 真实引擎实测：照抄 preload 的探针，确认选择器命中且行为正确
+  const { execFileSync } = await import('node:child_process')
+  const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
+  if (!fs.existsSync(EDGE)) {
+    console.log('  SKIP 无 Edge（Linux/CI）—— 真实引擎验证跳过')
+  } else {
+    const build = on => `<!DOCTYPE html><html><head><style>
+      body{--dsw-specific-sidebar-fill:#1c1c15;--dsw-alias-label-primary:#f9fafb}
+      ${structureCss()}
+    </style></head><body ${on ? 'data-zf-wallpaper=""' : ''}>
+      <span class="x" style="visibility:hidden;background-color:#123456" id="d">d</span>
+      <script>
+        const probe = document.createElement('span')
+        probe.id = 'p'
+        probe.style.cssText = 'position:fixed;visibility:hidden;pointer-events:none;' +
+          'background-color:var(--dsw-specific-sidebar-fill);' +
+          'color:var(--dsw-alias-label-primary)'
+        document.body.append(probe)
+        const g = id => getComputedStyle(document.getElementById(id))
+        document.title = JSON.stringify({
+          p: g('p').backgroundColor, sym: g('p').color, d: g('d').backgroundColor
+        })
+      <\/script></body></html>`
+
+    const rows = {}
+    for (const on of [true, false]) {
+      const f = path.join(os.tmpdir(), `zf-probe-${on}.html`)
+      fs.writeFileSync(f, build(on), 'utf8')
+      try {
+        const dom = execFileSync(EDGE, [
+          '--headless=new', '--disable-gpu', '--no-sandbox', '--virtual-time-budget=1200',
+          '--dump-dom', `file:///${f.replace(/\\/g, '/')}`
+        ], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] })
+        const m = /<title>([^<]*)<\/title>/.exec(dom)
+        rows[on] = m ? JSON.parse(m[1].replace(/&quot;/g, '"')) : null
+      } catch { rows[on] = null }
+    }
+    ok('拿到真实引擎计算值', rows[true] !== null && rows[false] !== null)
+    if (rows[true] !== null && rows[false] !== null) {
+      ok('壁纸开启 → 探针透明（条带透明）',
+        rows[true].p === 'rgba(0, 0, 0, 0)', rows[true].p)
+      ok('壁纸开启 → 符号色保留（─ □ ✕ 可见）',
+        rows[true].sym === 'rgb(249, 250, 251)', rows[true].sym)
+      ok('壁纸关闭 → 保持主题色（不动官方设计）',
+        rows[false].p === 'rgb(28, 28, 21)', rows[false].p)
+      ok('不误伤带 class 的同形 span',
+        rows[true].d === 'rgb(18, 52, 86)', rows[true].d)
+    }
+  }
+
+  // 观测栏本身更透（用户同时要求）
+  //
+  // ⚠️ 在**原始 css**（不 strip 空格）上匹配：`color-mix(in srgb, …)` 函数
+  // 内部本身就有空格，strip 之后反而对不上（这条断言因此误报过一次）。
+  ok('观测栏背景不透明度降到 62%',
+    /\.zf-rail\{[^}]*background:color-mix\(in srgb, var\(--dsw-alias-bg-layer-1\) 62%, transparent\)/.test(css),
+    '未在生成的 CSS 里找到 62% 的观测栏背景')
+  ok('观测栏模糊提到 18px（配套：透更多但保住可读性）',
+    /\.zf-rail\{[^}]*backdrop-filter:blur\(18px\)/.test(flat))
+}
+
 console.log(`\n合计 ${pass + fail} 项，通过 ${pass}，失败 ${fail}`)
 if (fail > 0) {
   console.log(`\n失败项：\n  ${failures.join('\n  ')}`)

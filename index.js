@@ -503,6 +503,55 @@ export function structureCss () {
     '  --dsh-windows-content-radius:0px;',
     '}',
 
+    /* ── 让 Windows 原生标题栏条带**透明**（壁纸透上去）──────────────────
+     *
+     * 用户截图反馈「右侧透明壁纸能不能覆盖更大的区域」——量了像素才定位：
+     *
+     *   y=0..56, x<213   亮度 67–74  ← 透壁纸
+     *   y=0..56, x>213   亮度 27     ← 恒定暗色 rgb(28,28,21)，无壁纸
+     *
+     * 那块是**原生标题栏条带**（Electron 的 `titleBarOverlay`，由**浏览器
+     * 进程画在网页之上**，文档里任何 z-index 都碰不到它）。
+     *
+     * ── 但它的颜色**可以**改：桌面 preload 的探针机制（源码实测）──────
+     *
+     *   const probe = document.createElement("span")
+     *   probe.style.cssText =
+     *     "position:fixed;visibility:hidden;pointer-events:none;" +
+     *     "background-color:var(--dsw-specific-sidebar-fill);" +   // ← 条带色
+     *     "color:var(--dsw-alias-label-primary)"
+     *   document.body.append(probe)
+     *   // → getComputedStyle(probe) → canvas 归一化 → IPC →
+     *   //   mainWindow.setTitleBarOverlay({ color, symbolColor })
+     *
+     * 主进程的颜色校验接受 alpha，preload 又用 canvas 归一化成
+     * `rgba(r, g, b, a)` —— 所以**把探针底色设成透明**，那条带子就透明，
+     * 壁纸透上去，─ □ ✕ 浮在壁纸上。
+     *
+     * ── 为什么直接改探针元素而不是改变量（550c 记录的坑）───────────────
+     *
+     * 探针的 `background-color` 是**行内样式**且引用
+     * `var(--dsw-specific-sidebar-fill)`。自定义属性按**最近祖先**解析：
+     * 该变量定义在 `body` 上（外壳 presenter 写的），所以在 `html` 上写
+     * `!important` **压不过** body 上的普通声明。必须**直接选中探针元素**。
+     *
+     * 选择器：`body > span[style*="visibility:hidden"]` —— 探针是 body 的
+     * **直接子元素**且带这段行内样式，特征唯一；再加 `:not([class])` 收一道。
+     *
+     * ⚠️ 只在**壁纸开启**时透明：关掉壁纸时界面回到官方不透明配色，那时
+     * 条带应当保持主题色（官方设计），不该透明。
+     * ⚠️ `-webkit-app-region:drag` 不受影响 —— 拖拽区是 `_frame::before`，
+     * 那条仍在（下一条规则只改它的背景纱）。
+     */
+    // ⚠️ 属性值里的冒号**后面有空格**（`style.cssText` 序列化的结果）：
+    //      "position: fixed; visibility: hidden; pointer-events: none; …"
+    //    写成 `[style*="visibility:hidden"]`（无空格）会 **0 命中** ——
+    //    实测确认过。用更短的 `[style*="visibility"]` 更稳：
+    //    它不依赖空格，也不依赖属性顺序。
+    'body[data-zf-wallpaper] > span[style*="visibility"]:not([class]){',
+    '  background-color:transparent !important;',
+    '}',
+
     // Windows 标题栏拖拽区（frame 的 ::before，40px 高）也带一层纱，
     // 否则那一条会是全透明，与下面的侧栏/中栏不一致。
     'body[data-zf-wallpaper]:not([data-zf-opaque-titlebar]) [data-zf-frame]::before,',
@@ -569,9 +618,15 @@ export function structureCss () {
     '  position:fixed;top:0;bottom:0;right:0;',
     '  width:var(--zf-rail-width);box-sizing:border-box;',
     '  display:flex;flex-direction:column;gap:14px;padding:16px 14px;overflow-y:auto;',
-    '  background:color-mix(in srgb, var(--dsw-alias-bg-layer-1) 82%, transparent);',
+    /* 背景更透：用户希望壁纸在观测栏下也看得见。
+     *
+     * 原为 82% 不透明 —— 实测截图里观测栏内亮度 37 vs 壁纸区 70，差一倍，
+     * 壁纸几乎看不出。降到 62% 并把 blur 10px→18px：**透出更多壁纸，
+     * 同时靠模糊保住正文可读性**（不加模糊会与壁纸细节打架，反而更难读）。
+     * 这两个值是配套的，改一个要同时看另一个。 */
+    '  background:color-mix(in srgb, var(--dsw-alias-bg-layer-1) 62%, transparent);',
     '  border-left:1px solid var(--dsw-alias-border-l2);',
-    '  backdrop-filter:blur(10px);',
+    '  backdrop-filter:blur(18px) saturate(1.1);',
     '  font-size:12px;color:var(--dsw-alias-label-primary);',
     '  z-index:11;',
     '}',

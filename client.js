@@ -1358,6 +1358,37 @@ window.__ModuleLoader__.load({
                   bodyAttr: document.body?.hasAttribute?.('data-zf-wallpaper') ?? null,
                   // 竖图 contain 链路：fit 标记、前景 size、垫底 url
                   fit: html.getAttribute('data-zf-art-fit'),
+          // ── 临时诊断：观测栏正上方那块（Windows 标题栏带右侧）到底有什么 ──
+          // 用户截图显示那块没透壁纸（亮度 27 vs 左侧 70）。与其继续考古
+          // 外壳 CSS，直接问运行中的页面：那个坐标上最顶层的元素是谁。
+          stripProbe: (() => {
+            try {
+              const rail = document.querySelector('.zf-rail') ??
+                document.querySelector('[class*="_rightbarCol"]')
+              if (rail === null) return { err: 'no-rail' }
+              const r = rail.getBoundingClientRect()
+              const cx = Math.round(r.left + r.width / 2)
+              const cy = Math.round(Math.max(2, (parseFloat(
+                getComputedStyle(document.documentElement)
+                  .getPropertyValue('--dsh-windows-titlebar-height')) || 40) / 2))
+              const stack = document.elementsFromPoint(cx, cy)
+              const describe = el => {
+                const cs = getComputedStyle(el)
+                return {
+                  tag: el.tagName.toLowerCase(),
+                  cls: String(el.className ?? '').slice(0, 60),
+                  bg: cs.backgroundColor,
+                  z: cs.zIndex,
+                  pos: cs.position
+                }
+              }
+              return {
+                at: { x: cx, y: cy },
+                railRect: { x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width) },
+                stack: stack.slice(0, 6).map(describe)
+              }
+            } catch (e) { return { err: String(e?.message ?? e) } }
+          })(),
                   size: cs.getPropertyValue('--zf-art-size').trim(),
                   position: cs.getPropertyValue('--zf-art-position').trim(),
                   backdrop: cs.getPropertyValue('--zf-art-backdrop').trim().slice(0, 60),
