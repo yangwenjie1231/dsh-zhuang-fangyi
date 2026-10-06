@@ -22,7 +22,7 @@ import path from 'node:path'
 import os from 'node:os'
 import { fileURLToPath } from 'node:url'
 
-import { PRESET_IDS, PRESETS, PRESET_STYLES, buildTokens, overridesFor, themeDefinitions } from './src/palette.js'
+import { PRESET_IDS, PRESETS, PRESET_STYLES, buildTokens, codeTokens, overridesFor, themeDefinitions } from './src/palette.js'
 import { fontCss } from './src/fonts.js'
 import {
   SETTINGS_VERSION,
@@ -33,6 +33,30 @@ import {
 
 /** 插件标识（Loader 行 id、token 层 source、样式标记共用）。 */
 export const name = 'zhuang-fangyi'
+
+/**
+ * 客户端要的原始色阶：`roles[preset][scheme]`（它据此算壁纸的「纱」色、画预设色板）。
+ *
+ * B9：把**代码高亮的 token 色**并进同一份色阶里（键 `shiki`）—— 客户端本来就
+ * 在同一个对象上读 `base`/`sidebar`，顺手就能读到，不必改 `applyStyleVars`
+ * 的签名（它有 4 个调用点）。
+ *
+ * ⚠️ 键名**不能叫 `code`**：色阶里本来就有 `code`（代码块**底色**，见
+ * `markdown-code-block`）—— 实测撞过一次，会把底色覆盖成 token 表。
+ *
+ * ⚠️ 必须 `{ ...r.light }` **展开复制**：`PRESETS[id].light` 是模块级共享对象，
+ * 直接往它上面挂键会污染同进程里的其它消费者。测试盯着这一点。
+ */
+export function rolesPayload (accentHue) {
+  return Object.fromEntries(PRESET_IDS.map(id => {
+    const r = PRESETS[id]
+    if (r.light === undefined) return [id, null]
+    return [id, {
+      light: { ...r.light, shiki: codeTokens(id, 'light', accentHue) },
+      dark: { ...r.dark, shiki: codeTokens(id, 'dark', accentHue) }
+    }]
+  }))
+}
 
 /** 无硬依赖；`webServer` 由嵌套 inject 处理。 */
 export const inject = []
@@ -407,9 +431,12 @@ export function structureCss () {
      * 层级：`::after` 用 z-index:-2，落在 `::before`（-1）**更下面**，
      * 所以前景永远盖在垫底之上。两者都在 html 根层叠上下文里，
      * 仍位于 body 内容之下。
+     *
+     * ⚠️ B6 之后垫底改成 **-3**：中间那格（-2）留给换图时的「上一张」临时层
+     * （`.zf-art-fade`），三层顺序 = 垫底 → 旧图 → 当前图。
      */
     'html[data-zf-wallpaper]::after{',
-    '  content:"";position:fixed;inset:0;z-index:-2;pointer-events:none;',
+    '  content:"";position:fixed;inset:0;z-index:-3;pointer-events:none;',
     '  background-image:var(--zf-art-backdrop,none);',
     '  background-size:cover;background-position:center;background-repeat:no-repeat;',
     // 重模糊 + 压暗：只做气氛，不抢前景；brightness 让深色主题下不过亮
@@ -432,6 +459,28 @@ export function structureCss () {
     'html[data-zf-wallpaper][data-zf-art-fit="contain"]::before{',
     '  background-position:var(--zf-art-position,center 22%);',
     '}',
+    /* ── 换壁纸时的交叉淡入（B6，用户「还可以怎么完善」）──────────────────
+     *
+     * `background-image` **不能过渡** —— 换图是瞬切（`啪` 一下）。做法：
+     *   ① 换图**之前**，客户端把 `html::before` 的**计算绘制快照**（图/size/
+     *      position/repeat/filter/transform）抄到一层临时元素上，它此刻与旧图
+     *      逐像素一致；
+     *   ② 写新的 `--zf-art-src`（当前层立刻变新图，在临时层之上）；
+     *   ③ 下一帧给临时层打 `data-zf-art-out` → 240ms 淡出 → **移除元素**。
+     *
+     * 三层都在根层叠上下文、都在 body 内容之下：
+     *   html::after（模糊垫底）-3  ·  .zf-art-fade（上一张）-2  ·  html::before（当前）-1
+     *
+     * 元素是**临时**的：淡完即移除 —— 不留「常驻空元素 + 永久合成层」。
+     * 动效模式 `reduced` / 系统 `prefers-reduced-motion` → 客户端直接切图、
+     * 连层都不建；下面那条媒体查询是第二道保险（万一别处漏判）。
+     */
+    '.zf-art-fade{',
+    '  position:fixed;inset:0;z-index:-2;pointer-events:none;',
+    '  opacity:1;transition:opacity 240ms ease-out;',
+    '}',
+    '.zf-art-fade[data-zf-art-out]{ opacity:0; }',
+    '@media (prefers-reduced-motion: reduce){ .zf-art-fade{ transition:none; } }',
     // ── 纱的层次（这里最容易做错，值得说清）────────────────────────────
     //
     // 外壳的实际结构是嵌套的，每层都有自己的不透明背景：
@@ -688,6 +737,41 @@ export function structureCss () {
     '  outline:2px solid var(--dsw-alias-focus-ring-color);',
     '  outline-offset:2px;',
     '  box-shadow:0 0 0 6px color-mix(in srgb, var(--dsw-alias-focus-ring-color) 18%, transparent);',
+    '}',
+
+    /* ── 选中文字与输入光标（用户「还可以怎么完善」里的 B4 / B5）──────────
+     *
+     * 这两处**每天都在碰**，却一直没管过：
+     *   · `::selection` 从未设置 → 用浏览器默认蓝，在壁纸上很跳；
+     *   · `caret-color` 从未设置 → 系统默认色，少了那点「同一套色」。
+     *
+     * 都取 alias，不硬编码：
+     *   · 选中底色 = 强调色兑 30% 透明（`color-mix`），文字保持 `label-primary`
+     *     —— 底色只做提示，不能把字压花；
+     *   · 光标 = 强调色**本体**：它只有一个字符宽，取色可以大胆。
+     *
+     * 门控用 `body[data-zf-theme]`（主题启用标记，与各装饰开关无关）——
+     * 挂在 `data-zf-glow` 上会变成「关掉微光，选中色也回默认」，那是两回事。
+     *
+     * `forced-colors` 下交还系统（高对比模式的可读性优先，与既有做法一致）。
+     */
+    'body[data-zf-theme] ::selection{',
+    '  background:color-mix(in srgb, var(--dsw-alias-brand-primary) 30%, transparent);',
+    '  color:var(--dsw-alias-label-primary);',
+    '}',
+    // 只在**真能输入**的地方设光标：对话输入框 + 可编辑区 + 原生表单控件
+    'body[data-zf-theme] [data-composer-input],',
+    'body[data-zf-theme] [contenteditable="true"],',
+    'body[data-zf-theme] input,',
+    'body[data-zf-theme] textarea{',
+    '  caret-color:var(--dsw-alias-brand-primary);',
+    '}',
+    '@media (forced-colors: active){',
+    '  body[data-zf-theme] ::selection{ background:Highlight; color:HighlightText; }',
+    '  body[data-zf-theme] [data-composer-input],',
+    '  body[data-zf-theme] [contenteditable="true"],',
+    '  body[data-zf-theme] input,',
+    '  body[data-zf-theme] textarea{ caret-color:auto; }',
     '}',
     // 等高线细边框：把侧栏右分割线换成主题色
     'body[data-zf-contour] [data-zf-sidebar],',
@@ -1368,9 +1452,7 @@ export function apply (ctx, config) {
           // ② 在壁纸选择器上给当前预设的推荐壁纸打标记（**只提示，不自动切换**）。
           presetStyles: PRESET_STYLES,
           overrides: Object.fromEntries(PRESET_IDS.map(id => [id, overridesFor(id, accentHue)])),
-          roles: Object.fromEntries(PRESET_IDS.map(id => [id, PRESETS[id].light !== undefined
-            ? { light: PRESETS[id].light, dark: PRESETS[id].dark }
-            : null])),
+          roles: rolesPayload(accentHue),
           // 每张壁纸的尺寸与「该 cover 还是 contain」（由 prepare-art.py 产出）。
           // 竖图必须 contain，否则横屏下只看到中间 40% 的高度。
           wallpaperMeta: wallpaperMeta()

@@ -13,8 +13,8 @@
  *   开关滑块 1.5:1（滑块与轨道需可分辨）
  */
 
-import { PRESETS, PRESET_IDS, buildTokens, tokenName } from './palette.js'
-import { contrast } from './palette.js'
+import { PRESETS, PRESET_IDS, buildTokens, buildRoles, tokenName } from './palette.js'
+import { contrast, codeTokens, CODE_TOKEN_MIN_RATIO, SHIKI_TOKEN_KEYS } from './palette.js'
 
 /**
  * 外壳真实存在的 token 名（从 `app.asar` 里 `@deepseek-ai/dsh-client-ui-theme`
@@ -298,8 +298,81 @@ for (const presetId of PRESET_IDS) {
 if (structural === 0) console.log('  全部通过（token 成对、色阶单调）')
 console.log('')
 
-console.log(`合计 ${total} 项对比度检查 + ${PRESET_IDS.length} 组结构检查，不达标 ${failed + structural} 项`)
-if (failed + structural > 0) {
+// ── 代码高亮 token（B9）────────────────────────────────────────────────
+//
+// 外壳给的是一套**与预设无关**的 OpenColor 字面色（关键字粉、函数紫、字符串绿）。
+// 我们按预设重算这 9 个 token，规则是「语义优先 + 强调色跟随预设」，并且
+// **逐条过对比度门禁**（不够就沿明度校正，校正仍不够就不发这一条）。
+//
+// 这一组要抓三件事：
+//   ① 发出去的每一条都真的够读（门禁契约本身）；
+//   ② 键名是外壳真实存在的变量（写错只会静默失效）；
+//   ③ 覆盖率不许被门禁砍光、且确实**与外壳默认不同**（否则这功能等于没做）。
+console.log('━━━ 代码高亮 token（跟随预设）━━━')
+
+/** 外壳默认的 token 色（实测记录：`:root` 亮色一组、`body[data-ds-dark-theme]` 暗色一组）。 */
+const SHELL_SHIKI = {
+  light: {
+    comment: '#868e96', constant: '#1c7ed6', function: '#6741d9', keyword: '#d6336c',
+    link: '#1971c2', parameter: '#e8590c', punctuation: '#495057',
+    string: '#2f9e44', 'string-expression': '#2b8a3e'
+  },
+  dark: {
+    comment: '#adb5bd', constant: '#4dabf7', function: '#b197fc', keyword: '#faa2c1',
+    link: '#74c0fc', parameter: '#ffa94d', punctuation: '#ced4da',
+    string: '#69db7c', 'string-expression': '#8ce99a'
+  }
+}
+
+let codeFailed = 0
+let codeChecked = 0
+for (const presetId of PRESET_IDS) {
+  for (const scheme of ['light', 'dark']) {
+    const roles = buildRoles(presetId, scheme)
+    const code = codeTokens(presetId, scheme)
+    const keys = Object.keys(code)
+
+    // ① 门禁
+    for (const [key, value] of Object.entries(code)) {
+      codeChecked += 1
+      const ratio = contrast(value, roles.code)
+      if (ratio === null || ratio < CODE_TOKEN_MIN_RATIO) {
+        console.log(`  FAIL ${presetId}/${scheme} ${key}: ${ratio === null ? 'null' : ratio.toFixed(2)} < ${CODE_TOKEN_MIN_RATIO}`)
+        codeFailed += 1
+      }
+    }
+    // ② 键名
+    const unknown = keys.filter((k) => !SHIKI_TOKEN_KEYS.includes(k))
+    if (unknown.length > 0) {
+      console.log(`  FAIL ${presetId}/${scheme}: 未知 token 键 ${unknown.join(', ')}`)
+      codeFailed += 1
+    }
+    // ③ 覆盖率下限 + 关键三类必须齐
+    if (keys.length < 6) {
+      console.log(`  FAIL ${presetId}/${scheme}: 只发出 ${keys.length}/${SHIKI_TOKEN_KEYS.length} 条（门禁砍太狠）`)
+      codeFailed += 1
+    }
+    for (const must of ['keyword', 'string', 'comment']) {
+      if (!keys.includes(must)) {
+        console.log(`  FAIL ${presetId}/${scheme}: 缺 ${must}（该 token 会退回外壳默认色）`)
+        codeFailed += 1
+      }
+    }
+    // ④ 确实与外壳默认不同（至少 6/9 条不同，避免「算了个寂寞」）
+    const differs = keys.filter((k) => code[k].toLowerCase() !== (SHELL_SHIKI[scheme][k] ?? '').toLowerCase())
+    if (differs.length < 6) {
+      console.log(`  FAIL ${presetId}/${scheme}: 只有 ${differs.length}/${keys.length} 条与外壳默认不同`)
+      codeFailed += 1
+    }
+  }
+}
+if (codeFailed === 0) {
+  console.log(`  全部通过（${codeChecked} 条 token 均 ≥ ${CODE_TOKEN_MIN_RATIO}:1，且与外壳默认色不同）`)
+}
+console.log('')
+
+console.log(`合计 ${total} 项对比度检查 + ${codeChecked} 项代码 token 检查 + ${PRESET_IDS.length} 组结构检查，不达标 ${failed + structural + codeFailed} 项`)
+if (failed + structural + codeFailed > 0) {
   console.log(`\n失败项：\n  ${failures.join('\n  ')}`)
   process.exit(1)
 }

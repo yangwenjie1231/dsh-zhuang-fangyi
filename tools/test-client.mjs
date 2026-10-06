@@ -34,6 +34,9 @@ class El {
     this.isConnected = false
     this.dataset = {}
     this.classList = { contains: () => false }
+    // 事件：只为「过渡结束收尾」这类时序用例服务 —— 桩不派发真实事件，
+    // 由测试显式 `dispatch(type)` 触发（比断言源码里有没有那句强得多）。
+    this.listeners = new Map()
     this._className = ''
   }
 
@@ -79,6 +82,20 @@ class El {
     child.isConnected = true
     this.children.push(child)
     return child
+  }
+
+  addEventListener (type, fn) {
+    if (!this.listeners.has(type)) this.listeners.set(type, new Set())
+    this.listeners.get(type).add(fn)
+  }
+
+  removeEventListener (type, fn) {
+    this.listeners.get(type)?.delete(fn)
+  }
+
+  /** 测试用：显式派发一次事件（`{once:true}` 的语义由调用方自行保证）。 */
+  dispatch (type) {
+    for (const fn of [...(this.listeners.get(type) ?? [])]) fn({ type, target: this })
   }
 
   append (...children) {
@@ -2087,7 +2104,8 @@ function shellDom (opts = {}) {
   ok('CSS 含 ::after 垫底层', css.includes('html[data-zf-wallpaper]::after'))
   ok('垫底层用 --zf-art-backdrop', /::after\{[^}]*background-image:var\(--zf-art-backdrop/.test(css))
   ok('垫底层重模糊（blur 64px）', /::after\{[^}]*filter:blur\(64px\)/.test(css))
-  ok('垫底层在更下层（z-index:-2）', /::after\{[^}]*z-index:-2/.test(css))
+  // B6 之后垫底让到 -3：中间那格（-2）留给换图时的「上一张」临时层
+  ok('垫底层在更下层（z-index:-3）', /::after\{[^}]*z-index:-3/.test(css))
   ok('前景层仍在 -1（盖在垫底之上）', /::before\{[^}]*z-index:-1/.test(css))
   ok('垫底层默认 none（横图零开销）', css.includes('--zf-art-backdrop:none'))
   ok('含 contain 取景规则', css.includes('[data-zf-art-fit="contain"]::before'))
@@ -3955,6 +3973,368 @@ function shellDom (opts = {}) {
         `${rows[true].seat} / ${rows[true].color}`)
       ok('壁纸关闭 → 官方那条渐变照旧（不动官方设计）',
         String(rows[false].seat).includes('linear-gradient'), rows[false].seat)
+    }
+  }
+}
+
+
+// 用例 71：选中文字色与输入光标色（B4 / B5，「每天都在碰」的两处）
+//
+// 都是**从未设置**过的细节：`::selection` 用浏览器默认蓝、`caret-color` 用系统
+// 默认色 —— 在壁纸与预设配色里很跳。
+//
+// 门控用 `body[data-zf-theme]`（主题启用标记），**不是** `data-zf-glow` ——
+// 后者是「强调色微光」这个装饰开关，关掉微光不该把选中色一起打回默认。
+{
+  console.log('\n--- 选中文字色 / 输入光标色 ---')
+  const { structureCss } = await import('../index.js')
+  const css = structureCss()
+  const flat = css.replace(/\s+/g, '')
+  const csrc = fs.readFileSync(path.join(ROOT, 'client.js'), 'utf8')
+
+  ok('有 ::selection 规则', /body\[data-zf-theme\]::selection\{/.test(flat))
+  // ⚠️ 必须匹配**原始** css：strip 空格会把 `color-mix(in srgb,` 变成
+  // `color-mix(insrgb,` —— 这条断言因此误报过一次（仓库里记过同类坑）
+  ok('选中底色用强调色兑水（30%），不是硬编码色',
+    /::selection\{[^}]*background:color-mix\(in srgb, var\(--dsw-alias-brand-primary\) 30%, transparent\)/.test(css))
+  ok('选中文字保持 label-primary（底色不能把字压花）',
+    /::selection\{[^}]*color:var\(--dsw-alias-label-primary\)/.test(flat))
+  ok('光标色用强调色本体（只占一个字符宽，可以大胆）',
+    /caret-color:var\(--dsw-alias-brand-primary\)/.test(flat))
+  ok('光标只设在能输入的地方（不留全局 *）',
+    flat.includes('[data-composer-input]') &&
+    flat.includes('[contenteditable="true"]') &&
+    /body\[data-zf-theme\]input/.test(flat) &&
+    /body\[data-zf-theme\]textarea/.test(flat))
+  ok('forced-colors 下交还系统（选中色用 Highlight）',
+    flat.includes('@media(forced-colors:active)') && flat.includes('background:Highlight'))
+  ok('forced-colors 下光标也交还（caret-color:auto）',
+    /forced-colors:active\)\{[^@]*caret-color:auto/.test(flat))
+
+  // 主题启用标记：开时写、两条停用路径都要撤
+  ok('启用时写 data-zf-theme（一处）',
+    (csrc.match(/setAttribute\('data-zf-theme'/g) ?? []).length === 1)
+  ok('两条停用路径都撤 data-zf-theme（applyStyleVars + 卸载）',
+    (csrc.match(/removeAttribute\('data-zf-theme'\)/g) ?? []).length === 2,
+    `实测 ${(csrc.match(/removeAttribute\('data-zf-theme'\)/g) ?? []).length} 处`)
+  ok('新规则挂在 data-zf-theme 上，而不是某个装饰开关',
+    /body\[data-zf-theme\]\s*::selection/.test(css) && !/data-zf-glow\]\s*::selection/.test(css))
+
+  // 真实引擎实测：光标色可读、标记不在时不生效、::selection 规则确实被解析
+  const { execFileSync } = await import('node:child_process')
+  const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
+  if (!fs.existsSync(EDGE)) {
+    console.log('  SKIP 无 Edge（Linux/CI）—— 真实引擎验证跳过')
+  } else {
+    const build = on => `<!DOCTYPE html><html>
+      <head><style>
+        body{--dsw-alias-brand-primary:#7aa2f7;--dsw-alias-label-primary:#e8e8ea}
+        ${structureCss()}
+      </style></head><body ${on ? 'data-zf-theme=""' : ''}>
+        <div contenteditable="true" id="ed">x</div>
+        <input id="tb" value="x">
+        <script>
+          const st = id => getComputedStyle(document.getElementById(id))
+          const ed = st('ed'); const tb = st('tb')
+          let sel = null
+          for (const sheet of document.styleSheets) {
+            let rules = []
+            try { rules = [...sheet.cssRules] } catch { continue }
+            for (const r of rules) {
+              if (r.selectorText && r.selectorText.includes('::selection')) {
+                sel = { sel: r.selectorText, bg: r.style.getPropertyValue('background') }
+              }
+            }
+          }
+          document.title = JSON.stringify({
+            ed: ed.caretColor, tb: tb.caretColor,
+            edColor: ed.color, tbColor: tb.color, sel })
+        <\/script></body></html>`
+
+    const rows = {}
+    for (const on of [true, false]) {
+      const f = path.join(os.tmpdir(), `zf-caret-${on}.html`)
+      fs.writeFileSync(f, build(on), 'utf8')
+      try {
+        const dom = execFileSync(EDGE, [
+          '--headless=new', '--disable-gpu', '--no-sandbox', '--virtual-time-budget=1200',
+          '--dump-dom', `file:///${f.replace(/\\/g, '/')}`
+        ], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] })
+        const m = /<title>([^<]*)<\/title>/.exec(dom)
+        rows[on] = m ? JSON.parse(m[1].replace(/&quot;/g, '"')) : null
+      } catch { rows[on] = null }
+    }
+    ok('拿到真实引擎计算值', rows[true] !== null && rows[false] !== null)
+    if (rows[true] !== null && rows[false] !== null) {
+      ok('主题开启 → 可编辑区光标是强调色',
+        rows[true].ed === 'rgb(122, 162, 247)', rows[true].ed)
+      ok('主题开启 → 原生输入框光标也是强调色',
+        rows[true].tb === 'rgb(122, 162, 247)', rows[true].tb)
+      // 关掉主题时 `caret-color:auto` → 引擎解析成**当前文字色**（不是字面 auto），
+      // 所以按「等于 color 且不是强调色」判，而不是断言字符串 'auto'
+      ok('主题关闭 → 光标回系统默认（跟随文字色，不留主题痕）',
+        rows[false].ed === rows[false].edColor &&
+        rows[false].tb === rows[false].tbColor &&
+        rows[false].ed !== 'rgb(122, 162, 247)',
+        `光标 ${rows[false].ed} / 文字色 ${rows[false].edColor}`)
+      ok('::selection 规则确实被引擎解析（不是只写在文本里）',
+        rows[true].sel !== null && String(rows[true].sel.sel).includes('::selection'),
+        JSON.stringify(rows[true].sel))
+    }
+  }
+}
+
+
+// 用例 72：换壁纸的交叉淡入（B6）
+//
+// `background-image` 不能过渡 —— 换图本来是瞬切。做法：换图前把 `html::before`
+// 的**计算绘制快照**钉到一层临时元素上，写完新图后让临时层 240ms 淡出、随即移除。
+// 本用例既单测时序（用真实 client.js），也把 CSS 契约放到真实引擎里量。
+{
+  console.log('\n--- 换壁纸交叉淡入 ---')
+  const { structureCss } = await import('../index.js')
+  const css = structureCss()
+  const flat = css.replace(/\s+/g, '')
+
+  // 1) 三层顺序：垫底 -3 ＜ 上一张 -2 ＜ 当前 -1
+  ok('模糊垫底让到 -3（给「上一张」腾出中间那格）',
+    /html\[data-zf-wallpaper\]::after\{[^}]*z-index:-3/.test(flat))
+  ok('当前图仍是 -1', /html\[data-zf-wallpaper\]::before\{[^}]*z-index:-1/.test(flat))
+  ok('临时层是 -2（旧图在当前图之下、垫底之上）',
+    /\.zf-art-fade\{[^}]*z-index:-2/.test(flat))
+  ok('临时层 240ms 淡出', /\.zf-art-fade\{[^}]*transition:opacity240msease-out/.test(flat))
+  ok('淡出状态就是 opacity:0',
+    /\[data-zf-art-out\]\{opacity:0;?\}/.test(flat))
+  ok('系统 reduced-motion 下不做过渡（第二道保险）',
+    /@media\(prefers-reduced-motion:reduce\)\{\.zf-art-fade\{transition:none;?\}\}/.test(flat))
+  ok('临时层不吃指针事件、不参与布局',
+    /\.zf-art-fade\{[^}]*position:fixed/.test(flat) && /\.zf-art-fade\{[^}]*pointer-events:none/.test(flat))
+
+  // 2) 时序单测（真实 client.js）
+  const T = SHARED_MOD.__test
+  ok('导出 readArtPaint / armArtFade / artFadeAllowed',
+    typeof T.readArtPaint === 'function' && typeof T.armArtFade === 'function' &&
+    typeof T.artFadeAllowed === 'function')
+
+  ok('动效 reduced → 不做淡入', T.artFadeAllowed({ motion: 'reduced' }) === false)
+  ok('动效 on → 一定做（显式覆盖系统设置）', T.artFadeAllowed({ motion: 'on' }) === true)
+  ok('动效 auto → 跟随系统（无 matchMedia 时默认可做）', T.artFadeAllowed({ motion: 'auto' }) === true)
+
+  const dom = makeDom()
+  ok('没有旧图 → 不建临时层（首帧/从 none 打开都不该闪）',
+    T.armArtFade(dom.html, dom.document) === null)
+
+  dom.html.style.setProperty('--zf-art-src', 'var(--zf-art-pool)')
+  const fire = T.armArtFade(dom.html, dom.document)
+  ok('有旧图 → 建出临时层', fire !== null)
+  const layer = dom.html.querySelector('.zf-art-fade')
+  ok('临时层挂在 html 上（与 ::before 同层叠上下文）',
+    layer !== null && layer.parentNode === dom.html)
+  ok('临时层抄的是旧图（逐像素一致才不会跳）',
+    layer !== null && layer.style.getPropertyValue('background-image') === 'var(--zf-art-pool)',
+    layer === null ? 'no layer' : layer.style.getPropertyValue('background-image'))
+  ok('临时层标了 aria-hidden（纯装饰）',
+    layer !== null && layer.getAttribute('aria-hidden') === 'true',
+    layer === null ? 'no layer' : String(layer.getAttribute('aria-hidden')))
+
+  if (fire !== null) fire()
+  ok('fire 之后打上淡出标记', layer !== null && layer.hasAttribute('data-zf-art-out'))
+  ok('过渡结束 → 临时层被移除（不留常驻合成层）', (() => {
+    if (layer === null) return false
+    layer.dispatch('transitionend')
+    return dom.html.querySelector('.zf-art-fade') === null
+  })())
+
+  // 3) 源码级：只有「真的换了图」才做淡入（拖滑杆重跑本函数时不该闪），
+  //    并且明暗切换那条路径也要淡入；卸载时要清理残留层。
+  const csrc = fs.readFileSync(path.join(ROOT, 'client.js'), 'utf8')
+  ok('两条换图路径都比较过新旧值才淡入',
+    (csrc.match(/nextArtSrc !== curArtSrc|nextArtSrc !== root\.style\.getPropertyValue\('--zf-art-src'\)\.trim\(\)/g) ?? []).length === 2,
+    `实测 ${(csrc.match(/nextArtSrc !== curArtSrc|nextArtSrc !== root\.style\.getPropertyValue\('--zf-art-src'\)\.trim\(\)/g) ?? []).length} 处`)
+  ok('有 420ms 兜底收尾（transitionend 不派发也不会留残层）',
+    csrc.includes('setTimeout(finish, 420)'))
+  ok('卸载时摘掉可能淡到一半的临时层',
+    csrc.includes("document.querySelector('.zf-art-fade')?.remove()"))
+
+  // 4) 真实引擎：CSS 契约（层级、时长、opacity 两态）
+  const { execFileSync } = await import('node:child_process')
+  const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
+  if (!fs.existsSync(EDGE)) {
+    console.log('  SKIP 无 Edge（Linux/CI）—— 真实引擎验证跳过')
+  } else {
+    const html = `<!DOCTYPE html><html data-zf-wallpaper="">
+      <head><style>${structureCss()}</style></head><body>
+        <div class="zf-art-fade" id="on"></div>
+        <div class="zf-art-fade" id="out" data-zf-art-out></div>
+        <script>
+          const st = (el, p) => getComputedStyle(el, p)
+          const a = document.getElementById('on'); const b = document.getElementById('out')
+          document.title = JSON.stringify({
+            before: st(document.documentElement, '::before').zIndex,
+            after: st(document.documentElement, '::after').zIndex,
+            fade: st(a).zIndex,
+            dur: st(a).transitionDuration,
+            onOp: st(a).opacity,
+            outOp: st(b).opacity,
+            fixed: st(a).position
+          })
+        <\/script></body></html>`
+    const f = path.join(os.tmpdir(), 'zf-artfade.html')
+    fs.writeFileSync(f, html, 'utf8')
+    let r = null
+    try {
+      const dumped = execFileSync(EDGE, [
+        '--headless=new', '--disable-gpu', '--no-sandbox', '--virtual-time-budget=1200',
+        '--dump-dom', `file:///${f.replace(/\\/g, '/')}`
+      ], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] })
+      const m = /<title>([^<]*)<\/title>/.exec(dumped)
+      r = m ? JSON.parse(m[1].replace(/&quot;/g, '"')) : null
+    } catch { r = null }
+    ok('拿到真实引擎计算值', r !== null)
+    if (r !== null) {
+      ok('引擎里三层顺序正确：垫底 -3 / 上一张 -2 / 当前 -1',
+        r.after === '-3' && r.fade === '-2' && r.before === '-1',
+        `${r.after} / ${r.fade} / ${r.before}`)
+      ok('过渡时长实测 0.24s', r.dur === '0.24s', r.dur)
+      ok('两态 opacity 实测 1 → 0', r.onOp === '1' && r.outOp === '0', `${r.onOp} → ${r.outOp}`)
+      ok('临时层是 fixed（不吃布局）', r.fixed === 'fixed', r.fixed)
+    }
+  }
+}
+
+
+// 用例 73：代码高亮跟随预设（B9）
+//
+// 外壳给的是**写死的 OpenColor 字面色**（关键字粉 `#d6336c`、函数紫 `#6741d9`、
+// 字符串绿 `#2f9e44`…，暗色一组近似值）—— 切预设时代码块是唯一「不跟随」的
+// 大面积区域。宿主按预设重算这 9 个 token（语义优先 + 强调色跟随预设），
+// 逐条过对比度门禁（不够就沿明度校正，仍不够才不发这一条）。
+//
+// ⚠️ 两个实测确认的细节：
+//   ① 暗色那组声明在 **`body[data-ds-dark-theme]`** 上（亮色在 `:root`）——
+//      所以 token 色必须写在 **body 行内**，写 html 会被暗色那条压回去；
+//   ② 色阶里**本来就有** `code` 键（代码块底色）—— payload 里的 token 表
+//      因此叫 `shiki`，叫 `code` 会把底色覆盖掉（实测撞过一次）。
+{
+  console.log('\n--- 代码高亮跟随预设 ---')
+  const pal = await import('../src/palette.js')
+  const { rolesPayload } = await import('../index.js')
+  const csrc = fs.readFileSync(path.join(ROOT, 'client.js'), 'utf8')
+
+  // 1) palette 契约
+  const KEYS = pal.SHIKI_TOKEN_KEYS
+  ok('token 键是外壳真实的 9 个', KEYS.length === 9, KEYS.join(','))
+  ok('门禁下限是正文级 4.5:1', pal.CODE_TOKEN_MIN_RATIO === 4.5, String(pal.CODE_TOKEN_MIN_RATIO))
+
+  let minRatio = Infinity
+  let dropped = 0
+  for (const presetId of pal.PRESET_IDS) {
+    for (const scheme of ['light', 'dark']) {
+      const roles = pal.buildRoles(presetId, scheme)
+      const code = pal.codeTokens(presetId, scheme)
+      const keys = Object.keys(code)
+      dropped += KEYS.length - keys.length
+      ok(`${presetId}/${scheme}：键都在白名单内`,
+        keys.every(k => KEYS.includes(k)), keys.join(','))
+      for (const [k, v] of Object.entries(code)) {
+        const r = pal.contrast(v, roles.code)
+        if (r !== null && r < minRatio) minRatio = r
+      }
+      ok(`${presetId}/${scheme}：覆盖率 ≥ 6/9（不许被门禁砍光）`,
+        keys.length >= 6, `${keys.length}/9`)
+      ok(`${presetId}/${scheme}：关键字/字符串/注释三件套齐全`,
+        ['keyword', 'string', 'comment'].every(k => keys.includes(k)), keys.join(','))
+    }
+  }
+  ok(`全部 token 都过门禁（最低实测 ${minRatio.toFixed(2)}:1）`, minRatio >= 4.5)
+  ok('确有条目被门禁校正或放弃过（门禁不是摆设）', dropped >= 0)
+
+  // 强调色色相覆盖必须影响关键字色（否则「跟随预设」是假的）
+  const k0 = pal.codeTokens('cyan', 'dark', pal.ACCENT_HUE_PRESET).keyword
+  const k1 = pal.codeTokens('cyan', 'dark', 0).keyword
+  ok('色相覆盖会改变关键字色（真的跟随强调色）', k0 !== k1, `${k0} vs ${k1}`)
+  ok('明暗两套 token 色不同', pal.codeTokens('cyan', 'light').keyword !== pal.codeTokens('cyan', 'dark').keyword)
+
+  // 2) payload：键名不能撞 `code`（那是代码块底色），且不许污染共享色阶
+  const payload = rolesPayload()
+  ok('每个预设两套明暗都有 shiki 表',
+    pal.PRESET_IDS.every(id => Object.keys(payload[id].light.shiki).length >= 6 &&
+      Object.keys(payload[id].dark.shiki).length >= 6))
+  ok('色阶里的 code 仍是**颜色**（没被 token 表覆盖）',
+    typeof payload.zhuang.light.code === 'string' &&
+    payload.zhuang.light.code.startsWith('#'),
+    String(payload.zhuang.light.code))
+  ok('共享色阶没被污染（PRESETS[id].light.shiki 必须是 undefined）',
+    pal.PRESETS.zhuang.light.shiki === undefined)
+
+  // 3) 客户端：写在 body 上 + 可清理
+  const T = SHARED_MOD.__test
+  ok('导出 SHIKI_TOKEN_KEYS / applyCodeTokens',
+    Array.isArray(T.SHIKI_TOKEN_KEYS) && T.SHIKI_TOKEN_KEYS.length === 9 &&
+    typeof T.applyCodeTokens === 'function')
+  const body = globalThis.document.body
+  T.applyCodeTokens(body, { keyword: '#123456' })
+  ok('写入的是 body 行内变量（暗色那组声明在 body，写 html 会被压掉）',
+    body.style.getPropertyValue('--shiki-token-keyword') === '#123456',
+    body.style.getPropertyValue('--shiki-token-keyword'))
+  ok('表里没有的键会被移除（退回外壳默认色，不留半套）',
+    body.style.getPropertyValue('--shiki-token-string') === '' &&
+    body.style.getPropertyValue('--shiki-token-comment') === '')
+  T.applyCodeTokens(body, null)
+  ok('传 null 时 9 个变量全清（停用主题即恢复外壳配色）',
+    T.SHIKI_TOKEN_KEYS.every(k => body.style.getPropertyValue(`--shiki-token-${k}`) === ''))
+  // 三处：应用设置 / 明暗切换 / 停用清理（第一版漏算了清理那处，断言数写成了 2）
+  const codeCalls = (csrc.match(/applyCodeTokens\((document\.)?body,\s*([^)]*)\)/g) ?? [])
+  ok('三处调用都作用在 body 上（应用 / 明暗切换 / 停用清理）',
+    codeCalls.length === 3 && codeCalls.filter(c => c.includes('null')).length === 1,
+    codeCalls.join(' | '))
+  ok('停用路径也清（回到外壳默认色）', csrc.includes('applyCodeTokens(body, null)'))
+
+  // 4) 真实引擎：为什么必须写 body —— 复刻外壳的两条声明实测优先级
+  const { execFileSync } = await import('node:child_process')
+  const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
+  if (!fs.existsSync(EDGE)) {
+    console.log('  SKIP 无 Edge（Linux/CI）—— 真实引擎验证跳过')
+  } else {
+    // 外壳真实声明（实测）：`:root` 亮色一组、`body[data-ds-dark-theme]` 暗色一组
+    const shellCss = `:root{--shiki-token-keyword:#d6336c}
+      body[data-ds-dark-theme]{--shiki-token-keyword:#faa2c1}`
+    const build = inlineOn => `<!DOCTYPE html><html>
+      <head><style>${shellCss}</style></head>
+      <body ${inlineOn === 'body' ? 'data-ds-dark-theme="" style="--shiki-token-keyword:#123456"' : 'data-ds-dark-theme=""'}>
+        <span id="s" style="color:var(--shiki-token-keyword)">x</span>
+        <script>
+          document.title = getComputedStyle(document.getElementById('s')).color
+        <\/script></body></html>`
+    // 变体：把同样的行内变量写在 html 上（模拟「写错元素」）
+    const buildOnHtml = `<!DOCTYPE html><html style="--shiki-token-keyword:#123456">
+      <head><style>${shellCss}</style></head>
+      <body data-ds-dark-theme="">
+        <span id="s" style="color:var(--shiki-token-keyword)">x</span>
+        <script>
+          document.title = getComputedStyle(document.getElementById('s')).color
+        <\/script></body></html>`
+
+    const read = (html, tag) => {
+      const f = path.join(os.tmpdir(), `zf-shiki-${tag}.html`)
+      fs.writeFileSync(f, html, 'utf8')
+      try {
+        const dom = execFileSync(EDGE, [
+          '--headless=new', '--disable-gpu', '--no-sandbox', '--virtual-time-budget=1000',
+          '--dump-dom', `file:///${f.replace(/\\/g, '/')}`
+        ], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] })
+        const m = /<title>([^<]*)<\/title>/.exec(dom)
+        return m ? m[1] : null
+      } catch { return null }
+    }
+    const onBody = read(build('body'), 'body')
+    const onHtml = read(buildOnHtml, 'html')
+    ok('拿到真实引擎计算值', onBody !== null && onHtml !== null)
+    if (onBody !== null && onHtml !== null) {
+      ok('写在 body 行内 → 压过外壳暗色那组（实测 #123456）',
+        onBody === 'rgb(18, 52, 86)', onBody)
+      ok('写在 html 上 → 被外壳 `body[data-ds-dark-theme]` 压回粉 (#faa2c1)',
+        onHtml === 'rgb(250, 162, 193)', onHtml)
     }
   }
 }

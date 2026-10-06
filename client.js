@@ -296,6 +296,138 @@ window.__ModuleLoader__.load({
      *   竖图判据。**必须由调用方传入**：本函数在模块作用域，看不到 `apply()`
      *   里的 `state`（实测踩过：直接用 `state.wallpaperMeta` 会 ReferenceError）。
      */
+    /* ------------------------------------------------------------------ *
+     * 换壁纸的交叉淡入（B6）
+     *
+     * `background-image` 不能过渡，所以只能「钉住旧图、淡出新图之上」：
+     *   ① 换图**之前**把 `html::before` 的**计算绘制快照**抄到临时元素上
+     *      （图 / size / position / repeat / filter / transform）—— 它此刻与
+     *      旧图逐像素一致，所以不存在「跳一下」；
+     *   ② 写新的 `--zf-art-src`（当前层立刻变新图，压在临时层之上）；
+     *   ③ 下一帧给临时层打 `data-zf-art-out` → 240ms 淡出 → **移除元素**。
+     *
+     * 为什么抄**计算值**而不是重算：换图常常同时换 fit（cover ⇄ contain，
+     * 竖图/横图切换），重算容易与刚才那一帧不一致；抄计算值等于「所见即所抄」。
+     *
+     * 任何一步做不到（老引擎、测试桩没有伪元素计算值 / 没有 createElement）
+     * → 返回 null，调用方直接切图，**退化成今天的行为**，不报错。
+     */
+    function readArtPaint (root) {
+      if (typeof getComputedStyle !== 'function') return null
+      let cs = null
+      try { cs = getComputedStyle(root, '::before') } catch { return null }
+      if (cs === null || cs === undefined) return null
+      const image = String(cs.backgroundImage ?? '')
+      if (image === '' || image === 'none') return null
+      return {
+        image,
+        // 桩环境（无头测试）只给 backgroundImage，其余字段缺失 —— 一律回落空串，
+        // 不要写 `undefined` 进去
+        size: String(cs.backgroundSize ?? ''),
+        position: String(cs.backgroundPosition ?? ''),
+        repeat: String(cs.backgroundRepeat ?? ''),
+        filter: String(cs.filter ?? ''),
+        transform: String(cs.transform ?? '')
+      }
+    }
+
+    /**
+     * 动效是否允许交叉淡入。
+     *   `reduced`（静止模式）→ 不做；`on` → 一定做；
+     *   `auto`/未设置 → 跟随系统 `prefers-reduced-motion`。
+     */
+    function artFadeAllowed (settings) {
+      const mode = settings?.motion
+      if (mode === 'reduced') return false
+      if (mode === 'on') return true
+      try {
+        return typeof matchMedia === 'function'
+          ? matchMedia('(prefers-reduced-motion: reduce)').matches !== true
+          : true
+      } catch { return true }
+    }
+
+    /**
+     * 换图前调用：把旧图钉到临时层，返回「写完新图之后调用」的触发器。
+     * 不需要 / 做不到 → `null`（调用方什么都不用做）。
+     */
+    function armArtFade (root, doc) {
+      const paint = readArtPaint(root)
+      if (paint === null || doc === null || typeof doc.createElement !== 'function') return null
+      let el = null
+      try { el = doc.createElement('div') } catch { return null }
+      if (el === null || el.style === undefined) return null
+      el.className = 'zf-art-fade'
+      el.setAttribute('aria-hidden', 'true')
+      // 用 `style.setProperty`（而不是 `style.backgroundImage = …`）：
+      // 与代码库其它地方一致，也让无头测试的样式桩读得到（它有 props Map）。
+      el.style.setProperty('background-image', paint.image)
+      el.style.setProperty('background-size', paint.size)
+      el.style.setProperty('background-position', paint.position)
+      el.style.setProperty('background-repeat', paint.repeat)
+      el.style.setProperty('filter', paint.filter)
+      el.style.setProperty('transform', paint.transform)
+      // 挂在 `<html>` 上：与 `::before`/`::after` 同处根层叠上下文，
+      // 负 z-index 才会落在 body 内容之下（挂 body 里可能被 body 的
+      // 层叠上下文困住，反而盖到当前图之上）。
+      if (typeof root.append === 'function') root.append(el)
+      else if (typeof root.appendChild === 'function') root.appendChild(el)
+      else return null
+
+      return function fire () {
+        const raf = typeof requestAnimationFrame === 'function'
+          ? requestAnimationFrame
+          : fn => setTimeout(fn, 16)
+        raf(() => {
+          el.setAttribute('data-zf-art-out', '')
+          let done = false
+          const finish = () => {
+            if (done) return
+            done = true
+            try { el.remove() } catch { /* 已不在文档里 */ }
+          }
+          if (typeof el.addEventListener === 'function') {
+            el.addEventListener('transitionend', finish, { once: true })
+          }
+          // 兜底：过渡被打断（元素被隐藏 / 标签页后台 / 引擎不派发事件）也要收尾，
+          // 否则会留一层「永远淡不完」的旧图在壁纸上。
+          setTimeout(finish, 420)
+        })
+      }
+    }
+
+    /* ------------------------------------------------------------------ *
+     * 代码高亮的 token 色（B9）
+     *
+     * 外壳给的是**写死的 OpenColor 字面色**（关键字粉、函数紫、字符串绿），
+     * 与四套预设无关 —— 切预设时代码块是唯一「不跟随」的大面积区域。
+     * 宿主按预设算好一组 token 色（已过对比度门禁），随 `/themes` 一起下发，
+     * 这里写成**行内自定义属性**。
+     *
+     * ⚠️ 必须写在 **body** 上，不能写 html：外壳的暗色那一组声明在
+     *   `body[data-ds-dark-theme]{--shiki-token-…}` 上（亮色在 `:root`）——
+     * 自定义属性按**最近祖先**解析，挂 html 的话暗色下会被 body 那条压回去。
+     * 行内样式优先级高于普通样式表规则，所以 body 行内能同时压过两条。
+     *
+     * 宿主没给（门禁把它砍了 / 老版本宿主）→ 移除该变量，**保留外壳默认色**。
+     */
+    const SHIKI_TOKEN_KEYS = [
+      'comment', 'constant', 'function', 'keyword', 'link',
+      'parameter', 'punctuation', 'string', 'string-expression'
+    ]
+
+    function applyCodeTokens (target, table) {
+      if (target === null || target === undefined) return
+      const t = target.style
+      if (t === undefined) return
+      for (const key of SHIKI_TOKEN_KEYS) {
+        const name = `--shiki-token-${key}`
+        const value = table?.[key]
+        if (typeof value === 'string' && value !== '') t.setProperty(name, value)
+        else t.removeProperty(name)
+      }
+    }
+
     function applyStyleVars (settings, roles, theme, meta) {
       const root = document.documentElement
       const body = document.body
@@ -308,12 +440,35 @@ window.__ModuleLoader__.load({
         body.removeAttribute('data-zf-contour')
         body.removeAttribute('data-zf-motion')
         body.removeAttribute('data-zf-depth')
+        body.removeAttribute('data-zf-theme')
         root.removeAttribute('data-zf-font')
         root.removeAttribute('data-zf-font-scale')
+        // 代码高亮 token 色也撤掉 → 回到外壳那套默认色
+        applyCodeTokens(body, null)
         return
       }
 
+      // 主题启用标记：**与各个装饰开关无关**（glow / contour / 壁纸都可能关掉，
+      // 但主题本身还开着）。选中色、输入光标这类「一直在身上」的细节挂它 ——
+      // 挂在某个装饰属性上会变成「关了微光，选中色也跟着回默认」。
+      body.setAttribute('data-zf-theme', '')
+
+      // B9：代码高亮 token 色（随预设 + 明暗；与壁纸无关，所以放在壁纸分支之外）
+      applyCodeTokens(body, roles?.[settings.preset]?.[currentScheme(theme)]?.shiki)
+
       const hasWallpaper = settings.background !== 'none'
+
+      // ── B6：换图前的准备（必须在写 `--zf-art-src` **之前**）────────────
+      // 新值先算出来只为**比较**：只有真的换了图才做交叉淡入 —— 拖动
+      // 不透明度/模糊/位置滑杆会反复重跑本函数，那时绝不该闪一下。
+      const nextArtSrc = hasWallpaper
+        ? `var(--zf-art-${settings.background}${currentScheme(theme) === 'dark' ? '-dark' : ''})`
+        : 'none'
+      const curArtSrc = root.style.getPropertyValue('--zf-art-src').trim()
+      const fireArtFade = nextArtSrc !== curArtSrc && artFadeAllowed(settings)
+        ? armArtFade(root, document)
+        : null
+
       if (hasWallpaper) {
         // ⚠️ 上限**必须**与 `src/settings.js` 的 `BG_OPACITY_MAX` 一致。
         // client.js 是手写 bundle（走 DSH 的模块加载器），**不能 import** 那个
@@ -343,7 +498,7 @@ window.__ModuleLoader__.load({
         const tiled = pos === 'tile'
         const effectiveFit = tiled ? 'auto' : fit
 
-        root.style.setProperty('--zf-art-src', `var(--zf-art-${artId})`)
+        root.style.setProperty('--zf-art-src', nextArtSrc)
         root.style.setProperty('--zf-blur', `${blur}px`)
         // 模糊会把四边糊出去，轻微放大补上；不模糊时不放大，避免无谓重采样
         root.style.setProperty('--zf-art-scale', blur > 0 ? '1.04' : '1')
@@ -362,10 +517,16 @@ window.__ModuleLoader__.load({
         root.setAttribute('data-zf-wallpaper', '')
         body.setAttribute('data-zf-wallpaper', '')
       } else {
+        // 关掉壁纸：写 `none` 而不是移除属性 —— 旧图由临时层淡出，
+        // 而「下一次再打开」因为值变了，才会正确地触发一次交叉淡入。
+        root.style.setProperty('--zf-art-src', 'none')
         root.removeAttribute('data-zf-wallpaper')
         root.removeAttribute('data-zf-art-fit')
         body.removeAttribute('data-zf-wallpaper')
       }
+
+      // 新图已经写在当前层上 → 让临时层淡出（B6）
+      if (fireArtFade !== null) fireArtFade()
 
       // 动效模式：三态。
       //   on      → 打 "on"：CSS 里显式覆盖 prefers-reduced-motion，强制播放
@@ -420,12 +581,21 @@ window.__ModuleLoader__.load({
     function syncSchemeWallpaper (settings, roles, theme, meta) {
       if (settings?.enabled !== true) return
       const scheme = currentScheme(theme)
+      // B9：明暗切换时代码高亮也要跟着切（与壁纸无关）
+      applyCodeTokens(document.body, roles?.[settings.preset]?.[scheme]?.shiki)
       if (settings.background !== 'none') {
         const artId = `${settings.background}${scheme === 'dark' ? '-dark' : ''}`
         const artFile = `wallpaper-${artId}.webp`
         const fit = meta?.[artFile]?.fit === 'contain' ? 'contain' : 'cover'
         const tiled = settings.backgroundPosition === 'tile'
-        document.documentElement.style.setProperty('--zf-art-src', `var(--zf-art-${artId})`)
+        const root = document.documentElement
+        // B6：明暗切换也是**换图**（暗版是另一张实拍图），同样交叉淡入
+        const nextArtSrc = `var(--zf-art-${artId})`
+        const fireArtFade = nextArtSrc !== root.style.getPropertyValue('--zf-art-src').trim() &&
+          artFadeAllowed(settings)
+          ? armArtFade(root, document)
+          : null
+        root.style.setProperty('--zf-art-src', nextArtSrc)
         // 明暗切换时前景与垫底一起切（暗版是另一张图，不能沿用亮版 url）
         document.documentElement.style.setProperty('--zf-art-backdrop',
           !tiled && fit === 'contain' ? `var(--zf-art-${artId})` : 'none')
@@ -433,6 +603,7 @@ window.__ModuleLoader__.load({
           scheme === 'dark' ? '0.5' : '0.72')
         document.documentElement.setAttribute('data-zf-art-fit',
           !tiled && fit === 'contain' ? 'contain' : 'cover')
+        if (fireArtFade !== null) fireArtFade()
       }
       const preset = roles?.[settings.preset]?.[scheme]
       if (preset !== undefined && settings.background !== 'none') {
@@ -1136,6 +1307,7 @@ window.__ModuleLoader__.load({
           body.removeAttribute('data-zf-wallpaper')
           body.removeAttribute('data-zf-glow')
           body.removeAttribute('data-zf-contour')
+          body.removeAttribute('data-zf-theme')
         }
         root?.removeAttribute('data-zf-wallpaper')
         // 若当前 preference 指向本插件的固定主题，落回 system。
@@ -2737,6 +2909,11 @@ window.__ModuleLoader__.load({
           } catch { /* 已移除 */ }
           state.styleEl = null
         }
+        // 换图交叉淡入的临时层也要摘掉：正常情况下它淡完会自己移除，
+        // 但停用时可能正淡到一半 —— 留着就是一层永远淡不完的旧图。
+        try {
+          document.querySelector('.zf-art-fade')?.remove()
+        } catch { /* 已移除 */ }
         for (const key of [
           'heroDispose', 'brandMarkDispose', 'brandNameDispose',
           // 官方 tab 的两个 disposer 也必须释放，否则重新启用插件时
@@ -2769,6 +2946,10 @@ window.__ModuleLoader__.load({
         railOwner, resyncSettings, maybeOpenRailTab, resetToDefaults, reloadThemes, save,
         formatElapsed, trackSessionSince, bootScreenGone, presetDepth, isRecommendedArt,
         fontAttrsFor, FONT_FAMILIES, FONT_SCALES, isDarkActive,
+        // 换壁纸的交叉淡入（用例 72）：拆开导出，好把时序单测起来
+        readArtPaint, armArtFade, artFadeAllowed,
+        // 代码高亮的 token 色（用例 73）
+        SHIKI_TOKEN_KEYS, applyCodeTokens,
         // 让测试能模拟「宿主设置被外部改动」：stub fetch 下一次 /settings 的返回
         setNextSettings (next) {
           globalThis.__zfNextSettings = next

@@ -1002,3 +1002,83 @@ export function themeDefinitions (accentHue = ACCENT_HUE_PRESET) {
   }
   return out
 }
+
+/**
+ * 代码高亮的 token 键（对外壳真实变量名 `--shiki-token-<key>`）。
+ *
+ * **这是一份实测记录，不是猜的**：外壳的 `:root` 声明了这 9 个
+ * （另有 `--shiki-background` / `--shiki-foreground`，那两个我们已在
+ * `structureCss` 里重声明）。写错键名不会报错，只会静默失效 ——
+ * 所以 `contrast.js` 会拿这份清单逐条校验。
+ */
+export const SHIKI_TOKEN_KEYS = [
+  'comment', 'constant', 'function', 'keyword', 'link',
+  'parameter', 'punctuation', 'string', 'string-expression'
+]
+
+/** 代码 token 的对比度下限（正文级；代码字号小，不给折扣）。 */
+export const CODE_TOKEN_MIN_RATIO = 4.5
+
+/**
+ * 代码高亮的 token 色 —— 让语法高亮跟随预设。
+ *
+ * ── 为什么需要 ──────────────────────────────────────────────────────
+ * 外壳给的是**写死的 OpenColor 字面色**（关键字粉 `#d6336c`、函数紫
+ * `#6741d9`、字符串绿 `#2f9e44`…，暗色一套近似值），与四套预设毫无关系 ——
+ * 切预设时代码块是唯一「不跟随」的大面积区域。
+ *
+ * ── 映射原则：语义优先，只有强调色家族跟随预设 ──────────────────────
+ * 语法高亮有约定俗成的语义，全染成主题色就没有层次了。所以：
+ *   · **保留语义**：字符串 = 成功绿、常量 = 警告琥珀、注释 = 弱化文字 ——
+ *     这三条与 `STATE_HUE` 同源，本来就已经随预设的**明度骨架/色度**走；
+ *   · **跟随预设**：关键字 = 预设强调色；函数 = 强调色提亮/压深一档
+ *     （同族但可区分）；链接 = `link`；
+ *   · 标点/参数用次级文字色，避免满屏彩色。
+ *
+ * ── 门禁（宁可少染，也不给不可读的代码）────────────────────────────
+ * 每个 token 都要在**代码块底色**（`r.code`）上达到
+ * `CODE_TOKEN_MIN_RATIO`；达不到就**不发这一条**，客户端不写该变量 →
+ * 保留外壳默认色。`contrast.js` 有成对断言 + 「不许全被门禁砍光」的下限断言。
+ */
+export function codeTokens (presetId, scheme, accentHue = ACCENT_HUE_PRESET) {
+  const r = buildRoles(presetId, scheme, accentHue)
+  const dark = scheme === 'dark'
+  const want = {
+    keyword: r.brand,
+    function: adjust(r.brand, { l: dark ? 0.10 : -0.10 }),
+    string: r.stateSuccess,
+    constant: r.stateWarn,
+    comment: r.textFaint,
+    parameter: r.textMuted,
+    punctuation: r.textMuted,
+    link: r.link,
+    'string-expression': r.stateSuccess2 ?? r.stateSuccess
+  }
+  const out = {}
+  for (const key of SHIKI_TOKEN_KEYS) {
+    const picked = pickReadable(want[key], r.code, dark)
+    if (picked !== null) out[key] = picked
+  }
+  return out
+}
+
+/**
+ * 在代码块底色上挑一个「够读」的版本。
+ *
+ * 先试原色；不够就沿明度方向校正（**浅色压深、深色提亮**）最多两档；
+ * 两档都不够 → 返回 `null`（该 token 不染，保留外壳默认色）。
+ *
+ * 为什么是「校正」而不是「砍掉」：实测浅色下琥珀常量色是 3.7:1、酒红预设的
+ * 绿字符串刚好 4.4:1 —— 都只差一点。直接放弃会让代码块里**留下一个 OpenColor
+ * 蓝**（外壳默认）与周围主题色打架；压深一档既过门禁又保住语义（`adjust`
+ * 只动明度，「琥珀还是琥珀、绿还是绿」）。
+ */
+function pickReadable (base, surface, dark) {
+  if (typeof base !== 'string') return null
+  for (const step of [0, 0.06, 0.12, 0.18]) {
+    const candidate = step === 0 ? base : adjust(base, { l: dark ? step : -step })
+    const ratio = contrast(candidate, surface)
+    if (ratio !== null && ratio >= CODE_TOKEN_MIN_RATIO) return candidate
+  }
+  return null
+}
