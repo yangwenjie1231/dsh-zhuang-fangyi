@@ -445,7 +445,7 @@ export function structureCss () {
     '  transform:scale(1.15);',
     '}',
     'html[data-zf-wallpaper]::before{',
-    '  content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;',
+    '  content:"";position:fixed;inset:0;z-index:-2;pointer-events:none;',
     '  background-image:var(--zf-art-src);',
     '  background-size:var(--zf-art-size);',
     '  background-position:var(--zf-art-position);',
@@ -465,18 +465,29 @@ export function structureCss () {
      *   ① 换图**之前**，客户端把 `html::before` 的**计算绘制快照**（图/size/
      *      position/repeat/filter/transform）抄到一层临时元素上，它此刻与旧图
      *      逐像素一致；
-     *   ② 写新的 `--zf-art-src`（当前层立刻变新图，在临时层之上）；
+     *   ② 写新的 `--zf-art-src`（当前层立刻变新图）；
      *   ③ 下一帧给临时层打 `data-zf-art-out` → 240ms 淡出 → **移除元素**。
      *
-     * 三层都在根层叠上下文、都在 body 内容之下：
-     *   html::after（模糊垫底）-3  ·  .zf-art-fade（上一张）-2  ·  html::before（当前）-1
+     * ⚠️ **临时层必须画在当前图之上**，否则整件事看不见（第一版就是错的）：
+     * 新图是不透明照片 —— 临时层若在它下面，旧图淡出时上面盖着新图，什么都看不到。
+     *
+     * 所以这里是**显式 z-index 链**，不依赖「同层叠级靠树序」这种微妙规则：
+     *
+     *   模糊垫底 `-3`  ·  当前图 `-2`（`::before`）  ·  上一张 `-1`（临时层）
+     *
+     * 三个都在根层叠上下文、都在 body 内容之下（负 z-index 一律在内容之下），
+     * 数值谁大谁在上面 —— 一眼可验，不靠推理。
+     *
+     * （本来还想用截图取色做像素级断言，但这台机器上 `--headless` 的
+     * `--screenshot` 只出黑帧 —— 新旧 headless、五种参数组合都试过。
+     * 于是改成把顺序写死在数值里 + 断言这条链。）
      *
      * 元素是**临时**的：淡完即移除 —— 不留「常驻空元素 + 永久合成层」。
      * 动效模式 `reduced` / 系统 `prefers-reduced-motion` → 客户端直接切图、
      * 连层都不建；下面那条媒体查询是第二道保险（万一别处漏判）。
      */
     '.zf-art-fade{',
-    '  position:fixed;inset:0;z-index:-2;pointer-events:none;',
+    '  position:fixed;inset:0;z-index:-1;pointer-events:none;',
     '  opacity:1;transition:opacity 240ms ease-out;',
     '}',
     '.zf-art-fade[data-zf-art-out]{ opacity:0; }',

@@ -377,14 +377,16 @@ window.__ModuleLoader__.load({
       el.style.setProperty('background-repeat', paint.repeat)
       el.style.setProperty('filter', paint.filter)
       el.style.setProperty('transform', paint.transform)
-      // 挂在 `<html>` 上：与 `::before`/`::after` 同处根层叠上下文，
-      // 负 z-index 才会落在 body 内容之下（挂 body 里可能被 body 的
-      // 层叠上下文困住，反而盖到当前图之上）。
+      // 挂在 `<html>` 上：与 `::before`/`::after` 同处**根层叠上下文**，
+      // 负 z-index 才落在 body 内容之下（挂 body 里可能被 body 的层叠上下文
+      // 困住）。层序由 CSS 里**显式的 z-index 链**决定：
+      // 模糊垫底 -3 → 当前图 -2（`::before`）→ 本层 -1（上一张，淡出用）。
       if (typeof root.append === 'function') root.append(el)
       else if (typeof root.appendChild === 'function') root.appendChild(el)
       else return null
 
       return function fire () {
+        artStats.fades += 1
         const raf = typeof requestAnimationFrame === 'function'
           ? requestAnimationFrame
           : fn => setTimeout(fn, 16)
@@ -475,6 +477,17 @@ window.__ModuleLoader__.load({
         else t.removeProperty(name)
       }
     }
+
+    /**
+     * 交叉淡入的计数（诊断用）。
+     *
+     * ⚠️ 必须是**模块级**的：`armArtFade` 与它的 `fire()` 都在模块作用域，
+     * 读不到 `apply()` 里的 `state` —— 写成 `state.artFades += 1` 会直接
+     * `ReferenceError: state is not defined`（实测踩过，而且这是仓库里第三次
+     * 踩同一个坑：模块作用域的函数碰 apply 内的状态）。
+     * `/diag` 从它取值，用来区分「压根没建层」与「建了看不见」。
+     */
+    const artStats = { fades: 0 }
 
     /**
      * 壁纸的 `background-position`（B8：逐图取景）。
@@ -1523,6 +1536,8 @@ window.__ModuleLoader__.load({
             // ── 渲染诊断：直接回答「组件跑了几次、为什么返回 null」──
             // 每次 `Rail()` 被调用都计数并记录返回类型，避免再靠推理猜时序。
             render: { ...state.renderCounts },
+            // 换壁纸交叉淡入触发次数（诊断「看不出淡入」：0 = 压根没建层）
+            artFades: artStats.fades,
             // 官方右栏 tab 的注册结果（主路径是否走通）
             officialTab: {
               ...state.tabDiag,
@@ -3055,6 +3070,8 @@ window.__ModuleLoader__.load({
         CONTENT_WIDTHS, CONTENT_WIDTH_MODES, applyContentWidth,
         // 逐图取景（用例 75）
         artPosition,
+        // 交叉淡入计数（诊断）
+        artStats,
         // 让测试能模拟「宿主设置被外部改动」：stub fetch 下一次 /settings 的返回
         setNextSettings (next) {
           globalThis.__zfNextSettings = next

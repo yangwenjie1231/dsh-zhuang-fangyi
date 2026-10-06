@@ -605,6 +605,70 @@ function loadClientBundle () {
 }
 
 /* ------------------------------------------------------------------ *
+ * 截图取色（像素级断言用）
+ *
+ * 为什么需要：层叠顺序这类问题**光看 CSS 文本证明不了** —— 第一版交叉淡入把
+ * 临时层放在当前图下面（z-index 差一级），结构断言全绿、肉眼却什么都看不到。
+ * 唯一可靠的判据是**实际画出来的像素**。
+ *
+ * 只支持 Edge 截图的那一种规格：8 位、非隔行、RGB/RGBA。
+ * ------------------------------------------------------------------ */
+
+async function pngPixel (file, x, y) {
+  const zlib = (await import('node:zlib')).default
+  const buf = fs.readFileSync(file)
+  if (buf.readUInt32BE(0) !== 0x89504e47) throw new Error('不是 PNG')
+  let off = 8
+  let width = 0; let height = 0; let depth = 0; let colorType = 0; let interlace = 0
+  const idat = []
+  while (off + 8 <= buf.length) {
+    const len = buf.readUInt32BE(off)
+    const type = buf.toString('ascii', off + 4, off + 8)
+    const data = buf.slice(off + 8, off + 8 + len)
+    if (type === 'IHDR') {
+      width = data.readUInt32BE(0); height = data.readUInt32BE(4)
+      depth = data[8]; colorType = data[9]; interlace = data[12]
+    } else if (type === 'IDAT') {
+      idat.push(data)
+    } else if (type === 'IEND') {
+      break
+    }
+    off += 12 + len
+  }
+  if (depth !== 8 || interlace !== 0 || (colorType !== 2 && colorType !== 6)) {
+    throw new Error(`不支持的 PNG 规格 depth=${depth} colorType=${colorType} interlace=${interlace}`)
+  }
+  const bpp = colorType === 6 ? 4 : 3
+  const raw = zlib.inflateSync(Buffer.concat(idat))
+  const stride = width * bpp
+  const out = Buffer.alloc(height * stride)
+  let pos = 0
+  for (let row = 0; row < height; row += 1) {
+    const filter = raw[pos]; pos += 1
+    const line = raw.slice(pos, pos + stride); pos += stride
+    const prev = row === 0 ? Buffer.alloc(stride) : out.slice((row - 1) * stride, row * stride)
+    const cur = out.slice(row * stride, (row + 1) * stride)
+    for (let i = 0; i < stride; i += 1) {
+      const a = i >= bpp ? line[i - bpp] : 0
+      const b = prev[i]
+      const c = i >= bpp ? prev[i - bpp] : 0
+      let v = line[i]
+      if (filter === 1) v += a
+      else if (filter === 2) v += b
+      else if (filter === 3) v += Math.floor((a + b) / 2)
+      else if (filter === 4) {
+        const pp = a + b - c
+        const pa = Math.abs(pp - a); const pb = Math.abs(pp - b); const pc = Math.abs(pp - c)
+        v += (pa <= pb && pa <= pc) ? a : (pb <= pc ? b : c)
+      }
+      cur[i] = v & 0xff
+    }
+  }
+  const i = y * stride + x * bpp
+  return [out[i], out[i + 1], out[i + 2]]
+}
+
+/* ------------------------------------------------------------------ *
  * 断言
  * ------------------------------------------------------------------ */
 
@@ -2106,7 +2170,8 @@ function shellDom (opts = {}) {
   ok('垫底层重模糊（blur 64px）', /::after\{[^}]*filter:blur\(64px\)/.test(css))
   // B6 之后垫底让到 -3：中间那格（-2）留给换图时的「上一张」临时层
   ok('垫底层在更下层（z-index:-3）', /::after\{[^}]*z-index:-3/.test(css))
-  ok('前景层仍在 -1（盖在垫底之上）', /::before\{[^}]*z-index:-1/.test(css))
+  // B6 之后：垫底 -3 / 当前图 -2 / 换图临时层 -1（显式链，见用例 72）
+  ok('前景层在垫底之上（-2）', /::before\{[^}]*z-index:-2/.test(css))
   ok('垫底层默认 none（横图零开销）', css.includes('--zf-art-backdrop:none'))
   ok('含 contain 取景规则', css.includes('[data-zf-art-fit="contain"]::before'))
   ok('垫底亮度变量可调', css.includes('--zf-backdrop-lum'))
@@ -4096,12 +4161,16 @@ function shellDom (opts = {}) {
   const css = structureCss()
   const flat = css.replace(/\s+/g, '')
 
-  // 1) 三层顺序：垫底 -3 ＜ 上一张 -2 ＜ 当前 -1
+  // 1) 层级：**显式 z-index 链** —— 垫底 -3 ＜ 当前图 -2 ＜ 上一张 -1。
+  //    第一版把临时层放在当前图**下面**（-2 vs -1），结构断言还全绿，
+  //    但新图是不透明照片、盖在上面 —— 淡出完全看不见（用户报「没看出淡入」）。
+  //    所以顺序必须写在数值里，不靠「同层叠级 + 树序」这种微妙规则。
   ok('模糊垫底让到 -3（给「上一张」腾出中间那格）',
     /html\[data-zf-wallpaper\]::after\{[^}]*z-index:-3/.test(flat))
-  ok('当前图仍是 -1', /html\[data-zf-wallpaper\]::before\{[^}]*z-index:-1/.test(flat))
-  ok('临时层是 -2（旧图在当前图之下、垫底之上）',
-    /\.zf-art-fade\{[^}]*z-index:-2/.test(flat))
+  ok('当前图在 -2（把 -1 让给「上一张」）',
+    /html\[data-zf-wallpaper\]::before\{[^}]*z-index:-2/.test(flat))
+  ok('临时层在 -1 —— 必须**画在当前图之上**才看得见',
+    /\.zf-art-fade\{[^}]*z-index:-1/.test(flat))
   ok('临时层 240ms 淡出', /\.zf-art-fade\{[^}]*transition:opacity240msease-out/.test(flat))
   ok('淡出状态就是 opacity:0',
     /\[data-zf-art-out\]\{opacity:0;?\}/.test(flat))
@@ -4192,13 +4261,32 @@ function shellDom (opts = {}) {
     } catch { r = null }
     ok('拿到真实引擎计算值', r !== null)
     if (r !== null) {
-      ok('引擎里三层顺序正确：垫底 -3 / 上一张 -2 / 当前 -1',
-        r.after === '-3' && r.fade === '-2' && r.before === '-1',
-        `${r.after} / ${r.fade} / ${r.before}`)
+      ok('引擎里：垫底 -3 ＜ 当前图 -2 ＜ 上一张 -1（显式链）',
+        r.after === '-3' && r.before === '-2' && r.fade === '-1',
+        `${r.after} / ${r.before} / ${r.fade}`)
       ok('过渡时长实测 0.24s', r.dur === '0.24s', r.dur)
       ok('两态 opacity 实测 1 → 0', r.onOp === '1' && r.outOp === '0', `${r.onOp} → ${r.outOp}`)
       ok('临时层是 fixed（不吃布局）', r.fixed === 'fixed', r.fixed)
     }
+
+    // 4.1) 关于「看不见」这个 bug 类的回归价值：
+    //      本来打算截图取色做像素级断言，但这台机器上 `--headless` 的
+    //      `--screenshot` **只出黑帧** —— 新旧 headless、五种参数组合都试过
+    //      （连「fixed 纯蓝 div」这种最小页也是 rgb(0,0,0)）。所以改为把顺序
+    //      **写死在显式 z-index 链**里（-3 < -2 < -1），并断言这条链 + 三个不变式：
+    //      三个层都 fixed/inset:0 铺满、临时层不透明（拷贝的是照片）、
+    //      临时层与当前图都在 body 内容之下（负 z-index）。
+    ok('临时层与当前图铺满同一区域（fixed + inset:0）',
+      /\.zf-art-fade\{[^}]*position:fixed/.test(flat) &&
+      /\.zf-art-fade\{[^}]*inset:0/.test(flat),
+      '铺不满就会出现「半张图淡出」这种怪象')
+    ok('三层 z-index 单调（数值即顺序，不依赖树序）',
+      /::after\{[^}]*z-index:-3/.test(flat) &&
+      /::before\{[^}]*z-index:-2/.test(flat) &&
+      /\.zf-art-fade\{[^}]*z-index:-1/.test(flat))
+    ok('临时层在 body 内容之下（负 z-index，不会盖住 UI）',
+      /\.zf-art-fade\{[^}]*z-index:-\d/.test(flat))
+
   }
 }
 
