@@ -768,6 +768,46 @@ export function structureCss () {
      *
      * `forced-colors` 下交还系统（高对比模式的可读性优先，与既有做法一致）。
      */
+    /* ── diff 行的文字色（用户截图：修改的代码被色块覆盖）────────────────
+     *
+     * 官方 diff 行的结构（壳源码实测，模块 `_17vb8_`）：
+     *
+     *   ._add_17vb8_48{ color:var(--dsw-alias-state-success-primary);      ← 绿字
+     *                    background:var(--dsw-alias-code-diff-added); … }   ← 绿底
+     *   ._del_17vb8_38{ color:var(--dsw-alias-state-error-primary); … }     ← 红字 + 红底
+     *   ._context_17vb8_58{ color:var(--dsw-alias-label-secondary) }
+     *
+     * 也就是说官方是**同色系的字配同色系的底**（绿字压绿底）—— 实测 8 组配色里
+     * 7 组达不到 4.5:1。我们再把底做得更实一点，就彻底看不清了（用户截图）。
+     *
+     * ⚠️ 类名**不能猜**：这一族的本地名是 `add` / `del` / `context`，
+     * 写成 `[class*="code-diff"]` 一条都命中不了（第一版就是这么写的，白改）。
+     * 这里用**语义锚点**定位：`[data-code-block-content]`（官方给代码块内容打的）
+     * 之下的增删行 —— 再把文字拉回最高对比的 `label-primary`。
+     *
+     * 行首那个 `+` / `-` 是 `::before` 的 `content`，跟着 `color` 走，所以也会
+     * 一起变成前景色：**增删的区分改由底色承担**（浅绿 / 浅红），语义不丢。
+     */
+    'body[data-zf-theme] [data-code-block-content] [class*="_add_"],',
+    'body[data-zf-theme] [data-code-block-content] [class*="_del_"],',
+    'body[data-zf-theme] [data-code-block-content] [class*="_context_"]{',
+    '  color:var(--dsw-alias-label-primary);',
+    '}',
+    // 行上的语法高亮色在浅色调底上会糊成一片 → 退回前景色（宁可少一层语法色）
+    'body[data-zf-theme] [data-code-block-content] [class*="_add_"] [class*="shiki"],',
+    'body[data-zf-theme] [data-code-block-content] [class*="_del_"] [class*="shiki"]{',
+    '  color:var(--dsw-alias-label-primary);',
+    '  --shiki-token-keyword:var(--dsw-alias-label-primary);',
+    '  --shiki-token-string:var(--dsw-alias-label-primary);',
+    '  --shiki-token-function:var(--dsw-alias-label-primary);',
+    '  --shiki-token-constant:var(--dsw-alias-label-primary);',
+    '  --shiki-token-parameter:var(--dsw-alias-label-primary);',
+    '  --shiki-token-punctuation:var(--dsw-alias-label-secondary);',
+    '  --shiki-token-comment:var(--dsw-alias-label-secondary);',
+    '  --shiki-token-link:var(--dsw-alias-label-primary);',
+    '  --shiki-token-string-expression:var(--dsw-alias-label-primary);',
+    '}',
+
     'body[data-zf-theme] ::selection{',
     '  background:color-mix(in srgb, var(--dsw-alias-brand-primary) 30%, transparent);',
     '  color:var(--dsw-alias-label-primary);',

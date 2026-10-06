@@ -2674,9 +2674,29 @@ function shellDom (opts = {}) {
   const missing = REST.filter(n => typeof tokens[`--dsw-alias-${n}`] !== 'string')
   ok(`${REST.length} 个补齐的 alias 全部存在`, missing.length === 0, missing.join(', '))
 
-  // diff 色保持「增绿删红」的通用语义
-  ok('code-diff-added 用成功色', tokens['--dsw-alias-code-diff-added'] === pal.buildRoles('zhuang', 'light').stateSuccess)
-  ok('code-diff-deleted 用错误色', tokens['--dsw-alias-code-diff-deleted'] === pal.buildRoles('zhuang', 'light').stateError)
+  // diff 底色：**由状态色派生**（不再直接等于状态色 —— 实心状态色会把行上的字压没，
+  // 用户截图反馈「修改的代码看不到了」）。但「增绿删红」的语义必须还在：
+  // 相对代码底色，增行要更绿、删行要更红 —— 按**色差方向**判，而不是绝对色相
+  // （有的预设连代码底本身都偏绿）。
+  {
+    const hex = (v) => {
+      const m = /^#([0-9a-f]{6})$/i.exec(v)
+      return m === null ? null : [0, 2, 4].map(i => parseInt(m[1].slice(i, i + 2), 16))
+    }
+    const code = hex(tokens['--dsw-alias-markdown-code-block'])
+    const add = hex(tokens['--dsw-alias-code-diff-added'])
+    const del = hex(tokens['--dsw-alias-code-diff-deleted'])
+    const rolesLight = pal.buildRoles('zhuang', 'light')
+    ok('diff 底不再直接等于状态色（那会把文字压没）',
+      tokens['--dsw-alias-code-diff-added'] !== rolesLight.stateSuccess &&
+      tokens['--dsw-alias-code-diff-deleted'] !== rolesLight.stateError)
+    ok('增行相对代码底**更绿**（增绿语义还在）',
+      code !== null && add !== null && (add[1] - add[0]) > (code[1] - code[0]),
+      `${tokens['--dsw-alias-code-diff-added']} vs ${tokens['--dsw-alias-markdown-code-block']}`)
+    ok('删行相对代码底**更红**（删红语义还在）',
+      code !== null && del !== null && (del[0] - del[1]) > (code[0] - code[1]),
+      `${tokens['--dsw-alias-code-diff-deleted']} vs ${tokens['--dsw-alias-markdown-code-block']}`)
+  }
 
   // 白名单同步：contrast.js 的 SHELL_TOKENS 必须覆盖全部发射的 alias
   const csrc = fs.readFileSync(path.join(ROOT, 'src', 'contrast.js'), 'utf8')
@@ -4966,6 +4986,115 @@ function shellDom (opts = {}) {
   ok('卸载时关流（不给宿主留悬挂连接）', csrc.includes("closeSessionStream('dispose')"))
   ok('主机端留了 once=1 退路（载体不吃流式时可改轮询，载荷同形）',
     fs.readFileSync(path.join(ROOT, 'index.js'), 'utf8').includes("url?.searchParams?.get('once') === '1'"))
+}
+
+
+// 用例 78：diff 行的可读性（用户截图：修改的代码被色块覆盖）
+//
+// 官方 diff 行的结构（壳源码实测，模块 `_17vb8_`）：
+//
+//   ._add_17vb8_48{ color:var(--dsw-alias-state-success-primary);   ← 绿字
+//                    background:var(--dsw-alias-code-diff-added) }   ← 绿底
+//   ._del_17vb8_38{ color:var(--dsw-alias-state-error-primary); … }  ← 红字 + 红底
+//
+// 两个问题叠在一起：
+//   ① 我们第一版把 diff 底做成了**不透明状态色**（实心亮绿）→ 把文字压没了；
+//   ② 官方本来就是**同色系字配同色系底**（绿字压绿底），实测 8 组里 7 组 < 4.5:1。
+{
+  console.log('\n--- diff 行可读性 ---')
+  const pal = await import('../src/palette.js')
+  const { structureCss } = await import('../index.js')
+  const css = structureCss()
+
+  // 1) 底色：不透明实色 + 与代码底可辨 + 增删不同色 + 文字读得清
+  const officialRatios = []
+  for (const presetId of pal.PRESET_IDS) {
+    for (const scheme of ['light', 'dark']) {
+      const t = pal.buildTokens(presetId)[scheme]
+      const code = t['--dsw-alias-markdown-code-block']
+      const fg = t['--dsw-alias-label-primary']
+      const add = t['--dsw-alias-code-diff-added']
+      const del = t['--dsw-alias-code-diff-deleted']
+      const tag = `${presetId}/${scheme}`
+      ok(`${tag}：diff 底是不透明实色（半透明的话对比度没法算）`,
+        /^#[0-9a-f]{6}$/i.test(add) && /^#[0-9a-f]{6}$/i.test(del), `${add} / ${del}`)
+      ok(`${tag}：行上文字 ≥ 6:1（前景色）`,
+        pal.contrast(fg, add) >= 6 && pal.contrast(fg, del) >= 6,
+        `${pal.contrast(fg, add).toFixed(2)} / ${pal.contrast(fg, del).toFixed(2)}`)
+      ok(`${tag}：与代码底色看得出区别（≥1.18，但别太冲）`,
+        pal.contrast(add, code) >= 1.18 && pal.contrast(add, code) <= 1.45,
+        `${pal.contrast(add, code).toFixed(3)}`)
+      ok(`${tag}：增/删不同色（语义还在）`, add !== del)
+      officialRatios.push({
+        tag,
+        ratio: pal.contrast(t['--dsw-alias-state-success-primary'], add)
+      })
+    }
+  }
+
+  // 官方那对搭配（同色系字配同色系底）整体不达标 —— 这正是要覆盖文字色的原因。
+  // 按**集合**断言（要求每一组都不达标是错的：wine/dark 恰好达标）。
+  const badOfficial = officialRatios.filter(o => o.ratio !== null && o.ratio < 4.5)
+  ok('官方同色系搭配多数不达标（所以必须覆盖文字色）',
+    badOfficial.length >= 4,
+    `${badOfficial.length}/${officialRatios.length} 组 < 4.5`)
+
+  // 2) CSS：文字色拉回前景色，且**用真实结构定位**（不是猜类名）
+  const flat = css.replace(/\s+/g, '')
+  ok('按语义锚点定位 diff 行（data-code-block-content）',
+    flat.includes('[data-code-block-content][class*="_add_"]') ||
+    flat.includes('[data-code-block-content] [class*="_add_"]'),
+    '应含 [data-code-block-content] 与 _add_/_del_')
+  ok('增/删/上下文行的文字色都拉回 label-primary',
+    /\[class\*="_add_"\],[^{]*\[class\*="_del_"\],[^{]*\[class\*="_context_"\]\{color:var\(--dsw-alias-label-primary\)/.test(flat))
+  ok('行内语法高亮色也退回前景色（浅底上会糊成一片）',
+    /\[class\*="_add_"\]\[class\*="shiki"\],[^{]*\[class\*="_del_"\]\[class\*="shiki"\]\{color:var\(--dsw-alias-label-primary\)/.test(flat))
+  ok('**没有**猜错的类名（第一版写的 [class*="code-diff"] 一条都命中不了）',
+    !css.includes('[class*="code-diff"]') && !css.includes('[class*="file-diff"]'),
+    '真实本地名是 add / del / context')
+
+  // 3) 真实引擎：确认选择器真能命中（照抄官方类名）
+  const { execFileSync } = await import('node:child_process')
+  const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
+  if (!fs.existsSync(EDGE)) {
+    console.log('  SKIP 无 Edge（Linux/CI）—— 真实引擎验证跳过')
+  } else {
+    const html = `<!DOCTYPE html><html><head><style>
+      body{--dsw-alias-label-primary:#f2f2f0;--dsw-alias-label-secondary:#b9b9b6;
+           --dsw-alias-state-success-primary:#7fd6a0;--dsw-alias-state-error-primary:#f08a84;
+           --dsw-alias-code-diff-added:#363c30;--dsw-alias-code-diff-deleted:#413a32}
+      /* 照抄官方那两条 */
+      ._add_17vb8_48{color:var(--dsw-alias-state-success-primary);background:var(--dsw-alias-code-diff-added)}
+      ._del_17vb8_38{color:var(--dsw-alias-state-error-primary);background:var(--dsw-alias-code-diff-deleted)}
+      ${structureCss()}
+    </style></head><body data-zf-theme="">
+      <div data-code-block-content="">
+        <div class="_add_17vb8_48" id="a">+ import json</div>
+        <div class="_del_17vb8_38" id="d">- import os</div>
+      </div>
+      <script>
+        const g = id => getComputedStyle(document.getElementById(id))
+        document.title = JSON.stringify({ add: g('a').color, del: g('d').color })
+      <\/script></body></html>`
+    const f = path.join(os.tmpdir(), 'zf-diff.html')
+    fs.writeFileSync(f, html, 'utf8')
+    let r = null
+    try {
+      const dumped = execFileSync(EDGE, [
+        '--headless=new', '--disable-gpu', '--no-sandbox', '--virtual-time-budget=1000',
+        '--dump-dom', `file:///${f.replace(/\\/g, '/')}`
+      ], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] })
+      const m = /<title>([^<]*)<\/title>/.exec(dumped)
+      r = m ? JSON.parse(m[1].replace(/&quot;/g, '"')) : null
+    } catch { r = null }
+    ok('拿到真实引擎计算值', r !== null)
+    if (r !== null) {
+      ok('引擎里：增行文字是前景色（不再是官方那个绿）',
+        r.add === 'rgb(242, 242, 240)', r.add)
+      ok('引擎里：删行文字也是前景色（不再是官方那个红）',
+        r.del === 'rgb(242, 242, 240)', r.del)
+    }
+  }
 }
 
 

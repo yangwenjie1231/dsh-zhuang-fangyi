@@ -308,6 +308,64 @@ console.log('')
 //   ① 发出去的每一条都真的够读（门禁契约本身）；
 //   ② 键名是外壳真实存在的变量（写错只会静默失效）；
 //   ③ 覆盖率不许被门禁砍光、且确实**与外壳默认不同**（否则这功能等于没做）。
+// ── diff 行（用户截图：修改的代码被色块覆盖）────────────────────────────
+//
+// `--dsw-alias-code-diff-added` 是**背景**（壳里全仓只当 background 用），而且壳的
+// 默认值是半透明绿。第一版我们给了不透明的状态色 → 实心亮绿带把代码文字压没了。
+// 现在合成成不透明浅色调，于是「行上的文字对比度」可以算 —— 这一组就是盯它。
+console.log('━━━ diff 行（背景必须让文字读得出来）━━━')
+let diffFailed = 0
+for (const presetId of PRESET_IDS) {
+  for (const scheme of ['light', 'dark']) {
+    const tokens = buildTokens(presetId)[scheme]
+    const label = (short) => tokens[tokenName(short)]
+    const surface = label('markdown-code-block')
+    for (const kind of ['added', 'deleted']) {
+      const bg = tokens[`--dsw-alias-code-diff-${kind}`]
+      const fg = label('label-primary')
+      const ratio = contrast(fg, bg)
+      if (ratio === null || ratio < 4.5) {
+        console.log(`  FAIL ${presetId}/${scheme} diff-${kind}: 文字对比度 ${ratio === null ? 'null' : ratio.toFixed(2)} < 4.5`)
+        diffFailed += 1
+      }
+      // ⚠️ 官方给 diff 行设的文字色是**状态色本身**（绿字/红字），实测 8 组里 7 组
+      // 达不到 4.5:1 —— 我们的 CSS 会把文字拉回 `label-primary`（见 index.js），
+      // 所以这里按**实际生效的文字色**断言。同时也把「官方那对搭配」记下来，
+      // 免得以后有人以为不用管。
+      const official = tokens[`--dsw-alias-state-${kind === 'added' ? 'success' : 'error'}-primary`]
+      const officialRatio = contrast(official, bg)
+      if (officialRatio !== null && officialRatio < 4.5) {
+        // 只记录，不算失败：我们覆盖了它
+        if (process.env.ZF_VERBOSE === '1') {
+          console.log(`  note ${presetId}/${scheme} diff-${kind}: 官方同色系搭配 ${officialRatio.toFixed(2)}（我们已覆盖为前景色）`)
+        }
+      }
+      // 底色必须与代码块底色**看得出区别**（否则 diff 行没有指示作用）
+      const delta = contrast(bg, surface)
+      if (delta !== null && delta < 1.06) {
+        console.log(`  FAIL ${presetId}/${scheme} diff-${kind}: 与代码块底色几乎同色（${delta.toFixed(3)}）`)
+        diffFailed += 1
+      }
+      // 而且必须是**不透明**实色 —— 半透明的话上面那条对比度就没意义了
+      if (/^#[0-9a-f]{8}$/i.test(bg) || /rgba\(/i.test(bg)) {
+        console.log(`  FAIL ${presetId}/${scheme} diff-${kind}: 底色不是不透明实色（${bg}）`)
+        diffFailed += 1
+      }
+    }
+    // 增绿删红不能混
+    const added = tokens['--dsw-alias-code-diff-added']
+    const deleted = tokens['--dsw-alias-code-diff-deleted']
+    if (added === deleted) {
+      console.log(`  FAIL ${presetId}/${scheme}: 增/删底色相同，失去区分度`)
+      diffFailed += 1
+    }
+  }
+}
+if (diffFailed === 0) {
+  console.log(`  全部通过（${PRESET_IDS.length * 2} 组配色：文字 ≥ 4.5:1、与代码底色可辨、增删不同色）`)
+}
+console.log('')
+
 console.log('━━━ 代码高亮 token（跟随预设）━━━')
 
 /** 外壳默认的 token 色（实测记录：`:root` 亮色一组、`body[data-ds-dark-theme]` 暗色一组）。 */
@@ -371,8 +429,8 @@ if (codeFailed === 0) {
 }
 console.log('')
 
-console.log(`合计 ${total} 项对比度检查 + ${codeChecked} 项代码 token 检查 + ${PRESET_IDS.length} 组结构检查，不达标 ${failed + structural + codeFailed} 项`)
-if (failed + structural + codeFailed > 0) {
+console.log(`合计 ${total} 项对比度检查 + ${codeChecked} 项代码 token 检查 + ${PRESET_IDS.length} 组结构检查 + diff 行检查，不达标 ${failed + structural + codeFailed + diffFailed} 项`)
+if (failed + structural + codeFailed + diffFailed > 0) {
   console.log(`\n失败项：\n  ${failures.join('\n  ')}`)
   process.exit(1)
 }

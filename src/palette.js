@@ -903,20 +903,70 @@ export function deriveAliases (r) {
     'bg-document-selection': withAlpha(r.brand, 0.28),
     'separator-primary': withAlpha(r.tintRgb, 0.10),
 
-    /* ── 代码 / 文件 diff（用状态色，保持「增绿删红」的通用语义）───── */
-    'code-diff-added': r.stateSuccess,
-    'code-diff-deleted': r.stateError,
-    'file-diff-added-bg': withAlpha(r.stateSuccess, 0.10),
-    'file-diff-added-gutter': withAlpha(r.stateSuccess, 0.18),
+    /* ── 代码 / 文件 diff（保持「增绿删红」的语义，但**必须是半透明底**）──
+     *
+     * ⚠️ 这一族全是**背景色**（壳里 `background: var(--dsw-alias-code-diff-added)`、
+     * `file-diff-*-bg` 同理，全仓无一处当文字色用）。壳的默认值就是半透明
+     * （暗色 `green-500-a12`、亮色 `green-500-a08`）。
+     *
+     * 第一版这里写成了**不透明**的状态色 —— 于是 diff 的「新增行」变成一条实心
+     * 亮绿带，把上面的代码文字（浅灰白）压没了。用户截图反馈「修改的代码看不到了
+     * （被色块覆盖）」。教训：**给背景用的 token 别用不透明的正文色**。
+     *
+     * 修法：用「代码块底色 + 状态色」按比例合成一个**不透明**的浅色调 ——
+     *   · 视觉上与「半透明绿铺在代码底上」等价；
+     *   · 但它是实色，diff 行上的文字对比度**可以算**，能被对比度套件盯住。
+     * 比例对齐壳的默认观感（12% / 8%）。
+     */
+    'code-diff-added': diffTint(r.code, r.stateSuccess, r.text),
+    'code-diff-deleted': diffTint(r.code, r.stateError, r.text),
+    'file-diff-added-bg': diffTint(r.code, r.stateSuccess, r.text),
+    'file-diff-added-gutter': diffTint(r.code, r.stateSuccess, r.text),
     'file-diff-added-marker': withAlpha(r.stateSuccess, 0.55),
-    'file-diff-deleted-bg': withAlpha(r.stateError, 0.10),
-    'file-diff-deleted-gutter': withAlpha(r.stateError, 0.18),
+    'file-diff-deleted-bg': diffTint(r.code, r.stateError, r.text),
+    'file-diff-deleted-gutter': diffTint(r.code, r.stateError, r.text),
     'file-diff-deleted-marker': withAlpha(r.stateError, 0.55),
 
     /* ── 其余文字层级与浮标 ─────────────────────────────────────────── */
     'label-quaternary': r.labelQuaternary,
     'tooltip-key-bg': adjust(r.tooltip, { l: 0.06 })
   }
+}
+
+/**
+ * diff 行的底色：**代码块底色 + 状态色**按比例合成（返回不透明实色）。
+ *
+ * 为什么不直接用半透明色：`--dsw-alias-code-diff-added` 是铺在**代码块底色**上的
+ * 一层纱，半透明时「行上的文字到底对比度多少」没法静态算 —— 而这一族正好踩过坑
+ * （第一版给了不透明状态色，把文字压没了）。合成成实色之后，对比度可以算、
+ * 可以被 `contrast.js` 盯住，观感与「纱铺在底上」等价。
+ *
+ * 明暗比例**从底色自身的明度判断**（不是从外部传 `dark`）：
+ * `deriveAliases(r)` 只拿得到色阶，拿不到明暗标记 —— 第一版在这里写了 `dark`，
+ * 直接 `ReferenceError`。底色亮度 < 0.5 即视为深色主题。
+ *
+ * @param {string} surface 代码块底色
+ * @param {string} tint 状态色（成功绿 / 错误红）
+ * @param {number} [darkRatio] 深色主题下的比例（默认 0.12，对齐外壳 green-500-a12）
+ * @param {number} [lightRatio] 浅色主题下的比例（默认 0.08，对齐 green-500-a08）
+ */
+function diffTint (surface, tint, foreground) {
+  // 取**刚好够辨认的最小浓度** —— 两个约束同时满足就停：
+  //   ① 与代码底色看得出区别（对比度 ≥ 1.18：低于这个数在深色底上几乎看不出来）；
+  //   ② 行上文字读得清（前景色对比度 ≥ 6:1，比 4.5 留余量 —— 行里还有次级文字色）。
+  //
+  // 为什么用「求解」而不是拍一个比例：不同预设的代码底色明暗差得多
+  // （浅色 #F0F0EB / 深色 #2E2E25），同一个比例在两边观感完全不同。
+  // 第一版把方向搞反了 —— 取「文字还能读的最大浓度」，结果浅色下浓到像块重高亮。
+  const text = foreground ?? '#ffffff'
+  for (const ratio of [0.06, 0.09, 0.12, 0.16, 0.20, 0.24, 0.28]) {
+    const mixed = mixColor(surface, tint, ratio)
+    const delta = contrast(mixed, surface)
+    const textRatio = contrast(text, mixed)
+    if (delta !== null && delta >= 1.18 && textRatio !== null && textRatio >= 6) return mixed
+  }
+  // 极端配色下都不满足：退回一个「看得见但轻」的值，交给对比度套件报警
+  return mixColor(surface, tint, 0.16)
 }
 
 /**
