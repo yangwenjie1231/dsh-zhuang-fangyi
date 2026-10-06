@@ -28,6 +28,14 @@ const read = f => fs.readFileSync(path.join(ROOT, f), 'utf8')
  * 每条的 `evidence` 是**真实用到的代码特征**，不是描述性文字。
  * 加权限必须同时在这里登记证据，否则校验会失败 —— 这条设计是为了防止
  * 「为了让清单好看而多写一条权限」。
+ *
+ * ── 这个自检已经抓到过一次真问题 ──────────────────────────────────────
+ *
+ * 加「原生标题栏条带透明」功能后 CI 失败：
+ *   `FAIL 仓库里用到了 titleBarOverlay（对应权限 desktop:titlebar-overlay）
+ *    但清单没声明`
+ * 那次确实是**声明与事实脱节**（用了能力却没声明），属于双向校验要抓的
+ * 典型情形 —— 声明的必须有证据，不声明的必须没证据。
  */
 const PERMISSION_EVIDENCE = {
   'web:index-inject': {
@@ -44,13 +52,19 @@ const PERMISSION_EVIDENCE = {
     files: ['client.js'],
     patterns: ['shell.overlay'],
     why: '观测栏浮层 + 启动动效（叠在应用之上的自绘节点）'
+  },
+  'desktop:titlebar-overlay': {
+    files: ['index.js'],
+    // 证据 = 我们真的选中了桌面 preload 建的那个探针 span 并改它的底色，
+    // 而探针的颜色正是经 IPC 交给 `setTitleBarOverlay({color})` 的。
+    patterns: ['body[data-zf-wallpaper] > span[style*="visibility"]'],
+    why: '改原生标题栏条带颜色（选中桌面 preload 的探针 span，把底色设为透明 → 壁纸透上去）'
   }
 }
 
 /** 我们**不**声明的权限 → 「仓库里必须没有这些证据」。 */
 const FORBIDDEN_EVIDENCE = {
   'browser:local-storage': { files: ['client.js'], patterns: ['localStorage'] },
-  'desktop:titlebar-overlay': { files: ['index.js', 'client.js'], patterns: ['titleBarOverlay', 'titlebar-area'] },
   'network:npm-registry': { files: ['index.js'], patterns: ['registry.npmjs', 'npmmirror'] },
   'desktop:subprocess': { files: ['index.js'], patterns: ['ctx.subprocess', 'child_process'] }
 }

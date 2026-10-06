@@ -99,7 +99,8 @@
     "permissions": [
       "web:index-inject",
       "web:http-route",
-      "dom:overlay"
+      "dom:overlay",
+      "desktop:titlebar-overlay"
     ],
     "compatibility": {
       "dshVersions": [
