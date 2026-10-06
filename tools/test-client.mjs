@@ -3660,6 +3660,134 @@ function shellDom (opts = {}) {
   }
 }
 
+// 用例 68：右栏 dockkit pane 透明（用户「开始页 / tab 条背景还是黑的」）
+//
+// 用户贴了两段 DOM —— 开始页（`data-sidebar-right-guide`）和 tab 条
+// （`data-dockkit-strip`）—— 说「背景还是黑色的」「这个的背景也还是黑色的」。
+//
+// 量出来是**同一层**。壳源码实测（dsh-web-frontend/dist/assets/index-*.css）：
+//
+//   ._tabHost_6nhg2_162:not(._float_6nhg2_156),
+//   ._emptyTabHost_6nhg2_143{ background:var(--dsw-alias-bg-base) }
+//
+// 而 tabHost 就是 pane 本身：
+//   className: ue(ve.tabHost, x ? ve.float : ve.pane)
+//   children : [ tabHostHeader(tab 条), tabHostBody(页面内容) ]
+//
+// 被反馈的两个元素**自己都没有 background**（壳 CSS 实测）：
+//   .unKlVG_guide{...}  、 ._tabStrip_6nhg2_237{...}
+// 黑色 100% 来自 pane 的 bg-base —— 它盖住了我们画在 rightbarCol 上的纱。
+// 所以「纱没生效」是误判：纱在下面，上面压着一层不透明底。
+{
+  console.log('\n--- 右栏 dockkit pane 透明（开始页 / tab 条）---')
+  const { structureCss } = await import('../index.js')
+  const css = structureCss()
+  const flat = css.replace(/\s+/g, '')
+
+  ok('有 pane 透明规则', flat.includes('body[data-zf-wallpaper][data-dockkit-pane]'))
+  ok('用语义锚点 data-dockkit-pane（跨版本最稳，Web 壳同源也命中）',
+    flat.includes('[data-dockkit-pane]'))
+  ok('空 pane 的锚点 data-dockkit-empty 也覆盖',
+    flat.includes('[data-dockkit-empty]'))
+  ok('类名后缀做兜底（没有标签页的 pane 不渲染 data-dockkit-pane）',
+    flat.includes('[class*="_tabHost"]'))
+  ok('浮窗 pane 排除在外（它是弹出窗口，要保持官方实体底）',
+    flat.includes('[class*="_tabHost"]:not([class*="_float"])'))
+  ok('只在壁纸开启时生效（关掉壁纸不动官方不透明设计）',
+    /body\[data-zf-wallpaper\][^{]*\[data-dockkit-pane\][^{]*\{background:transparent!important;?\}/.test(flat))
+  ok('设成 transparent 而不是再涂一层纱（纱在 rightbarCol 上，涂两次会深一档）',
+    /\[data-dockkit-pane\][^{]*\{background:transparent!important;?\}/.test(flat),
+    '这里若写 var(--zf-veil)，右栏会比中栏深一档')
+
+  // 真实引擎实测：照抄壳的 DOM 结构 + 官方规则，量计算值
+  const { execFileSync } = await import('node:child_process')
+  const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
+  if (!fs.existsSync(EDGE)) {
+    console.log('  SKIP 无 Edge（Linux/CI）—— 真实引擎验证跳过')
+  } else {
+    // 官方选择器**逐字照抄**（含真实哈希类名），否则测的就不是真实场景。
+    // ⚠️ 两条都要抄：docked pane 的底来自 `_tabHost_:not(_float_)`，
+    //    浮窗的底来自 `_float_` 自己那条 —— 只抄前者会让浮窗「本来就没底」，
+    //    那样「浮窗没被误伤」的断言就是空的（第一版就是这样，白测了一轮）。
+    const build = on => `<!DOCTYPE html><html style="--zf-veil:rgba(22,22,19,0.86)">
+      <head><style>
+        body{--dsw-alias-bg-base:#111111;--dsw-alias-bg-layer-1:#1e1e17;--dsw-alias-bg-layer-2:#181818}
+        ._tabHost_6nhg2_162:not(._float_6nhg2_156),._emptyTabHost_6nhg2_143{background:var(--dsw-alias-bg-base)}
+        ._float_6nhg2_156{background:var(--dsw-alias-bg-layer-2)}
+        ._tabHost_6nhg2_162{display:block;min-height:20px}
+        ._emptyTabHost_6nhg2_143{min-height:20px}
+        ${structureCss()}
+      </style></head><body ${on ? 'data-zf-wallpaper=""' : ''}>
+        <div class="BynINW_rightbarCol" id="rb">
+          <div class="OUqwTW_panel">
+            <section class="_tabHost_6nhg2_162 _pane_6nhg2_209" data-dockkit-pane="p1" id="pane">
+              <div class="_tabHostHeader_6nhg2_177">
+                <div class="_tabStrip_6nhg2_237" data-dockkit-strip="pane1" id="strip">tab 条</div>
+              </div>
+              <div class="_tabHostBody_6nhg2_181 _paneBody_6nhg2_318">
+                <div class="unKlVG_guide" id="guide">
+                  <button class="unKlVG_entry" id="entry">开始页卡片</button>
+                </div>
+              </div>
+            </section>
+            <div class="_emptyTabHost_6nhg2_143" data-dockkit-empty id="empty"></div>
+          </div>
+        </div>
+        <section class="_tabHost_6nhg2_162 _float_6nhg2_156" data-dockkit-float="f1" id="float"></section>
+        <script>
+          const g = id => getComputedStyle(document.getElementById(id)).backgroundColor
+          document.title = JSON.stringify({ rb: g('rb'), pane: g('pane'), strip: g('strip'),
+            guide: g('guide'), entry: g('entry'), empty: g('empty'), float: g('float') })
+        <\/script></body></html>`
+
+    const rows = {}
+    for (const on of [true, false]) {
+      const f = path.join(os.tmpdir(), `zf-dockkit-${on}.html`)
+      fs.writeFileSync(f, build(on), 'utf8')
+      try {
+        const dom = execFileSync(EDGE, [
+          '--headless=new', '--disable-gpu', '--no-sandbox', '--virtual-time-budget=1200',
+          '--dump-dom', `file:///${f.replace(/\\/g, '/')}`
+        ], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] })
+        const m = /<title>([^<]*)<\/title>/.exec(dom)
+        rows[on] = m ? JSON.parse(m[1].replace(/&quot;/g, '"')) : null
+      } catch { rows[on] = null }
+    }
+    const CLEAR = 'rgba(0, 0, 0, 0)'
+    // color-mix 的计算值是 `color(srgb … / a)`，不是 rgba —— 两种都要认
+    const alphaOf = c => {
+      const s = String(c ?? '')
+      let m = /rgba?\(([^)]+)\)/.exec(s)
+      if (m !== null) {
+        const p = m[1].split(',').map(x => parseFloat(x))
+        return p.length === 4 ? p[3] : 1
+      }
+      m = /color\(srgb[^)]*\/\s*([\d.]+)\s*\)/.exec(s)
+      return m !== null ? parseFloat(m[1]) : null
+    }
+    ok('拿到真实引擎计算值', rows[true] !== null && rows[false] !== null)
+    if (rows[true] !== null && rows[false] !== null) {
+      ok('壁纸开启 → pane 透明（黑色那层没了）', rows[true].pane === CLEAR, rows[true].pane)
+      ok('壁纸开启 → tab 条透明（条本身没背景，之前是被 pane 衬黑的）',
+        rows[true].strip === CLEAR, rows[true].strip)
+      ok('壁纸开启 → 开始页容器透明', rows[true].guide === CLEAR, rows[true].guide)
+      ok('壁纸开启 → 空 pane 也透明', rows[true].empty === CLEAR, rows[true].empty)
+      ok('pane 底下露出的正是右栏那层纱（rb = --zf-veil）',
+        rows[true].rb === 'rgba(22, 22, 19, 0.86)', rows[true].rb)
+      ok('浮窗 pane 保持官方不透明底（_float_ 那条规则没被误伤）',
+        rows[true].float === 'rgb(24, 24, 24)', rows[true].float)
+      // 卡片的色号随主题预设（layer-1 由我们的别名按明暗给值），所以只断言
+      // **不透明**：要保证的是「没把它透明掉」，不是一个写死的色号
+      ok('开始页卡片保持不透明（官方 bg-layer-1，可读性有意为之）',
+        alphaOf(rows[true].entry) === 1, rows[true].entry)
+      ok('壁纸关闭 → pane 回到官方 bg-base（不动官方设计）',
+        rows[false].pane === 'rgb(17, 17, 17)', rows[false].pane)
+      ok('壁纸关闭 → 空 pane 也回到官方底',
+        rows[false].empty === 'rgb(17, 17, 17)', rows[false].empty)
+    }
+  }
+}
+
 console.log(`\n合计 ${pass + fail} 项，通过 ${pass}，失败 ${fail}`)
 if (fail > 0) {
   console.log(`\n失败项：\n  ${failures.join('\n  ')}`)

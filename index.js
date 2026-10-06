@@ -472,6 +472,58 @@ export function structureCss () {
     'body[data-zf-wallpaper] [class*="_detailsCol"]{',
     '  background:var(--zf-veil) !important;',
     '}',
+
+    /* ── dockkit pane：右栏「开始」页与 tab 条的公共底 ────────────────────
+     *
+     * 用户反馈：「开始页背景还是黑色的」「tab 条背景也还是黑色的」。
+     *
+     * ── 壳源码实测（dsh-web-frontend/dist/assets/index-*.css）───────────
+     *
+     *   ._tabHost_6nhg2_162:not(._float_6nhg2_156),
+     *   ._emptyTabHost_6nhg2_143{ background: var(--dsw-alias-bg-base) }
+     *
+     * 而 JS 里 **tabHost 就是 pane 本身**（源码实测）：
+     *
+     *   className: ue(ve.tabHost, x ? ve.float : ve.pane)
+     *   children : [ tabHostHeader(含 tab 条), tabHostBody(含页面内容) ]
+     *
+     * 所以 tab 条和页面内容**都直接坐在这一层不透明底上**。两个被反馈的
+     * 元素自己都没有背景，黑色 100% 来自这里：
+     *
+     *   .unKlVG_guide{...}   ← 开始页容器：无 background
+     *   ._tabStrip_6nhg2_237{...}  ← tab 条：无 background
+     *
+     * 它盖住了我们画在 rightbarCol 上的纱 —— 这就是「右栏一直是黑的」的原因
+     * （不是纱没生效，是上面还压着一层不透明底）。
+     *
+     * ── 处理 ──────────────────────────────────────────────────────────
+     *
+     * 壁纸开启时让 docked pane 透明，露出 rightbarCol 的纱（`--zf-veil`）——
+     * 与中栏**同一个变量**，所以可见度天然一致，滑杆也一起跟随。
+     *
+     * ── 三处刻意的「不碰」────────────────────────────────────────────
+     *
+     *   · 浮窗 pane（`data-dockkit-float`）仍保持官方 layer-2 不透明底 ——
+     *     它是弹出窗口，需要实体感（选择器里 `:not([class*="_float"])` 就是它）
+     *   · 官方拖拽停靠时的 `_dockScrim_`（bg-base 72% + blur）不动
+     *   · active tab 的选中色 chip（`--dsw-alias-markdown-tag`）保留 ——
+     *     它是状态指示，透明掉就看不出当前在哪一页
+     *
+     * ── 锚点为什么这样选（三层定位器的第 1、3 层）──────────────────────
+     *
+     * 首选**语义属性**：壳给 docked pane 打 `data-dockkit-pane`、给空 pane 打
+     * `data-dockkit-empty`（源码实测）—— 跨版本最稳，Web 壳同源也命中。
+     * 再补一层类名后缀兜底 `[class*="_tabHost"]`：pane 没有标签页时
+     * `data-dockkit-pane` 不会渲染（源码里是 `!x && w ? a.id : undefined`），
+     * 那时只有类名能命中。
+     */
+    'body[data-zf-wallpaper] [data-dockkit-pane],',
+    'body[data-zf-wallpaper] [data-dockkit-empty],',
+    'body[data-zf-wallpaper] [class*="_tabHost"]:not([class*="_float"]),',
+    'body[data-zf-wallpaper] [class*="_emptyTabHost"]{',
+    '  background:transparent !important;',
+    '}',
+
     /* ── 去掉 Windows 中栏左上角那个「悬浮圆角」（用户反馈）──────────────
      *
      * 官方 Windows 壳有一条设计（源码实测）：
