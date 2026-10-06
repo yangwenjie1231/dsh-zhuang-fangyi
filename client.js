@@ -310,13 +310,17 @@ window.__ModuleLoader__.load({
         body.removeAttribute('data-zf-depth')
         root.removeAttribute('data-zf-font')
         root.removeAttribute('data-zf-font-scale')
+        // 观测台的纱也撤掉（回落 CSS 的兜底 62%，不是全透明）
+        root.style.removeProperty('--zf-rail-veil')
         return
       }
 
       const hasWallpaper = settings.background !== 'none'
       if (hasWallpaper) {
-        // 上限 45 与 settings.js 的 BG_OPACITY_MAX 一致（client 是手写 bundle 不能 import）
-        const alpha = Math.max(0, Math.min(45, settings.backgroundOpacity)) / 100
+        // ⚠️ 上限**必须**与 `src/settings.js` 的 `BG_OPACITY_MAX` 一致。
+        // client.js 是手写 bundle（走 DSH 的模块加载器），**不能 import** 那个
+        // 常量，所以这里只能是字面量 —— 有测试断言两处相等，改一处漏一处会被抓。
+        const alpha = Math.max(0, Math.min(90, settings.backgroundOpacity)) / 100
         const blur = Math.max(0, Math.min(16, settings.backgroundBlur))
         const pos = POSITIONS.includes(settings.backgroundPosition) ? settings.backgroundPosition : 'cover'
 
@@ -327,6 +331,10 @@ window.__ModuleLoader__.load({
         if (preset !== undefined) {
           root.style.setProperty('--zf-veil', toRgba(preset.base, keep))
           root.style.setProperty('--zf-veil-sidebar', toRgba(preset.sidebar, keep))
+        // 观测台的背景也跟同一个 keep 走（用户要求「观测台能透明」）。
+        // 写成**百分比字符串**而不是颜色 —— `.zf-rail` 用 `color-mix` 取它，
+        // 那里的第二个参数是百分比，不是 alpha。
+        root.style.setProperty('--zf-rail-veil', `${Math.round(keep * 100)}%`)
         }
 
         // ── 竖图用 contain + 模糊垫底（见 index.js 的 `::after` 层）────────
@@ -434,9 +442,12 @@ window.__ModuleLoader__.load({
       }
       const preset = roles?.[settings.preset]?.[scheme]
       if (preset !== undefined && settings.background !== 'none') {
-        const keep = 1 - Math.max(0, Math.min(45, settings.backgroundOpacity)) / 100
+        // 同上：字面量必须与 BG_OPACITY_MAX 一致（有测试断言）
+        const keep = 1 - Math.max(0, Math.min(90, settings.backgroundOpacity)) / 100
         document.documentElement.style.setProperty('--zf-veil', toRgba(preset.base, keep))
         document.documentElement.style.setProperty('--zf-veil-sidebar', toRgba(preset.sidebar, keep))
+      // 同上：观测台背景跟随滑杆
+      document.documentElement.style.setProperty('--zf-rail-veil', `${Math.round(keep * 100)}%`)
       }
     }
 
@@ -1941,7 +1952,8 @@ window.__ModuleLoader__.load({
           }, t('wallpaperRecommend')),
           h(Row, { label: t('opacity') },
             h(Slider, {
-              value: settings.backgroundOpacity, min: 0, max: 45, step: 1, suffix: '%',
+              // 上限同样与 BG_OPACITY_MAX 对齐（有测试断言）
+              value: settings.backgroundOpacity, min: 0, max: 90, step: 1, suffix: '%',
               onChange: v => set({ backgroundOpacity: v })
             })),
           h(Row, { label: t('blur') },

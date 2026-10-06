@@ -618,13 +618,21 @@ export function structureCss () {
     '  position:fixed;top:0;bottom:0;right:0;',
     '  width:var(--zf-rail-width);box-sizing:border-box;',
     '  display:flex;flex-direction:column;gap:14px;padding:16px 14px;overflow-y:auto;',
-    /* 背景更透：用户希望壁纸在观测栏下也看得见。
+    /* ── 观测台背景：跟着「背景不透明度」滑杆走 ────────────────────────
      *
-     * 原为 82% 不透明 —— 实测截图里观测栏内亮度 37 vs 壁纸区 70，差一倍，
-     * 壁纸几乎看不出。降到 62% 并把 blur 10px→18px：**透出更多壁纸，
-     * 同时靠模糊保住正文可读性**（不加模糊会与壁纸细节打架，反而更难读）。
-     * 这两个值是配套的，改一个要同时看另一个。 */
-    '  background:color-mix(in srgb, var(--dsw-alias-bg-layer-1) 62%, transparent);',
+     * 用户要求「观测台和侧栏能不能是透明的」。原先这里是**硬编码 62%**，
+     * 与用户的滑杆无关 —— 拖到 90% 也还是 62%，够不到「透明」。
+     *
+     * 现在改用 `--zf-rail-veil`：客户端按同一个 `keep`（= 1 - 滑杆值）
+     * 算出来写进 html，**与三列的纱同源**。滑杆拖满 → 观测台也接近全透。
+     *
+     * 兜底 `62%`：变量尚未写上时（插件未接管 / 样式表先到）保持一个可读的
+     * 值，不会变成全透明导致文字压不住。
+     *
+     * `backdrop-filter` 是**可读性的保险**：纱变薄后靠模糊把壁纸细节糊掉，
+     * 文字才不会与壁纸打架。18px 是实测下观感与性能的折中。
+     */
+    '  background:color-mix(in srgb, var(--dsw-alias-bg-layer-1) var(--zf-rail-veil, 62%), transparent);',
     '  border-left:1px solid var(--dsw-alias-border-l2);',
     '  backdrop-filter:blur(18px) saturate(1.1);',
     '  font-size:12px;color:var(--dsw-alias-label-primary);',

@@ -1679,19 +1679,27 @@ function shellDom (opts = {}) {
 {
   console.log('\n--- opacity 上限对齐 ---')
   const { normalizeSettings, BG_OPACITY_MAX } = await import('../src/settings.js')
-  ok('BG_OPACITY_MAX = 45', BG_OPACITY_MAX === 45, String(BG_OPACITY_MAX))
-  ok('normalizeSettings 放行 45',
-    normalizeSettings({ backgroundOpacity: 45 }).backgroundOpacity === 45)
+  // ⚠️ 断言用**常量本身**而不是写死数字 —— 上限会随需求调整
+  // （30 → 45 → 90，每次都为「用户要求更透」而提高），写死会让每次都要改这里。
+  // 这里要验的是「放行上限 / 夹回超限 / 两处字面量对齐」，不是那个数字本身。
+  ok('BG_OPACITY_MAX 是个正数上限', BG_OPACITY_MAX > 0 && BG_OPACITY_MAX <= 100,
+    String(BG_OPACITY_MAX))
+  ok('normalizeSettings 放行上限值',
+    normalizeSettings({ backgroundOpacity: BG_OPACITY_MAX }).backgroundOpacity === BG_OPACITY_MAX)
   ok('normalizeSettings 夹回超过上限的值',
-    normalizeSettings({ backgroundOpacity: 90 }).backgroundOpacity === 45)
+    normalizeSettings({ backgroundOpacity: BG_OPACITY_MAX + 10 }).backgroundOpacity === BG_OPACITY_MAX,
+    `传 ${BG_OPACITY_MAX + 10} 应夹回 ${BG_OPACITY_MAX}`)
   ok('backgroundCustom 已删除',
     !('backgroundCustom' in normalizeSettings({ backgroundCustom: 'x.png' })))
-  // client.js 里的三处字面量上限也要是 45（手写 bundle 不能 import）
+  // client.js 里的字面量上限也要等于常量（手写 bundle 不能 import，只能各写一份）
   const src = fs.readFileSync(path.join(ROOT, 'client.js'), 'utf8')
-  const mins = [...src.matchAll(/Math\.min\((\d+), settings\.backgroundOpacity\)/g)].map(m => m[1])
-  ok('client.js 的两处夹取都是 45', mins.length === 2 && mins.every(v => v === '45'),
-    mins.join(','))
-  ok('滑杆 max=45', /backgroundOpacity, min: 0, max: 45,/.test(src))
+  const mins = [...src.matchAll(/Math\.min\((\d+), settings\.backgroundOpacity\)/g)].map(m => Number(m[1]))
+  ok('client.js 的两处夹取都与 BG_OPACITY_MAX 相等',
+    mins.length === 2 && mins.every(v => v === BG_OPACITY_MAX),
+    `client=${mins.join(',')} settings=${BG_OPACITY_MAX}`)
+  ok('设置页滑杆 max 也与 BG_OPACITY_MAX 相等',
+    new RegExp(`backgroundOpacity, min: 0, max: ${BG_OPACITY_MAX},`).test(src),
+    `应含 max: ${BG_OPACITY_MAX}`)
   // railWidth 字面量与 settings.js 一致
   const rw = src.match(/Math\.max\((\d+), Math\.min\((\d+), Number\(s\?\.railWidth\) \|\| (\d+)\)\)/)
   ok('client.js railWidth 字面量 = 240/380/288',
@@ -3515,11 +3523,141 @@ function shellDom (opts = {}) {
   //
   // ⚠️ 在**原始 css**（不 strip 空格）上匹配：`color-mix(in srgb, …)` 函数
   // 内部本身就有空格，strip 之后反而对不上（这条断言因此误报过一次）。
-  ok('观测栏背景不透明度降到 62%',
-    /\.zf-rail\{[^}]*background:color-mix\(in srgb, var\(--dsw-alias-bg-layer-1\) 62%, transparent\)/.test(css),
-    '未在生成的 CSS 里找到 62% 的观测栏背景')
+  //
+  // 现在观测栏的背景走 `--zf-rail-veil`（跟随滑杆），不再硬编码 62% ——
+  // 那条由用例 67 详细覆盖，这里只确认「确实是变量驱动 + 有兜底」。
+  ok('观测栏背景由 --zf-rail-veil 驱动（不再硬编码）',
+    /\.zf-rail\{[^}]*var\(--zf-rail-veil, 62%\)/.test(css),
+    '未找到变量驱动的观测栏背景')
   ok('观测栏模糊提到 18px（配套：透更多但保住可读性）',
     /\.zf-rail\{[^}]*backdrop-filter:blur\(18px\)/.test(flat))
+}
+
+
+// 用例 67：观测台与侧栏的透明度跟随滑杆（用户「能不能是透明的」）
+//
+// 用户要求「观测台和侧栏能不能是透明的」。
+//
+// 原先两者不一致：
+//   · 侧栏   = `--zf-veil-sidebar`，跟随滑杆（`keep = 1 - 滑杆值`）
+//   · 观测台 = **硬编码 62%**，与滑杆无关 → 拖满也够不到「透明」
+//
+// 现在观测台改用 `--zf-rail-veil`（同一个 `keep` 算出的百分比），两者同源。
+// 同时把 `BG_OPACITY_MAX` 45 → 90：45% 时纱仍有 55% 不透明，够不到「透明」。
+//
+// ⚠️ `BG_OPACITY_MAX` 在 settings.js 与 client.js 里各有一份 ——
+// client.js 是手写 bundle（走 DSH 模块加载器）**不能 import**，所以只能是
+// 字面量。有断言锁住两处相等（改一处漏一处会被抓）。
+{
+  console.log('\n--- 观测台/侧栏透明度跟随滑杆 ---')
+  const { structureCss } = await import('../index.js')
+  const set = await import('../src/settings.js')
+  const css = structureCss()
+
+  // 1) 观测台用变量而不是硬编码
+  ok('观测台背景用 --zf-rail-veil（跟随滑杆）',
+    /\.zf-rail\{[^}]*background:color-mix\(in srgb, var\(--dsw-alias-bg-layer-1\) var\(--zf-rail-veil, 62%\), transparent\)/.test(css),
+    '仍是硬编码 → 拖滑杆不会变')
+  ok('有兜底 62%（变量没写上时不会全透明压不住字）',
+    css.includes('var(--zf-rail-veil, 62%)'))
+  ok('观测台保留 backdrop-filter（纱变薄后靠模糊保住可读性）',
+    /\.zf-rail\{[^}]*backdrop-filter:blur\(18px\)/.test(css))
+
+  // 2) 上限对齐（settings 与 client 各一份，必须相等）
+  const csrc = fs.readFileSync(path.join(ROOT, 'client.js'), 'utf8')
+  const MAX = set.BG_OPACITY_MAX
+  ok('BG_OPACITY_MAX 提到 90（45% 够不到透明）', MAX === 90, String(MAX))
+  const clientMaxes = [...csrc.matchAll(/Math\.min\((\d+), settings\.backgroundOpacity\)/g)].map(m => Number(m[1]))
+  ok('client.js 有两处 clamp', clientMaxes.length === 2, `实测 ${clientMaxes.length}`)
+  ok('两处 clamp 都与 BG_OPACITY_MAX 相等',
+    clientMaxes.every(v => v === MAX),
+    `client=${clientMaxes.join(',')} settings=${MAX}`)
+  const sliderMax = /value: settings\.backgroundOpacity, min: 0, max: (\d+),/.exec(csrc)
+  ok('设置页滑杆 max 也与 BG_OPACITY_MAX 相等',
+    sliderMax !== null && Number(sliderMax[1]) === MAX,
+    `滑杆=${sliderMax?.[1]} settings=${MAX}`)
+
+  // 3) 客户端确实写了 --zf-rail-veil（两处 + 停用清理）
+  const writes = (csrc.match(/setProperty\('--zf-rail-veil'/g) ?? []).length
+  ok('客户端有两处写 --zf-rail-veil（applyStyleVars + syncSchemeWallpaper）',
+    writes === 2, `实测 ${writes} 处`)
+  ok('写的是百分比字符串（color-mix 的第二个参数是百分比，不是 alpha）',
+    csrc.includes("`${Math.round(keep * 100)}%`"))
+  ok('停用时清理 --zf-rail-veil（回落 CSS 兜底）',
+    csrc.includes("removeProperty('--zf-rail-veil')"))
+
+  // 4) 真实引擎实测：滑杆不同档位下的实际 alpha
+  const { execFileSync } = await import('node:child_process')
+  const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
+  if (!fs.existsSync(EDGE)) {
+    console.log('  SKIP 无 Edge（Linux/CI）—— 真实引擎验证跳过')
+  } else {
+    const build = op => {
+      const keep = 1 - Math.max(0, Math.min(MAX, op)) / 100
+      return `<!DOCTYPE html><html data-zf-wallpaper="" style="
+        --zf-rail-veil:${Math.round(keep * 100)}%;
+        --zf-veil:rgba(22,22,19,${keep.toFixed(3)});
+        --zf-veil-sidebar:rgba(28,28,21,${keep.toFixed(3)});
+        --zf-rail-width:240px;">
+      <head><style>
+        body{ --dsw-alias-bg-layer-1:#1e1e17; --dsw-alias-bg-base:#161613;
+              --dsw-alias-border-l2:rgba(255,255,255,.12) }
+        .BynINW_frame{display:grid;grid-template-columns:280px minmax(0,1fr);height:120px}
+        .BynINW_sidebarCol{height:120px}
+        .BynINW_centerCol{height:120px}
+        ${structureCss()}
+      </style></head><body data-zf-wallpaper="">
+        <div class="BynINW_frame" data-zf-frame>
+          <div class="BynINW_sidebarCol" data-zf-sidebar id="sb">s</div>
+          <div class="BynINW_centerCol" data-zf-center id="cc">c</div>
+        </div>
+        <div class="zf-rail" id="rail">r</div>
+        <script>
+          const g = id => getComputedStyle(document.getElementById(id)).backgroundColor
+          document.title = JSON.stringify({ rail: g('rail'), sb: g('sb'), cc: g('cc') })
+        <\/script></body></html>`
+    }
+    // ⚠️ color-mix 的计算值是 `color(srgb r g b / a)`，**不是** rgba() ——
+    // 解析器要两种都认（第一版只认 rgba，导致 4 条断言误报）
+    const alphaOf = c => {
+      const s = String(c ?? '')
+      let m = /rgba?\(([^)]+)\)/.exec(s)
+      if (m !== null) {
+        const p = m[1].split(',').map(x => parseFloat(x))
+        return p.length === 4 ? p[3] : 1
+      }
+      m = /color\(srgb[^)]*\/\s*([\d.]+)\s*\)/.exec(s)
+      if (m !== null) return parseFloat(m[1])
+      return null
+    }
+    const rows = {}
+    for (const op of [14, 45, 90]) {
+      const f = path.join(os.tmpdir(), `zf-trans-${op}.html`)
+      fs.writeFileSync(f, build(op), 'utf8')
+      try {
+        const dom = execFileSync(EDGE, [
+          '--headless=new', '--disable-gpu', '--no-sandbox', '--virtual-time-budget=1200',
+          '--dump-dom', `file:///${f.replace(/\\/g, '/')}`
+        ], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] })
+        const m = /<title>([^<]*)<\/title>/.exec(dom)
+        rows[op] = m ? JSON.parse(m[1].replace(/&quot;/g, '"')) : null
+      } catch { rows[op] = null }
+    }
+    ok('拿到真实引擎计算值', rows[14] !== null && rows[90] !== null)
+    if (rows[14] !== null && rows[90] !== null) {
+      const a14 = alphaOf(rows[14].rail); const a90 = alphaOf(rows[90].rail)
+      ok('14% 时观测台 alpha≈0.86（默认观感不变）',
+        a14 !== null && Math.abs(a14 - 0.86) < 0.02, String(a14))
+      ok('90% 时观测台 alpha≈0.10（接近全透 —— 用户要的「透明」）',
+        a90 !== null && Math.abs(a90 - 0.10) < 0.02, String(a90))
+      ok('90% 时侧栏也 alpha≈0.10（与观测台同步）',
+        Math.abs(alphaOf(rows[90].sb) - 0.10) < 0.02, String(alphaOf(rows[90].sb)))
+      ok('观测台与侧栏在每一档都同步',
+        [14, 45, 90].every(op =>
+          Math.abs(alphaOf(rows[op].rail) - alphaOf(rows[op].sb)) < 0.02),
+        [14, 45, 90].map(op => `${op}:${alphaOf(rows[op].rail)}/${alphaOf(rows[op].sb)}`).join(' '))
+    }
+  }
 }
 
 console.log(`\n合计 ${pass + fail} 项，通过 ${pass}，失败 ${fail}`)
