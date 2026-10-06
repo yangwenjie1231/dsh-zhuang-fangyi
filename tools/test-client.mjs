@@ -3267,7 +3267,13 @@ function shellDom (opts = {}) {
 
   const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
   const edgeOk = fs.existsSync(EDGE)
-  ok('Edge 可用（真实引擎验证的前提）', edgeOk, '无 Edge 时该组自动跳过（CI 是 Linux）')
+  // ⚠️ 这里是**真实跳过**，不是「断言 Edge 存在」——
+  // CI 跑在 Linux 上没有 Edge，断言存在会让 CI 必然失败（踩过）。
+  // 本地（Windows）有 Edge 时才会真的跑这一组；跳过时打印一行说明，
+  // 避免「静默没跑」被误认为「跑过了」。
+  if (!edgeOk) {
+    console.log('  SKIP 无 Edge（Linux/CI）—— 真实引擎验证跳过；本地 Windows 会执行')
+  }
 
   if (edgeOk) {
     const html = `<!DOCTYPE html><html><head><style>
