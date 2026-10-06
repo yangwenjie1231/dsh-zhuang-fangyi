@@ -149,9 +149,37 @@ if (typeof dshEngine === 'string' && dshEngine !== '') {
 }
 
 // ── 4) 发行工程必备文件 ───────────────────────────────────────────────
-for (const f of ['LICENSE', 'README.md', 'PRIVACY.md', 'ASSETS-NOTICE.md']) {
+for (const f of ['LICENSE', 'README.md', 'CHANGELOG.md', 'PRIVACY.md', 'ASSETS-NOTICE.md']) {
   if (fs.existsSync(path.join(ROOT, f))) pass(`存在 ${f}`)
   else fail(`缺 ${f}`)
+}
+
+// ── 4b) 更新日志必须有当前版本的条目 ─────────────────────────────────
+// 防「改了版本号忘了写日志」—— 发版时最容易漏的一步，而且漏了没人会发现。
+//
+// ⚠️ 日期断言必须**锚定当前版本那一行**。第一版写的是
+// `/^## \[[^\]]+\] - (\d{4}-\d{2}-\d{2})$/m` —— 它匹配的是**任意**版本标题，
+// 所以把 0.4.2 那行的日期删掉照样通过（历史条目里还有带日期的）。用反例
+// 实测才发现这条断言是空转的。这类「断言写得比意图弱」的问题，只有拿
+// 反例去试才能暴露 —— 通过不等于有效。
+{
+  const changelog = fs.existsSync(path.join(ROOT, 'CHANGELOG.md'))
+    ? read('CHANGELOG.md')
+    : ''
+  // 转义版本号里的 `.`，否则 `0.4.2` 会匹配到 `0x4y2`
+  const esc = pkg.version.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const entry = changelog.match(new RegExp(`^## \\[${esc}\\](.*)$`, 'm'))
+  if (entry === null) {
+    fail(`CHANGELOG.md 里找不到当前版本的条目：期望一行以「## [${pkg.version}]」开头（改了 version 就要写日志）`)
+  } else {
+    pass(`CHANGELOG.md 有当前版本条目（## [${pkg.version}]）`)
+    const dated = entry[1].match(/^\s+-\s+(\d{4}-\d{2}-\d{2})\s*$/)
+    if (dated === null) {
+      fail(`CHANGELOG.md 的 [${pkg.version}] 标题缺日期或格式不对（应为「## [${pkg.version}] - YYYY-MM-DD」，实际是「## [${pkg.version}]${entry[1]}」）`)
+    } else {
+      pass(`CHANGELOG.md 的 [${pkg.version}] 带日期（${dated[1]}）`)
+    }
+  }
 }
 
 // ── 5) 零安装期脚本（供应链审查会看这条）─────────────────────────────

@@ -6,10 +6,10 @@
 
 | 渠道 | 命令 / 方式 | 状态 |
 |---|---|---|
-| **GitHub 直装** | `dsh plugin --profile desktop add github:yangwenjie1231/dsh-zhuang-fangyi` | ⏳ **需先推仓库**（当前无 git remote） |
-| **awesome-dsh-plugin** | PR 往列表仓加 `data/plugins/<owner>__dsh-zhuang-fangyi.yml` | ✅ 投稿文件已备（`submission/`），⏳ 需推仓库 + 仓库满 1 天 |
-| **dsh-market 社区索引** | PR 往 `zhu1090093659/dsh-community-plugins` 的 `community.json` 追加一条 | ⏳ 需先推仓库 |
-| **OMDSH Hub** | `package.json#dshWorkshop` + 钉 40 位 commit 的投稿 Issue | ✅ `dshWorkshop` 已就位并通过自检，⏳ 需推仓库后生成清单 |
+| **GitHub 直装** | `dsh plugin --profile desktop add github:yangwenjie1231/dsh-zhuang-fangyi` | ✅ **已可用**（仓库已公开、CI 全绿、clone 后素材齐全） |
+| **awesome-dsh-plugin** | PR 往列表仓加 `data/plugins/<owner>__dsh-zhuang-fangyi.yml` | ✅ 投稿文件已备（`submission/`），⏳ 需仓库满 1 天 |
+| **dsh-market 社区索引** | PR 往 `zhu1090093659/dsh-community-plugins` 的 `community.json` 追加一条 | ⏳ 未投稿 |
+| **OMDSH Hub** | `package.json#dshWorkshop` + 钉 40 位 commit 的投稿 Issue | ✅ `dshWorkshop` 已就位并通过自检，⏳ 未投稿 |
 | **npm** | `npm publish` | ⏳ 需账号与授权（`publishConfig.access: public` 已就位） |
 | **本地 ZIP** | `.\tools\package.ps1` | ✅ 已可用（含 SHA256SUMS + 构建标记） |
 
@@ -23,7 +23,9 @@
 - ✅ `dsh.engines.dsh = >=0.2.0-rc.2`（只声明实测过的版本，不猜）
 - ✅ `files` 白名单（含 `LICENSE`）
 - ✅ CI（语法 + 对比度 + 无头测试 + 清单自检）
-- ✅ `tools/check-manifest.mjs` 自检（23 项，防「声明与事实脱节」）
+- ✅ `tools/check-manifest.mjs` 自检（26 项，防「声明与事实脱节」）
+- ✅ `CHANGELOG.md`（0.2.0 起逐版记录；自检会校验「当前版本有带日期的条目」，
+      防止改了 `version` 忘记写日志）
 - ✅ `submission/` 投稿文件
 
 ## ⏳ 待办（需要用户操作或授权）
@@ -85,8 +87,8 @@
 ## 自检命令
 
 ```powershell
-node tools/check-manifest.mjs    # 发行清单与仓库事实一致性（23 项）
+node tools/check-manifest.mjs    # 发行清单与仓库事实一致性（26 项）
 node src/contrast.js             # 392 对比度 + 672 色相扫描
-node tools/test-client.mjs       # 574 无头测试
+node tools/test-client.mjs       # 933 无头测试（无 Edge 的环境 868 项）
 .\tools\package.ps1              # 打 ZIP（含 SHA256SUMS + 构建标记）
 ```

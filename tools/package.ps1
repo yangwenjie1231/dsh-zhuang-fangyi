@@ -32,7 +32,7 @@ if ([string]::IsNullOrWhiteSpace($Ver)) { throw 'package.json 缺少 version' }
 # 与 package.json 的 files 字段保持同源的发布清单（+ 文档 + 安装脚本）
 $RootFiles = @(
   'index.js', 'client.js', 'package.json', 'cordis.patch.yml',
-  'README.md', 'PRIVACY.md', 'ASSETS-NOTICE.md',
+  'README.md', 'CHANGELOG.md', 'PRIVACY.md', 'ASSETS-NOTICE.md',
   'install.ps1', 'uninstall.ps1'
 )
 $Dirs = @('src', 'art')
