@@ -53,10 +53,9 @@ window.__ModuleLoader__.load({
      */
     const FOLLOW = '__follow__'
     const SCHEMES = ['system', 'light', 'dark']
-    const BACKGROUNDS = [
-      'none', 'sakura', 'promo', 'pool', 'ultrawide', 'dark',
-      'portrait', 'vertical', 'contour'
-    ]
+    // `BACKGROUNDS` / `BG_LABELS` / `BG_GROUPS` / `BG_GROUP_OF` 在下方
+    // 「generated: wallpapers」块里（0.8.0 起由 `src/wallpaperCatalog.js` 生成，
+    // 不再手写 —— 59 张 × 3 处手抄必然漂移，这里只留指针防重复声明）。
     const POSITIONS = ['cover', 'right', 'tile']
 
     /**
@@ -385,11 +384,147 @@ window.__ModuleLoader__.load({
       cyan: { zh: '青', en: 'Cyan' },
       wine: { zh: '酒红', en: 'Wine red' }
     }
+    // >>> generated: wallpapers (do not edit) >>>
+    // ⚠ 以下三块由 `tools/gen-wallpapers.mjs` 从 `src/wallpaperCatalog.js` 自动生成。
+    //   客户端不能 import src/，所以必须是副本；生成器保证两侧一致。
+    const BACKGROUNDS = [
+      'none', 'sakura', 'promo', 'pool', 'ultrawide', 'dark', 'portrait', 'vertical', 'contour', 'off01', 'off02', 'off03', 'off04', 'off05', 'off06', 'off07', 'off08', 'off09', 'sce01', 'sce02', 'sce03', 'sce04', 'sce05', 'sce06', 'sce07', 'sce08', 'sce09', 'sce10', 'sce11', 'sce12', 'sce13', 'sce14', 'sce15', 'sce16', 'sce17', 'sce18', 'sce19', 'sce20', 'sce21', 'cha01', 'cha02', 'cha03', 'cha04', 'cha05', 'cha06', 'cha07', 'cha08', 'cha09', 'cha10', 'cha11', 'cha12', 'cha13', 'cha14', 'cha15', 'cha16', 'cha17', 'cha18', 'cha19', 'cha20'
+    ]
+
+    /** 壁纸 id → 中英标签（选择器与 aria-label 用）。 */
     const BG_LABELS = {
-      none: 'bgNone', sakura: 'bgSakura', promo: 'bgPromo', pool: 'bgPool',
-      ultrawide: 'bgUltrawide', dark: 'bgDark', portrait: 'bgPortrait',
-      vertical: 'bgVertical', contour: 'bgContour'
+      none: { zh: '无', en: 'None' },
+      sakura: { zh: '樱花树下', en: 'Under the cherry tree' },
+      promo: { zh: '宣传 CG · 双人', en: 'Promo CG · two leads' },
+      pool: { zh: '樱花池', en: 'Cherry-blossom pool' },
+      ultrawide: { zh: '超宽横幅 · 樱花', en: 'Ultrawide blossoms' },
+      dark: { zh: '暗调水面月影', en: 'Moonlit water' },
+      portrait: { zh: '干员立绘卡', en: 'Operator card' },
+      vertical: { zh: '竖版立绘循环', en: 'Vertical loop' },
+      contour: { zh: '等高线纹理', en: 'Contour lines' },
+      off01: { zh: '田野淡彩', en: 'Pastel fields' },
+      off02: { zh: '荷塘古树', en: 'Lotus pond & ancient tree' },
+      off03: { zh: '仙鹤云海', en: 'Cranes over cloud sea' },
+      off04: { zh: '水墨长枪', en: 'Ink-wash spear' },
+      off05: { zh: '溪谷气泡', en: 'Valley bubbles' },
+      off06: { zh: '白蝶环绕', en: 'White butterflies' },
+      off07: { zh: '白底立绘 · 全身', en: 'Full figure on white' },
+      off08: { zh: '蓝天梨树', en: 'Pear tree, blue sky' },
+      off09: { zh: '几何纹样 · 小兽', en: 'Geometry & critter' },
+      sce01: { zh: '霓虹星空', en: 'Neon starfield' },
+      sce02: { zh: '樱花回眸', en: 'Blossom glance' },
+      sce03: { zh: '花枝云海', en: 'Blossoms & cloud sea' },
+      sce04: { zh: '莲花池', en: 'Lotus pond' },
+      sce05: { zh: '白花逆光', en: 'Backlit blossoms' },
+      sce06: { zh: '卧姿立绘', en: 'Reclining figure' },
+      sce07: { zh: '水墨淡彩', en: 'Muted ink wash' },
+      sce08: { zh: '绘本光斑', en: 'Storybook bokeh' },
+      sce09: { zh: '樱花远景', en: 'Blossom vista' },
+      sce10: { zh: '荷塘绿调', en: 'Lotus greens' },
+      sce11: { zh: '林间逆光', en: 'Forest backlight' },
+      sce12: { zh: '红墙竹林', en: 'Red wall & bamboo' },
+      sce13: { zh: '实机 · 室内', en: 'In-game interior' },
+      sce14: { zh: '月洞门庭院', en: 'Moon-gate courtyard' },
+      sce15: { zh: '拔刀动作', en: 'Blade draw' },
+      sce16: { zh: '黄绿涂鸦', en: 'Yellow-green graffiti' },
+      sce17: { zh: '暖木长廊', en: 'Warm wooden hall' },
+      sce18: { zh: '湖畔灰绿', en: 'Lakeside grey-green' },
+      sce19: { zh: '白花枝头', en: 'White blossoms' },
+      sce20: { zh: '宽幅雪景', en: 'Ultrawide snow' },
+      sce21: { zh: '朦胧厚涂', en: 'Soft impasto' },
+      cha01: { zh: '雾中执器', en: 'Mist & instrument' },
+      cha02: { zh: '夜樱双人', en: 'Night blossoms, two' },
+      cha03: { zh: '双人立绘', en: 'Two figures' },
+      cha04: { zh: '樱花林半身', en: 'Blossom grove' },
+      cha05: { zh: '绿调全身', en: 'Full figure, green' },
+      cha06: { zh: '深底礼服', en: 'Gown on dark' },
+      cha07: { zh: '暗青飘带', en: 'Dark teal ribbons' },
+      cha08: { zh: '夜色长裙', en: 'Night gown' },
+      cha09: { zh: '夜巷侠客', en: 'Night alley' },
+      cha10: { zh: '白底单体', en: 'Solo on white' },
+      cha11: { zh: '光效飘带', en: 'Light trails' },
+      cha12: { zh: '蓝天白云', en: 'Blue sky' },
+      cha13: { zh: '侧颜特写', en: 'Profile portrait' },
+      cha14: { zh: '暖光坐姿', en: 'Warm light, seated' },
+      cha15: { zh: '便服半身', en: 'Casual half-length' },
+      cha16: { zh: '黄昏逆光', en: 'Dusk backlight' },
+      cha17: { zh: '黑裙暖光', en: 'Black gown, warm light' },
+      cha18: { zh: '白花散落', en: 'Scattered petals' },
+      cha19: { zh: '樱花覆水', en: 'Blossoms on water' },
+      cha20: { zh: '暗蓝全身', en: 'Full figure on dark blue' },
     }
+
+    /** 壁纸分组（选择器按组显示标题）。 */
+    const BG_GROUPS = [
+      { id: 'official', zh: '官方物料', en: 'Official' },
+      { id: 'scene', zh: '场景与横图', en: 'Scenery' },
+      { id: 'char', zh: '角色竖图', en: 'Character' },
+      { id: 'texture', zh: '纹理与极简', en: 'Texture' },
+    ]
+
+    /** 壁纸 id → 分组 id。 */
+    const BG_GROUP_OF = {
+      none: 'texture',
+      sakura: 'scene',
+      promo: 'scene',
+      pool: 'scene',
+      ultrawide: 'scene',
+      dark: 'scene',
+      portrait: 'char',
+      vertical: 'char',
+      contour: 'texture',
+      off01: 'official',
+      off02: 'official',
+      off03: 'official',
+      off04: 'official',
+      off05: 'official',
+      off06: 'official',
+      off07: 'official',
+      off08: 'official',
+      off09: 'official',
+      sce01: 'scene',
+      sce02: 'scene',
+      sce03: 'scene',
+      sce04: 'scene',
+      sce05: 'scene',
+      sce06: 'scene',
+      sce07: 'scene',
+      sce08: 'scene',
+      sce09: 'scene',
+      sce10: 'scene',
+      sce11: 'scene',
+      sce12: 'scene',
+      sce13: 'scene',
+      sce14: 'scene',
+      sce15: 'scene',
+      sce16: 'scene',
+      sce17: 'scene',
+      sce18: 'scene',
+      sce19: 'scene',
+      sce20: 'scene',
+      sce21: 'scene',
+      cha01: 'char',
+      cha02: 'char',
+      cha03: 'char',
+      cha04: 'char',
+      cha05: 'char',
+      cha06: 'char',
+      cha07: 'char',
+      cha08: 'char',
+      cha09: 'char',
+      cha10: 'char',
+      cha11: 'char',
+      cha12: 'char',
+      cha13: 'char',
+      cha14: 'char',
+      cha15: 'char',
+      cha16: 'char',
+      cha17: 'char',
+      cha18: 'char',
+      cha19: 'char',
+      cha20: 'char',
+    }
+    // <<< generated: wallpapers <<<
     const POS_LABELS = { cover: 'posCover', right: 'posRight', tile: 'posTile' }
 
     const inject = ['theme', 'slots', 'locale']
@@ -444,8 +579,12 @@ window.__ModuleLoader__.load({
      * 自定义图**没有固定 URL**（文件名是上传时才生成的），走不了那张静态表 ——
      * 只能由客户端直接写 `url(...)`。
      *
-     * ⚠️ 自定义图**不拼 `-dark`**：用户只上传一张，明暗两套共用（产品决定）。
-     * 拼了会指向一个不存在的文件 → 一切到深色背景就消失。
+     * ⚠️ **不拼 `-dark`**（0.8.0 起，产品决定：壁纸不再分明暗两版）。
+     * 原先内置图在深色下拼 `--zf-art-<id>-dark`、自定义图不拼 —— 两套行为
+     * 纯属历史包袱：`prepare-art.py` 的压暗收益本来就小（壁纸默认 14% 不透明，
+     * 正文可读性靠纱层 + 观测栏的 backdrop-filter 兜），却让每张图多产出
+     * 一个文件、两个 CSS 变量、一张缩略图。现在统一「一张图、明暗共用」，
+     * 与自定义图行为一致。`scheme` 参数保留（调用方还有别处用）。
      *
      * @param {object} settings
      * @param {'light'|'dark'} scheme
@@ -458,7 +597,7 @@ window.__ModuleLoader__.load({
         if (custom === null || custom === undefined || typeof custom.file !== 'string') return 'none'
         return `url("${ROUTE}/backgrounds/${encodeURIComponent(custom.file)}")`
       }
-      return `var(--zf-art-${settings.background}${scheme === 'dark' ? '-dark' : ''})`
+      return `var(--zf-art-${settings.background})`
     }
 
     /**
@@ -1711,6 +1850,24 @@ window.__ModuleLoader__.load({
           if (typeof hit === 'string' && hit !== key) return hit
         } catch { /* 未注册时回落 */ }
         return DICT.zh[key] ?? key
+      }
+
+      /**
+       * 壁纸标签读取器（0.8.0）。
+       *
+       * 59 张壁纸的中英名**不再进 DICT**（那是 3 处手抄漂移的根源），改由
+       * `src/wallpaperCatalog.js` 生成、直接存在 `BG_LABELS` 里。这里只需要
+       * 知道「当前该读 zh 还是 en」—— 用一个两边译文必然不同的探针键问
+       * `t()`：返回 zh 译文就是中文界面。
+       *
+       * 为什么不走 `locale.bind()` 拿语言码：宿主的 locale API 只提供「按键取词」，
+       * 不保证暴露当前语言标识；探测键在两种实现下都成立，是更薄的依赖。
+       */
+      const bgLang = () => (t('bgNone') === '无' ? 'zh' : 'en')
+      const bgLabel = b => {
+        const hit = BG_LABELS[b]
+        if (!hit) return b
+        return hit[bgLang()] ?? hit.zh ?? b
       }
 
       /** 运行时状态。 */
@@ -3206,49 +3363,67 @@ window.__ModuleLoader__.load({
 
           h(Group, { groupId: 'wallpaper' }),
           h(Row, { label: t('background') },
-            // 缩略图条（对标 Mornye 的所见即所得）：8 张 +「无」，点即选。
-            // 文件名不另存映射 —— 壁纸命名是规则的 `wallpaper-<id>.webp`
-            // （测试锁这个约定），明暗版加 `-dark`。
-            h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6, justifyContent: 'flex-end', maxWidth: 300 } },
-              ...BACKGROUNDS.map(b => {
-                const pressed = settings.background === b
-                const file = b === 'none'
-                  ? null
-                  : `wallpaper-${b}${isDarkActive(settings) ? '-dark' : ''}.webp`
-                // 本预设的推荐壁纸 —— **只标记，不自动应用**。
-                // 用户明确要求：配套壁纸仅作推荐，切换预设不改 settings.background。
-                //
-                // C13：用**当前明暗档位实际生效**的预设，而不是主预设 ——
-                // 否则分档后浅色档的标记会指向深色档预设的配套图。
-                const recommended = isRecommendedArt(state.presetStyles, presetForScheme(settings, currentScheme(theme)), b)
-                const label = t(BG_LABELS[b])
-                return h('button', {
-                  key: b, type: 'button',
-                  className: recommended ? 'zf-art-recommended' : undefined,
-                  'data-zf-recommended': recommended ? 'true' : undefined,
-                  title: recommended ? `${label}${t('presetRecommend')}` : label,
-                  'aria-label': recommended ? `${label}${t('presetRecommend')}` : label,
-                  'aria-pressed': pressed ? 'true' : 'false',
-                  onClick: () => set({ background: b }),
+            // 缩略图条（所见即所得）。
+            //
+            // 0.8.0 起壁纸从 8 张扩到 58 张，原来「一个 flexWrap 平铺 59 格」
+            // 会把设置面板撑出十来行，所以改成**按组分节 + 可滚动**：
+            //   · 组标题用小字，组内才是缩略图；
+            //   · 容器限高滚动（160px ≈ 两行缩略图），滚轮/触摸都能滑；
+            //   · `<img loading="lazy">` 让没滚到的组不发起请求（59 个请求 → 实际可见的十几个）。
+            // 优化前是 3 处手抄清单 + 一个平铺 div；清单已由生成器接管（见文件头生成标记）。
+            h('div', {
+              style: {
+                display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'flex-end',
+                maxWidth: 300, maxHeight: 168, overflowY: 'auto', overscrollBehavior: 'contain',
+                paddingRight: 2, boxSizing: 'border-box'
+              }
+            },
+            ...BG_GROUPS.map(g => {
+              const ids = BACKGROUNDS.filter(b => BG_GROUP_OF[b] === g.id)
+              if (!ids.length) return null
+              return h('div', { key: g.id, style: { width: '100%' } },
+                h('div', {
                   style: {
-                    padding: 0, width: 64, height: 40, borderRadius: 7, overflow: 'hidden',
-                    cursor: 'pointer', boxSizing: 'border-box',
-                    border: pressed
-                      ? '2px solid var(--dsw-alias-brand-primary)'
-                      : '1px solid var(--dsw-alias-border-l2)',
-                    background: 'var(--dsw-alias-bg-layer-1)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center'
+                    fontSize: 10, lineHeight: '14px', marginBottom: 3,
+                    color: 'var(--dsw-alias-label-tertiary)', textAlign: 'right'
                   }
-                },
-                file === null
-                  ? h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-tertiary)' } }, t('bgNone'))
-                  : h('img', {
-                      src: `${ROUTE}/art/thumbs/${file}`,
-                      alt: t(BG_LABELS[b]),
-                      loading: 'lazy',
-                      style: { width: '100%', height: '100%', objectFit: 'cover', display: 'block' }
-                    }))
-              }),
+                }, bgLang() === 'zh' ? g.zh : g.en),
+                h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6, justifyContent: 'flex-end' } },
+                  ...ids.map(b => {
+                    const pressed = settings.background === b
+                    const file = b === 'none' ? null : `wallpaper-${b}.webp`
+                    // 本预设的推荐壁纸 —— **只标记，不自动应用**（用户明确要求）。
+                    const recommended = isRecommendedArt(state.presetStyles, presetForScheme(settings, currentScheme(theme)), b)
+                    const label = bgLabel(b)
+                    return h('button', {
+                      key: b, type: 'button',
+                      className: recommended ? 'zf-art-recommended' : undefined,
+                      'data-zf-recommended': recommended ? 'true' : undefined,
+                      title: recommended ? `${label}${t('presetRecommend')}` : label,
+                      'aria-label': recommended ? `${label}${t('presetRecommend')}` : label,
+                      'aria-pressed': pressed ? 'true' : 'false',
+                      onClick: () => set({ background: b }),
+                      style: {
+                        padding: 0, width: 64, height: 40, borderRadius: 7, overflow: 'hidden',
+                        cursor: 'pointer', boxSizing: 'border-box',
+                        border: pressed
+                          ? '2px solid var(--dsw-alias-brand-primary)'
+                          : '1px solid var(--dsw-alias-border-l2)',
+                        background: 'var(--dsw-alias-bg-layer-1)',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center'
+                      }
+                    },
+                    file === null
+                      ? h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-tertiary)' } }, t('bgNone'))
+                      : h('img', {
+                          src: `${ROUTE}/art/thumbs/${file}`,
+                          alt: label,
+                          loading: 'lazy',
+                          style: { width: '100%', height: '100%', objectFit: 'cover', display: 'block' }
+                        }))
+                  }))
+              )
+            }),
               // ── 自定义背景（v7）──────────────────────────────────────────
               //
               // 与内置图同尺寸并列（所见即所得），末尾再跟一个「＋」上传格。
@@ -3662,11 +3837,10 @@ window.__ModuleLoader__.load({
             h('div', { className: 'zf-rail__artgrid' },
               ...BACKGROUNDS.filter(b => b !== 'none').map(b => {
                 const pressed = settings.background === b
-                // 明暗从 DOM 读（与壁纸同步同一判据，必然一致）
-                const file = `wallpaper-${b}${isDarkActive(settings) ? '-dark' : ''}.webp`
+                const file = `wallpaper-${b}.webp`
                 // C13：同设置页 —— 用当前明暗档位实际生效的预设
                 const recommended = isRecommendedArt(state.presetStyles, presetForScheme(settings, currentScheme(theme)), b)
-                const label = t(BG_LABELS[b])
+                const label = bgLabel(b)
                 return h('button', {
                   key: b,
                   type: 'button',

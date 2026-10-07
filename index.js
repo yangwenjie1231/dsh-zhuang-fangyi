@@ -208,6 +208,9 @@ const MIME = {
 /**
  * 白名单：只服务本插件 art/ 下的已知文件，客户端不能任意指定路径。
  * 由 BACKGROUNDS + 固定图标清单派生，避免目录遍历。
+ *
+ * 0.8.0 起壁纸不再分明暗两版（一张图明暗共用），所以只登记 `x.webp`
+ * 和 `thumbs/x.webp` —— 58 张 × 2 = 116 项，比原先的 232 项少一半。
  */
 function artWhitelist () {
   const out = new Set()
@@ -215,12 +218,8 @@ function artWhitelist () {
     const file = BACKGROUNDS[id]
     if (file === null) continue
     out.add(file)
-    // 明暗两版：`x.webp` / `x-dark.webp`
-    const darkFile = file.replace(/\.webp$/, '-dark.webp')
-    out.add(darkFile)
-    // 设置页缩略图：`thumbs/x.webp` / `thumbs/x-dark.webp`（prepare-art 产出）
+    // 设置页缩略图：`thumbs/x.webp`（prepare-art 产出）
     out.add(`thumbs/${file}`)
-    out.add(`thumbs/${darkFile}`)
   }
   out.add('contour.webp')
   out.add('avatar.webp')
@@ -397,10 +396,8 @@ export function structureCss () {
   const artVars = []
   for (const [id, file] of Object.entries(BACKGROUNDS)) {
     if (file === null) continue
-    const dark = file.endsWith('.webp') ? `${file.slice(0, -'.webp'.length)}-dark.webp` : file
     const url = name => `url("${ROUTE_PREFIX}/art/${encodeURIComponent(name)}")`
     artVars.push(`  --zf-art-${id}:${url(file)};`)
-    artVars.push(`  --zf-art-${id}-dark:${url(dark)};`)
   }
 
   // 模糊层：只对壁纸本身模糊。

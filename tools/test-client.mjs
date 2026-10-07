@@ -805,7 +805,8 @@ console.log('庄方宜主题 · 浏览器半边无头测试\n')
   const { h } = await boot({ ...baseSettings, scheme: 'dark' })
   ok('preference 切到注册主题', h.getPreference() === 'zhuang-dark', h.getPreference())
   ok('未额外挂 token 层（由主题接管）', !h.layers.has('dsh-zhuang-fangyi'))
-  ok('壁纸切到暗色版', h.dom.html.props.get('--zf-art-src') === 'var(--zf-art-sakura-dark)', h.dom.html.props.get('--zf-art-src'))
+  // 0.8.0 起壁纸明暗共用一张：切深色只换纱色，`--zf-art-src` 不再拼 -dark
+  ok('深色下壁纸仍指向同一变量（无 -dark）', h.dom.html.props.get('--zf-art-src') === 'var(--zf-art-sakura)', h.dom.html.props.get('--zf-art-src'))
   ok('纱用暗色角色', /rgba\(23, 24, 21, 0\.860\)/.test(h.dom.html.props.get('--zf-veil') ?? ''), h.dom.html.props.get('--zf-veil'))
 }
 
@@ -851,7 +852,7 @@ console.log('庄方宜主题 · 浏览器半边无头测试\n')
   const { h } = await boot({ ...baseSettings })
   h.dom.body.setAttribute('data-ds-dark-theme', '')
   for (const fn of h.listeners.get('theme/change') ?? []) fn()
-  ok('壁纸切到暗色图', h.dom.html.props.get('--zf-art-src') === 'var(--zf-art-sakura-dark)', h.dom.html.props.get('--zf-art-src'))
+  ok('深浅切换壁纸变量不变（明暗共用一张图）', h.dom.html.props.get('--zf-art-src') === 'var(--zf-art-sakura)', h.dom.html.props.get('--zf-art-src'))
   ok('纱同步切到暗色角色', /rgba\(23, 24, 21, 0\.860\)/.test(h.dom.html.props.get('--zf-veil') ?? ''), h.dom.html.props.get('--zf-veil'))
   h.dom.body.removeAttribute('data-ds-dark-theme')
   for (const fn of h.listeners.get('theme/change') ?? []) fn()
@@ -1883,18 +1884,16 @@ function shellDom (opts = {}) {
   const mismatch = idList.filter(b => BG_FILES[b] !== `wallpaper-${b}.webp`)
   ok('壁纸文件名规则：BACKGROUNDS[id] === wallpaper-<id>.webp', mismatch.length === 0,
     mismatch.join(','))
-  ok('背景预设 8 张（含 none）', idList.length === 8, String(idList.length))
+  ok('背景预设 58 张（不含 none）', idList.length === 58, String(idList.length))
 
-  // 2) 缩略图真的生成了（prepare-art 产出 16 张）
+  // 2) 缩略图真的生成了（0.8.0 起单版本：每张一张缩略图，不再有 -dark）
   const thumbDir = path.join(ROOT, 'art', 'thumbs')
   const missing = []
   for (const b of idList) {
-    for (const dark of ['', '-dark']) {
-      const f = path.join(thumbDir, `wallpaper-${b}${dark}.webp`)
-      if (!fs.existsSync(f)) missing.push(`wallpaper-${b}${dark}.webp`)
-    }
+    const f = path.join(thumbDir, `wallpaper-${b}.webp`)
+    if (!fs.existsSync(f)) missing.push(`wallpaper-${b}.webp`)
   }
-  ok('缩略图 16 张已生成', fs.existsSync(thumbDir) && missing.length === 0, missing.join(','))
+  ok('缩略图 58 张已生成（单版本）', fs.existsSync(thumbDir) && missing.length === 0, missing.slice(0, 6).join(','))
 
   // 3) 宿主白名单覆盖 thumbs/（否则路由 404）
   const hostSrc = fs.readFileSync(path.join(ROOT, 'index.js'), 'utf8')
@@ -1916,24 +1915,25 @@ function shellDom (opts = {}) {
   }
   const sectionTree = sectionReg.component({})
   const thumbs = collect(sectionTree, []).filter(s => s.includes('/art/thumbs/'))
-  ok('缩略条渲染 8 张图', thumbs.length === 8, `实际 ${thumbs.length}`)
+  // 0.8.0：58 张内置 + 1 个「无」格（无格没有 img）。分组渲染不影响 img 总数。
+  ok('缩略条渲染 58 张图', thumbs.length === 58, `实际 ${thumbs.length}`)
+  // 明暗不再分版：浅深两档用的都是同一批 `wallpaper-<id>.webp`。
   // 用**集合比对**而不是子串：预设 id 里有 `dark`（暗调水面月影），
-  // 它的亮图 `wallpaper-dark.webp` 本身就含 `-dark.webp` 子串 —— 子串判断会误判
+  // 它的 `wallpaper-dark.webp` 本身就含 `-dark.webp` 子串 —— 子串判断会误判。
   const lightFiles = new Set(idList.map(b => `wallpaper-${b}.webp`))
-  const darkFiles = new Set(idList.map(b => `wallpaper-${b}-dark.webp`))
   const nameOf = s => s.split('/art/thumbs/')[1]
-  ok('浅色 scheme 用亮图', thumbs.every(s => lightFiles.has(nameOf(s))),
-    thumbs.filter(s => !lightFiles.has(nameOf(s))).map(nameOf).join(','))
+  ok('缩略图全部指向单版本文件', thumbs.every(s => lightFiles.has(nameOf(s))),
+    thumbs.filter(s => !lightFiles.has(nameOf(s))).map(nameOf).slice(0, 6).join(','))
   ok('含所选 wallpaper-pool', thumbs.some(s => s.endsWith('/wallpaper-pool.webp')))
 
-  // 5) 固定深色 → 8 张暗图文件名（每张 = 亮图名 + -dark）
+  // 5) 固定深色 → **同样这批文件**（0.8.0 起明暗共用，不再有 -dark 变体）
   const b2 = await boot({ ...baseSettings, scheme: 'dark' })
   const thumbsDark = collect(
     b2.h.slotRegistrations.find(r => r.meta.name === 'settings.section').component({}), []
   ).filter(s => s.includes('/art/thumbs/'))
-  ok('深色 scheme 用暗图',
-    thumbsDark.length === 8 && thumbsDark.every(s => darkFiles.has(nameOf(s))),
-    thumbsDark.filter(s => !darkFiles.has(nameOf(s))).map(nameOf).join(','))
+  ok('深色 scheme 用同一批图（无 -dark）',
+    thumbsDark.length === thumbs.length && thumbsDark.every(s => lightFiles.has(nameOf(s))),
+    thumbsDark.filter(s => !lightFiles.has(nameOf(s))).map(nameOf).slice(0, 6).join(','))
 
   // 6) 文案对齐实际行为（顶栏移除后的双路径）
   ok('railHint 提到官方标签页', a.mod.__test.DICT.zh.railHint.includes('标签页'))
@@ -2112,8 +2112,8 @@ function shellDom (opts = {}) {
     .map(x => JSON.parse(x.init.body).wallpaper)
     .filter(Boolean)
     .pop()
-  ok('深色引用 -dark 变量',
-    typeof wpDark.artSrc === 'string' && wpDark.artSrc.includes('--zf-art-sakura-dark'), wpDark.artSrc)
+  ok('深色引用同一变量（0.8.0 明暗共用）',
+    typeof wpDark.artSrc === 'string' && wpDark.artSrc.includes('--zf-art-sakura') && !wpDark.artSrc.includes('-dark'), wpDark.artSrc)
 
   // 4) 不透明度直接决定纱的 alpha（这条把「壁纸看不见」量化为可断言的值）
   const strong = await boot({ ...baseSettings, background: 'sakura', backgroundOpacity: 45 })
@@ -2180,16 +2180,18 @@ function shellDom (opts = {}) {
   // ② 清单：竖图必须是 contain（这是 B 方案的依据）
   const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'art', 'wallpapers.json'), 'utf8'))
   const items = manifest.wallpapers
-  ok('清单存在且非空', Object.keys(items).length === 16, String(Object.keys(items).length))
-  const portrait = Object.entries(items).filter(([k]) => k.includes('portrait') || k.includes('vertical'))
-  ok('竖图 4 张（portrait/vertical × 明暗）', portrait.length === 4, String(portrait.length))
-  ok('竖图全部标 contain', portrait.every(([, v]) => v.fit === 'contain'),
-    portrait.filter(([, v]) => v.fit !== 'contain').map(([k]) => k).join(','))
-  const landscape = Object.entries(items).filter(([k]) => !(k.includes('portrait') || k.includes('vertical')))
-  ok('横图全部标 cover', landscape.every(([, v]) => v.fit === 'cover'),
-    landscape.filter(([, v]) => v.fit !== 'cover').map(([k]) => k).join(','))
-  ok('竖图宽高比 < 0.87', portrait.every(([, v]) => v.ratio < 0.87),
-    portrait.map(([, v]) => v.ratio).join(','))
+  ok('清单存在且非空（58 张单版本）', Object.keys(items).length === 58, String(Object.keys(items).length))
+  // 竖图判定不再按名字猜（0.8.0 有 25 张 contain）：直接数 fit 字段，
+  // 名字里带 portrait/vertical 的旧判据只覆盖老命名，会漏掉新竖图。
+  const contains = Object.entries(items).filter(([, v]) => v.fit === 'contain')
+  const covers = Object.entries(items).filter(([, v]) => v.fit === 'cover')
+  ok('contain 与 cover 数量对上（25 / 33）', contains.length === 25 && covers.length === 33,
+    `contain=${contains.length} cover=${covers.length}`)
+  ok('竖图全部标 contain', contains.every(([, v]) => v.fit === 'contain'))
+  ok('contain 全部宽高比 < 0.87', contains.every(([, v]) => v.ratio < 0.87),
+    contains.filter(([, v]) => v.ratio >= 0.87).map(([k]) => k).join(','))
+  ok('cover 全部宽高比 ≥ 0.87', covers.every(([, v]) => v.ratio >= 0.87),
+    covers.filter(([, v]) => v.ratio < 0.87).map(([k]) => k).join(','))
 
   // ③ 客户端行为：竖图 → contain + 垫底；横图 → cover + 无垫底
   const vert = await boot(
@@ -2241,8 +2243,9 @@ function shellDom (opts = {}) {
     { ...baseSettings, background: 'portrait', scheme: 'dark' },
     { wallpaperMeta: items }
   )
-  ok('深色竖图垫底指向 -dark 版',
-    String(darkVert.h.dom.html.props.get('--zf-art-backdrop')).includes('--zf-art-portrait-dark'),
+  ok('深色竖图垫底指向同一版（明暗共用）',
+    String(darkVert.h.dom.html.props.get('--zf-art-backdrop')).includes('--zf-art-portrait') &&
+      !String(darkVert.h.dom.html.props.get('--zf-art-backdrop')).includes('-dark'),
     String(darkVert.h.dom.html.props.get('--zf-art-backdrop')))
 }
 // 用例 50：设置 v3 —— accentHue 强调色 + motion 静止模式
@@ -3241,21 +3244,17 @@ function shellDom (opts = {}) {
   const missingBg = []
   for (const id of BG) {
     if (id === 'none') continue
-    for (const suffix of ['', '-dark']) {
-      const rel = `art/wallpaper-${id}${suffix}.webp`
-      if (!tracked(rel)) missingBg.push(rel)
-    }
+    const rel = `art/wallpaper-${id}.webp`
+    if (!tracked(rel)) missingBg.push(rel)
   }
-  ok('全部壁纸（明暗两版）已入库', missingBg.length === 0, missingBg.slice(0, 4).join(', '))
+  ok('全部壁纸（单版本）已入库', missingBg.length === 0, missingBg.slice(0, 4).join(', '))
 
   // 3) 缩略图（设置页壁纸选择器要显示它们）
   const missingThumb = []
   for (const id of BG) {
     if (id === 'none') continue
-    for (const suffix of ['', '-dark']) {
-      const rel = `art/thumbs/wallpaper-${id}${suffix}.webp`
-      if (!tracked(rel)) missingThumb.push(rel)
-    }
+    const rel = `art/thumbs/wallpaper-${id}.webp`
+    if (!tracked(rel)) missingThumb.push(rel)
   }
   ok('全部缩略图已入库（否则设置页缩略图条裂图）',
     missingThumb.length === 0, missingThumb.slice(0, 4).join(', '))
@@ -3322,19 +3321,38 @@ function shellDom (opts = {}) {
   ok('注释剥除有效（注释里的 t(\'…\') 不再被当成调用）',
     stripComments("/* t('ghostA') */ const x = 1 // t('ghostB')").includes('ghost') === false)
 
-  // 2) BG_LABELS 的值必须是 DICT 键，且该键存在
-  const bgBlock = /const BG_LABELS = \{([\s\S]*?)\n      \}/.exec(csrc)
+  // 2) BG_LABELS（0.8.0 重构）：不再是「id → DICT 键」，而是直接 {zh, en} ——
+  //    59 条中文名走 DICT 要手抄三处（BG_LABELS + zh/en DICT），必然漂移。
+  //    现在目录是唯一来源，客户端由生成器产出、测试核对与 src/ 一致。
+  const bgBlock = /const BG_LABELS = \{([\s\S]*?)\n    \}/.exec(csrc)
   ok('找到 BG_LABELS 定义', bgBlock !== null)
-  const bgPairs = [...(bgBlock?.[1] ?? '').matchAll(/(\w+):\s*'(\w+)'/g)].map(m => [m[1], m[2]])
-  ok('BG_LABELS 条目数 ≥ 9', bgPairs.length >= 9, `实测 ${bgPairs.length}`)
-  const badBg = bgPairs.filter(([, key]) => zh[key] === undefined)
-  ok('BG_LABELS 的每个值都是存在的 DICT 键',
-    badBg.length === 0, badBg.map(([id, k]) => `${id}→${k}`).join(', '))
+  const bgPairs = [...(bgBlock?.[1] ?? '').matchAll(/(\w+): \{ zh: '([^']*)', en: '([^']*)' \}/g)]
+    .map(m => [m[1], m[2], m[3]])
+  ok('BG_LABELS 条目数 = 59（58 壁纸 + none）', bgPairs.length === 59, `实测 ${bgPairs.length}`)
+  ok('BG_LABELS 每条都带中英双语',
+    bgPairs.every(([, zh, en]) => zh.length > 0 && en.length > 0),
+    bgPairs.filter(([, zh, en]) => !zh || !en).map(([id]) => id).join(','))
+  // 与 src/wallpaperCatalog.js 逐条一致（防两份清单漂移 —— 本仓库的惯用事故）。
+  // `none` 不是壁纸、不在 WALLPAPERS 里（单独的 BACKGROUND_NONE），单独断言。
+  ok('BG_LABELS.none 是 无/None', (() => {
+    const n = bgPairs.find(([id]) => id === 'none')
+    return n && n[1] === '无' && n[2] === 'None'
+  })())
+  const catSrc = fs.readFileSync(path.join(ROOT, 'src', 'wallpaperCatalog.js'), 'utf8')
+  const catPairs = [...catSrc.matchAll(/W\('(\w+)',\s*'[^']*',\s*'([^']*)',\s*'([^']*)'/g)]
+    .map(m => [m[1], m[2], m[3]])
+  ok('目录条目数 = 58', catPairs.length === 58, `实测 ${catPairs.length}`)
+  const catMap = new Map(catPairs.map(([id, zh, en]) => [id, { zh, en }]))
+  const drift = bgPairs.filter(([id, zh, en]) => id !== 'none').filter(([id, zh, en]) => {
+    const c = catMap.get(id)
+    return !c || c.zh !== zh || c.en !== en
+  })
+  ok('BG_LABELS 与 wallpaperCatalog 逐条一致', drift.length === 0,
+    drift.slice(0, 4).map(([id]) => id).join(','))
 
-  // 3) BG_LABELS 是「id → DICT 键」，**不是** {zh, en} —— 断言源码里没有误用
-  ok('BG_LABELS 没有被当成 {zh,en} 用（`BG_LABELS[...]?.[\'zh\']`）',
-    !/BG_LABELS\[[^\]]+\]\?\.\['zh'\]/.test(csrc),
-    '这会让界面回落到原始 id（用户截图里的 sakura/promo/pool）')
+  // 3) BG_LABELS **不是** id → DICT 键 —— 断言没有回退到旧写法
+  ok('BG_LABELS 不再走 DICT 键（没有 \'bgSakura\' 这类键名）',
+    !/sakura:\s*'bg\w+'/.test(csrc))
 
   // 4) PRESET_LABELS 反过来是 {zh, en}，断言它没有被 t() 包（那样会显示键名）
   const presetBlock = /const PRESET_LABELS = \{([\s\S]*?)\n      \}/.exec(csrc)
@@ -3361,8 +3379,8 @@ function shellDom (opts = {}) {
   ok('缩略图指向 thumbs/ 下的图',
     gridBlock.includes('art/thumbs/'),
     gridBlock.includes('art/thumbs/') ? '' : '没找到 thumbs 路径')
-  ok('缩略图按明暗取对应版本（-dark）',
-    gridBlock.includes("-dark") && gridBlock.includes('isDarkActive'))
+  ok('缩略图不再按明暗切版本（0.8.0 单版本）',
+    !gridBlock.includes('-dark'), '观测栏网格里还残留 -dark 拼接')
   ok('观测栏有「无」选项（与其它项同尺寸保持网格整齐）',
     csrc.includes('zf-rail__art--none'))
 
@@ -5406,13 +5424,13 @@ function shellDom (opts = {}) {
     `${JSON.stringify(T.ROTATE_MS)} vs ${JSON.stringify(set.ROTATE_MS)}`)
 
   // 2) 候选池排除 none
-  ok('候选池不含 none', !T.ROTATE_POOL.includes('none'), T.ROTATE_POOL.join(','))
-  ok('候选池含全部 8 张', T.ROTATE_POOL.length === 8, String(T.ROTATE_POOL.length))
+  ok('候选池不含 none', !T.ROTATE_POOL.includes('none'), `池大小 ${T.ROTATE_POOL.length}`)
+  ok('候选池含全部 58 张', T.ROTATE_POOL.length === 58, String(T.ROTATE_POOL.length))
 
-  // 3) 顺序轮播
+  // 3) 顺序轮播（0.8.0 起池子是 58 张，顺序 = BACKGROUNDS 声明顺序去掉 none）
   ok('顺序：sakura → promo', T.nextWallpaper('sakura', 'sequential') === 'promo',
     T.nextWallpaper('sakura', 'sequential'))
-  ok('顺序：末位回到首位', T.nextWallpaper(T.ROTATE_POOL[7], 'sequential') === T.ROTATE_POOL[0])
+  ok('顺序：末位回到首位', T.nextWallpaper(T.ROTATE_POOL[T.ROTATE_POOL.length - 1], 'sequential') === T.ROTATE_POOL[0])
   ok('顺序：当前不在池里（none）→ 从第一张开始',
     T.nextWallpaper('none', 'sequential') === T.ROTATE_POOL[0])
 
@@ -5750,8 +5768,8 @@ function shellDom (opts = {}) {
   {
     const builtin = T.artSrcOf({ background: 'sakura' }, 'light')
     ok('内置图 light → var(--zf-art-sakura)', builtin === 'var(--zf-art-sakura)', builtin)
-    ok('内置图 dark → 拼 -dark',
-      T.artSrcOf({ background: 'sakura' }, 'dark') === 'var(--zf-art-sakura-dark)')
+    ok('内置图 dark → 同一变量（0.8.0 明暗共用，不再拼 -dark）',
+      T.artSrcOf({ background: 'sakura' }, 'dark') === 'var(--zf-art-sakura)')
     ok('none → none', T.artSrcOf({ background: 'none' }, 'light') === 'none')
     const custom = { background: 'custom', customBackground: { file: 'custom-a-b.webp' } }
     const lightSrc = T.artSrcOf(custom, 'light')

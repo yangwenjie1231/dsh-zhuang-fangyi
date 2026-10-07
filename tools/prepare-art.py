@@ -37,16 +37,73 @@ SRC = os.path.join(os.path.dirname(ROOT), '庄方宜素材')
 MAX_WIDTH = 2560
 
 # 壁纸定义：输出名 → (源文件相对路径, 取景说明)
+# ⚠ 这张表由 `tools/gen-wallpapers.mjs` 从 `src/wallpaperCatalog.js` 生成（0.8.0 起）。
+#   不要手改 —— 会被下次生成覆盖。加/改壁纸请改目录文件后重跑该脚本。
+# >>> generated: wallpapers (do not edit) >>>
+# ⚠ 本节由 `tools/gen-wallpapers.mjs` 从 `src/wallpaperCatalog.js` 自动生成。
+#   不要手改 —— 改了下次生成会被覆盖，且会与插件侧不一致。
+#   要加/改壁纸请改目录文件后重跑：node tools/gen-wallpapers.mjs
 WALLPAPERS = {
-    'sakura':    ('02-场景原画/樱花树下_4096x1716.webp', '樱花树下（2.39:1 横幅，最干净）'),
-    'promo':     ('08-视频抽帧/1_抽帧_宣传CG_绿发双角色.webp', '宣传 CG 绿发双角色'),
-    'pool':      ('08-视频抽帧/9_抽帧_宣传CG_樱花池.webp', '樱花池'),
-    'ultrawide': ('08-视频抽帧/5_抽帧_超宽横幅_樱花(3840x1116).webp', '超宽横幅'),
-    'dark':      ('09-散图与二创/D684AC645F51D3D08668CE19EEB8AC63.png', '暗调水面月影（4K，天然暗色）'),
-    'portrait':  ('01-立绘海报/干员立绘卡_E1_1080x1920.webp', '干员立绘卡（竖版，靠右）'),
-    'vertical':  ('08-视频抽帧/2_抽帧_竖版立绘循环 CHIZANG.webp', '竖版立绘循环'),
-    'contour':   ('08-视频抽帧/14_抽帧_暗调CG_等高线纹理.webp', '等高线纹理'),
+    'sakura': ('02-场景原画/樱花树下_4096x1716.webp', '樱花树下'),
+    'promo': ('08-视频抽帧/1_抽帧_宣传CG_绿发双角色.webp', '宣传 CG · 双人'),
+    'pool': ('08-视频抽帧/9_抽帧_宣传CG_樱花池.webp', '樱花池'),
+    'ultrawide': ('08-视频抽帧/5_抽帧_超宽横幅_樱花(3840x1116).webp', '超宽横幅 · 樱花'),
+    'dark': ('09-散图与二创/D684AC645F51D3D08668CE19EEB8AC63.png', '暗调水面月影'),
+    'portrait': ('01-立绘海报/干员立绘卡_E1_1080x1920.webp', '干员立绘卡'),
+    'vertical': ('08-视频抽帧/2_抽帧_竖版立绘循环 CHIZANG.webp', '竖版立绘循环'),
+    'contour': ('08-视频抽帧/14_抽帧_暗调CG_等高线纹理.webp', '等高线纹理'),
+    'off01': ('04-官方通用/游戏插画-2-我很喜欢.jpg', '田野淡彩'),
+    'off02': ('04-官方通用/官图/官图_24_荷塘古树.jpeg', '荷塘古树'),
+    'off03': ('04-官方通用/官图/官图_17_仙鹤云海.jpeg', '仙鹤云海'),
+    'off04': ('04-官方通用/官图/官图_05_水墨长枪.jpeg', '水墨长枪'),
+    'off05': ('04-官方通用/官图/官图_01_溪谷气泡.png', '溪谷气泡'),
+    'off06': ('06-商店与平台图/appstore/bb646c60e3075289cbf5632d54380646201266157.jpg', '白蝶环绕'),
+    'off07': ('04-官方通用/官图/官图_02_白底全身立绘.jpeg', '白底立绘 · 全身'),
+    'off08': ('04-官方通用/官图/官图_16_蓝天梨树.jpeg', '蓝天梨树'),
+    'off09': ('04-官方通用/官图/官图_08_几何纹样.jpeg', '几何纹样 · 小兽'),
+    'sce01': ('16-二创收集/横幅全景/NR8AVjViQ2dBeE1EQTVOekF3TnpReTYuZ2lhdHJYQXkwIQUAcXVuZ3o!.jpeg', '霓虹星空'),
+    'sce02': ('16-二创收集/横版插画/NR8AVjViQ2dBeE1EQTVOekF3TnpReU83UWZhcS5NTURFIQUAcXVuZ3o!.png', '樱花回眸'),
+    'sce03': ('16-二创收集/横版插画/NR8AVjViQ2dBeE1EQTVOekF3TnpReWxqczVhaXBNQ2lvIQUAcXVuZ3o!.png', '花枝云海'),
+    'sce04': ('08-视频抽帧/15_抽帧_莲花池场景.webp', '莲花池'),
+    'sce05': ('16-二创收集/横版插画/NR8AVjViQ2dBeE1EQTVOekF3TnpReVBMUWZhdmQ4TVRFIQUAcXVuZ3o!.png', '白花逆光'),
+    'sce06': ('02-场景原画/横版_卧姿立绘_2048x1152.webp', '卧姿立绘'),
+    'sce07': ('16-二创收集/横版插画/NR8AVjViQ2dBeE1EQTVOekF3TnpReUliVWZhajMuMGpZIQUAcXVuZ3o!.jpeg', '水墨淡彩'),
+    'sce08': ('16-二创收集/横版插画/NR8AVjViQ2dBeE1EQTVOekF3TnpReTZVMGxhc2VkeVNnIQUAcXVuZ3o!.png', '绘本光斑'),
+    'sce09': ('16-二创收集/横版插画/NR8AVjViQ2dBeE1EQTVOekF3TnpReWRiTWZhcUJ6N3lBIQUAcXVuZ3o!.png', '樱花远景'),
+    'sce10': ('16-二创收集/横版插画/NR8AVjViQ2dBeE1EQTVOekF3TnpReWNiTWZhaVZZNGlBIQUAcXVuZ3o!.jpeg', '荷塘绿调'),
+    'sce11': ('16-二创收集/横版插画/NR8AVjViQ2dBeE1EQTVOekF3TnpReWJMUWZhaFZNa3pNIQUAcXVuZ3o!.jpeg', '林间逆光'),
+    'sce12': ('09-散图与二创/52AC523AA50527A6D2712D373F45B658.jpg', '红墙竹林'),
+    'sce13': ('08-视频抽帧/7_抽帧_3D模型实机_室内(331s).webp', '实机 · 室内'),
+    'sce14': ('16-二创收集/方形构图/NR8AVjViQ2dBeE1EQTVOekF3TnpReTBmMG5hZ1NaUnk0IQUAcXVuZ3o!.jpeg', '月洞门庭院'),
+    'sce15': ('16-二创收集/方形构图/NR8AVjViQ2dBeE1EQTVOekF3TnpReXkycDlhdXhBU0JJIQUAcXVuZ3o!.png', '拔刀动作'),
+    'sce16': ('02-场景原画/黄绿涂鸦横图_2048x1152.webp', '黄绿涂鸦'),
+    'sce17': ('16-二创收集/横版插画/NR8AVjViQ2dBeE1EQTVOekF3TnpReW43UWZhdlNya1RJIQUAcXVuZ3o!.jpeg', '暖木长廊'),
+    'sce18': ('16-二创收集/横版插画/NR8AVjViQ2dBeE1EQTVOekF3TnpReWNwVmJhZ3NHRlRnIQUAcXVuZ3o!.png', '湖畔灰绿'),
+    'sce19': ('16-二创收集/横版插画/NR8AVjViQ2dBeE1EQTVOekF3TnpReWY3UWZhcU1jUXpNIQUAcXVuZ3o!.jpeg', '白花枝头'),
+    'sce20': ('08-视频抽帧/6_抽帧_宽幅_雪景.webp', '宽幅雪景'),
+    'sce21': ('16-二创收集/横版插画/NR8AVjViQ2dBeE1EQTVOekF3TnpReUQ3UWZhaWIuZlMwIQUAcXVuZ3o!.jpeg', '朦胧厚涂'),
+    'cha01': ('16-二创收集/竖版插画/NR8AVjViQ2dBeE1EQTVOekF3TnpReUhMVWZhc2s5NERZIQUAcXVuZ3o!.jpeg', '雾中执器'),
+    'cha02': ('16-二创收集/竖版插画/NR8AVjViQ2dBeE1EQTVOekF3TnpReUtEZzZhcHBhTkJZIQUAcXVuZ3o!.png', '夜樱双人'),
+    'cha03': ('16-二创收集/竖版插画/NR8AVjViQ2dBeE1EQTVOekF3TnpReVlyUWZhbW8xa3lvIQUAcXVuZ3o!.jpeg', '双人立绘'),
+    'cha04': ('16-二创收集/竖版插画/NR8AVjViQ2dBeE1EQTVOekF3TnpReXdMTWZhcHFWSkNnIQUAcXVuZ3o!.jpeg', '樱花林半身'),
+    'cha05': ('16-二创收集/竖版插画/NR8AVjViQ2dBeE1EQTVOekF3TnpReXdiTWZhaWNESENnIQUAcXVuZ3o!.jpeg', '绿调全身'),
+    'cha06': ('16-二创收集/竖版插画/NR8AVjViQ2dBeE1EQTVOekF3TnpReXpXcDlhcElvU2hJIQUAcXVuZ3o!.png', '深底礼服'),
+    'cha07': ('16-二创收集/条漫长图/NR8AVjViQ2dBeE1EQTVOekF3TnpReXkzOHlhdlkydlJrIQUAcXVuZ3o!.jpeg', '暗青飘带'),
+    'cha08': ('16-二创收集/竖版插画/NR8AVjViQ2dBeE1EQTVOekF3TnpReSpoLlphbSowY3dZIQUAcXVuZ3o!.jpeg', '夜色长裙'),
+    'cha09': ('16-二创收集/竖版插画/NR8AVjViQ2dBeE1EQTVOekF3TnpReSpCLlphdkY4Z2dZIQUAcXVuZ3o!.jpeg', '夜巷侠客'),
+    'cha10': ('16-二创收集/竖版插画/NR8AVjViQ2dBeE1EQTVOekF3TnpReUZiUWZhdlJlV1MwIQUAcXVuZ3o!.jpeg', '白底单体'),
+    'cha11': ('16-二创收集/竖版插画/NR8AVjViQ2dBeE1EQTVOekF3TnpReVZZQXRhdnlSTlRRIQUAcXVuZ3o!.jpeg', '光效飘带'),
+    'cha12': ('16-二创收集/竖版插画/NR8AVjViQ2dBeE1EQTVOekF3TnpReW0wRTFhdjNXSndZIQUAcXVuZ3o!.jpeg', '蓝天白云'),
+    'cha13': ('16-二创收集/竖版插画/NR8AVjViQ2dBeE1EQTVOekF3TnpReW1SbW9hdFdwc1I4IQUAcXVuZ3o!.jpeg', '侧颜特写'),
+    'cha14': ('16-二创收集/竖版插画/NR8AVjViQ2dBeE1EQTVOekF3TnpReWRCbW9hczZXb3lBIQUAcXVuZ3o!.jpeg', '暖光坐姿'),
+    'cha15': ('16-二创收集/竖版插画/NR8AVjViQ2dBeE1EQTVOekF3TnpReW03UWZhczM1aGkwIQUAcXVuZ3o!.jpeg', '便服半身'),
+    'cha16': ('16-二创收集/竖版插画/NR8AVjViQ2dBeE1EQTVOekF3TnpReW5yTWZhdkh2dXg4IQUAcXVuZ3o!.png', '黄昏逆光'),
+    'cha17': ('16-二创收集/竖版插画/NR8AVjViQ2dBeE1EQTVOekF3TnpReXpDY2hhdDlxYlM0IQUAcXVuZ3o!.jpeg', '黑裙暖光'),
+    'cha18': ('09-散图与二创/DB418AB53D401EF64E45CE09C76367A8.jpg', '白花散落'),
+    'cha19': ('09-散图与二创/853f7ed9809bbbc2e38a4b772b8c3d8c170193073.jpg', '樱花覆水'),
+    'cha20': ('09-散图与二创/076392915FA932997DF87E98A723484A.jpg', '暗蓝全身'),
 }
+# <<< generated: wallpapers <<<
 
 # 头像：优先用官方透明底头像（15-头像/聊天头像.webp）。
 # 它是 156×156 带 alpha 的正脸，直接可用；缺它时才回落到从立绘卡裁头部。
@@ -279,6 +336,9 @@ def main():
     parser = argparse.ArgumentParser(description='从庄方宜素材生成主题 art/')
     parser.add_argument('--only', help='只重建指定的一项（如 sakura）')
     parser.add_argument('--quality', type=int, default=86, help='WebP 质量，默认 86')
+    parser.add_argument('--keep-dark', action='store_true',
+                        help='同时产出暗色版。0.8.0 起默认**不产**（产品决定：一张图明暗共用，'
+                             '每张省约 236KB）；0.7.x 的复刻才需要这个参数')
     args = parser.parse_args()
 
     if not os.path.isdir(SRC):
@@ -290,6 +350,11 @@ def main():
     made, skipped = [], []
 
     # ── 壁纸 ──────────────────────────────────────────────────────────────
+    #
+    # 0.8.0：默认只产出亮色版。原来每张都压暗出 `-dark`，但壁纸默认 14% 不透明、
+    # 正文可读性靠纱层 + 观测栏 backdrop-filter 兜底，压暗的实际收益很小，
+    # 成本却是每张多一个文件、两个 CSS 变量、一张缩略图（58 张时尤其明显）。
+    # `darken()` 保留 —— `--keep-dark` 复刻 0.7.x 时还要用。
     for key, (rel, note) in WALLPAPERS.items():
         if args.only and args.only != key:
             continue
@@ -298,16 +363,16 @@ def main():
             skipped.append((key, rel))
             continue
         base = fit_width(flatten(im))
-        dark = darken(base)                       # 只压暗一次，全图与缩略图共用
         p1, s1 = save_webp(base, 'wallpaper-%s.webp' % key, args.quality)
-        p2, s2 = save_webp(dark, 'wallpaper-%s-dark.webp' % key, args.quality)
         made.append(('wallpaper-%s.webp' % key, base.size, s1, note))
-        made.append(('wallpaper-%s-dark.webp' % key, dark.size, s2, '暗色版'))
-        # 设置页缩略图（明暗两版各一张）
         tp1, ts1 = save_thumb(base, 'wallpaper-%s.webp' % key)
-        tp2, ts2 = save_thumb(dark, 'wallpaper-%s-dark.webp' % key)
         made.append(('thumbs/wallpaper-%s.webp' % key, (128, 80), ts1, '缩略图'))
-        made.append(('thumbs/wallpaper-%s-dark.webp' % key, (128, 80), ts2, '缩略图·暗'))
+        if args.keep_dark:
+            dark = darken(base)                   # 只压暗一次，全图与缩略图共用
+            p2, s2 = save_webp(dark, 'wallpaper-%s-dark.webp' % key, args.quality)
+            made.append(('wallpaper-%s-dark.webp' % key, dark.size, s2, '暗色版'))
+            tp2, ts2 = save_thumb(dark, 'wallpaper-%s-dark.webp' % key)
+            made.append(('thumbs/wallpaper-%s-dark.webp' % key, (128, 80), ts2, '缩略图·暗'))
 
     # ── 头像 ──────────────────────────────────────────────────────────────
     if not args.only or args.only == 'avatar':

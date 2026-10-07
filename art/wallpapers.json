@@ -1,22 +1,129 @@
 {
   "version": 1,
   "wallpapers": {
-    "wallpaper-contour-dark.webp": {
-      "fit": "cover",
-      "focus": "65% 50%",
-      "height": 1440,
-      "ratio": 1.778,
-      "width": 2560
+    "wallpaper-cha01.webp": {
+      "fit": "contain",
+      "height": 2514,
+      "ratio": 0.636,
+      "width": 1600
+    },
+    "wallpaper-cha02.webp": {
+      "fit": "contain",
+      "height": 2262,
+      "ratio": 0.707,
+      "width": 1599
+    },
+    "wallpaper-cha03.webp": {
+      "fit": "contain",
+      "height": 2683,
+      "ratio": 0.596,
+      "width": 1600
+    },
+    "wallpaper-cha04.webp": {
+      "fit": "contain",
+      "height": 2327,
+      "ratio": 0.688,
+      "width": 1600
+    },
+    "wallpaper-cha05.webp": {
+      "fit": "contain",
+      "height": 2666,
+      "ratio": 0.563,
+      "width": 1500
+    },
+    "wallpaper-cha06.webp": {
+      "fit": "contain",
+      "height": 2184,
+      "ratio": 0.549,
+      "width": 1200
+    },
+    "wallpaper-cha07.webp": {
+      "fit": "contain",
+      "height": 3878,
+      "ratio": 0.412,
+      "width": 1599
+    },
+    "wallpaper-cha08.webp": {
+      "fit": "contain",
+      "height": 2472,
+      "ratio": 0.647,
+      "width": 1600
+    },
+    "wallpaper-cha09.webp": {
+      "fit": "contain",
+      "height": 2472,
+      "ratio": 0.647,
+      "width": 1600
+    },
+    "wallpaper-cha10.webp": {
+      "fit": "contain",
+      "height": 2598,
+      "ratio": 0.609,
+      "width": 1581
+    },
+    "wallpaper-cha11.webp": {
+      "fit": "contain",
+      "height": 3000,
+      "ratio": 0.533,
+      "width": 1600
+    },
+    "wallpaper-cha12.webp": {
+      "fit": "contain",
+      "height": 1930,
+      "ratio": 0.56,
+      "width": 1080
+    },
+    "wallpaper-cha13.webp": {
+      "fit": "contain",
+      "height": 2262,
+      "ratio": 0.707,
+      "width": 1599
+    },
+    "wallpaper-cha14.webp": {
+      "fit": "contain",
+      "height": 2570,
+      "ratio": 0.623,
+      "width": 1600
+    },
+    "wallpaper-cha15.webp": {
+      "fit": "contain",
+      "height": 2048,
+      "ratio": 0.707,
+      "width": 1448
+    },
+    "wallpaper-cha16.webp": {
+      "fit": "contain",
+      "height": 2797,
+      "ratio": 0.572,
+      "width": 1600
+    },
+    "wallpaper-cha17.webp": {
+      "fit": "contain",
+      "height": 1927,
+      "ratio": 0.639,
+      "width": 1232
+    },
+    "wallpaper-cha18.webp": {
+      "fit": "contain",
+      "height": 1847,
+      "ratio": 0.585,
+      "width": 1080
+    },
+    "wallpaper-cha19.webp": {
+      "fit": "contain",
+      "height": 2004,
+      "ratio": 0.749,
+      "width": 1500
+    },
+    "wallpaper-cha20.webp": {
+      "fit": "contain",
+      "height": 1920,
+      "ratio": 0.562,
+      "width": 1080
     },
     "wallpaper-contour.webp": {
       "fit": "cover",
       "focus": "65% 50%",
-      "height": 1440,
-      "ratio": 1.778,
-      "width": 2560
-    },
-    "wallpaper-dark-dark.webp": {
-      "fit": "cover",
       "height": 1440,
       "ratio": 1.778,
       "width": 2560
@@ -27,7 +134,55 @@
       "ratio": 1.778,
       "width": 2560
     },
-    "wallpaper-pool-dark.webp": {
+    "wallpaper-off01.webp": {
+      "fit": "cover",
+      "height": 1440,
+      "ratio": 1.778,
+      "width": 2560
+    },
+    "wallpaper-off02.webp": {
+      "fit": "cover",
+      "height": 1440,
+      "ratio": 1.778,
+      "width": 2560
+    },
+    "wallpaper-off03.webp": {
+      "fit": "cover",
+      "height": 1063,
+      "ratio": 2.408,
+      "width": 2560
+    },
+    "wallpaper-off04.webp": {
+      "fit": "cover",
+      "height": 1440,
+      "ratio": 1.778,
+      "width": 2560
+    },
+    "wallpaper-off05.webp": {
+      "fit": "cover",
+      "height": 1441,
+      "ratio": 1.777,
+      "width": 2560
+    },
+    "wallpaper-off06.webp": {
+      "fit": "contain",
+      "height": 2752,
+      "ratio": 0.75,
+      "width": 2064
+    },
+    "wallpaper-off07.webp": {
+      "fit": "contain",
+      "height": 2764,
+      "ratio": 0.579,
+      "width": 1600
+    },
+    "wallpaper-off08.webp": {
+      "fit": "contain",
+      "height": 2860,
+      "ratio": 0.559,
+      "width": 1600
+    },
+    "wallpaper-off09.webp": {
       "fit": "cover",
       "height": 1440,
       "ratio": 1.778,
@@ -39,34 +194,16 @@
       "ratio": 1.778,
       "width": 2560
     },
-    "wallpaper-portrait-dark.webp": {
-      "fit": "contain",
-      "height": 1920,
-      "ratio": 0.562,
-      "width": 1080
-    },
     "wallpaper-portrait.webp": {
       "fit": "contain",
       "height": 1920,
       "ratio": 0.562,
       "width": 1080
     },
-    "wallpaper-promo-dark.webp": {
-      "fit": "cover",
-      "height": 1440,
-      "ratio": 1.778,
-      "width": 2560
-    },
     "wallpaper-promo.webp": {
       "fit": "cover",
       "height": 1440,
       "ratio": 1.778,
-      "width": 2560
-    },
-    "wallpaper-sakura-dark.webp": {
-      "fit": "cover",
-      "height": 1072,
-      "ratio": 2.388,
       "width": 2560
     },
     "wallpaper-sakura.webp": {
@@ -75,23 +212,137 @@
       "ratio": 2.388,
       "width": 2560
     },
-    "wallpaper-ultrawide-dark.webp": {
+    "wallpaper-sce01.webp": {
       "fit": "cover",
-      "height": 744,
-      "ratio": 3.441,
+      "height": 899,
+      "ratio": 2.225,
+      "width": 2000
+    },
+    "wallpaper-sce02.webp": {
+      "fit": "cover",
+      "height": 1440,
+      "ratio": 1.778,
       "width": 2560
+    },
+    "wallpaper-sce03.webp": {
+      "fit": "cover",
+      "height": 1351,
+      "ratio": 1.48,
+      "width": 2000
+    },
+    "wallpaper-sce04.webp": {
+      "fit": "cover",
+      "height": 1080,
+      "ratio": 1.778,
+      "width": 1920
+    },
+    "wallpaper-sce05.webp": {
+      "fit": "cover",
+      "height": 1440,
+      "ratio": 1.778,
+      "width": 2560
+    },
+    "wallpaper-sce06.webp": {
+      "fit": "cover",
+      "height": 1152,
+      "ratio": 1.778,
+      "width": 2048
+    },
+    "wallpaper-sce07.webp": {
+      "fit": "cover",
+      "height": 1358,
+      "ratio": 1.885,
+      "width": 2560
+    },
+    "wallpaper-sce08.webp": {
+      "fit": "cover",
+      "height": 1440,
+      "ratio": 1.778,
+      "width": 2560
+    },
+    "wallpaper-sce09.webp": {
+      "fit": "cover",
+      "height": 1419,
+      "ratio": 1.804,
+      "width": 2560
+    },
+    "wallpaper-sce10.webp": {
+      "fit": "cover",
+      "height": 1438,
+      "ratio": 1.78,
+      "width": 2560
+    },
+    "wallpaper-sce11.webp": {
+      "fit": "cover",
+      "height": 1535,
+      "ratio": 1.668,
+      "width": 2560
+    },
+    "wallpaper-sce12.webp": {
+      "fit": "cover",
+      "height": 941,
+      "ratio": 1.777,
+      "width": 1672
+    },
+    "wallpaper-sce13.webp": {
+      "fit": "cover",
+      "height": 1440,
+      "ratio": 1.778,
+      "width": 2560
+    },
+    "wallpaper-sce14.webp": {
+      "fit": "cover",
+      "height": 2602,
+      "ratio": 0.984,
+      "width": 2560
+    },
+    "wallpaper-sce15.webp": {
+      "fit": "cover",
+      "height": 1669,
+      "ratio": 0.958,
+      "width": 1599
+    },
+    "wallpaper-sce16.webp": {
+      "fit": "cover",
+      "height": 1152,
+      "ratio": 1.778,
+      "width": 2048
+    },
+    "wallpaper-sce17.webp": {
+      "fit": "cover",
+      "height": 1440,
+      "ratio": 1.778,
+      "width": 2560
+    },
+    "wallpaper-sce18.webp": {
+      "fit": "cover",
+      "height": 1440,
+      "ratio": 1.778,
+      "width": 2560
+    },
+    "wallpaper-sce19.webp": {
+      "fit": "cover",
+      "height": 1600,
+      "ratio": 1.414,
+      "width": 2263
+    },
+    "wallpaper-sce20.webp": {
+      "fit": "cover",
+      "height": 1080,
+      "ratio": 2.37,
+      "width": 2560
+    },
+    "wallpaper-sce21.webp": {
+      "fit": "cover",
+      "height": 1403,
+      "ratio": 1.459,
+      "width": 2047
     },
     "wallpaper-ultrawide.webp": {
       "fit": "cover",
       "height": 744,
       "ratio": 3.441,
       "width": 2560
-    },
-    "wallpaper-vertical-dark.webp": {
-      "fit": "contain",
-      "height": 2560,
-      "ratio": 0.562,
-      "width": 1440
     },
     "wallpaper-vertical.webp": {
       "fit": "contain",

@@ -11,22 +11,25 @@ import {
   normalizeAccentHue
 } from './palette.js'
 import { normalizeFontFamily, normalizeFontScale } from './fonts.js'
+import { WALLPAPERS, BACKGROUND_NONE } from './wallpaperCatalog.js'
 
 /** 明暗模式。`system` 走 overrideTokens（不改 preference，保住跟随系统）。 */
 export const SCHEMES = ['system', 'light', 'dark']
 
-/** 背景预设 id → art 目录下的文件名（由 tools/prepare-art.py 产出）。 */
+/**
+ * 背景预设 id → art 目录下的文件名。
+ *
+ * 0.8.0 起从 `wallpaperCatalog.js` 派生（58 张手抄两遍必然漂移 —— 本仓库
+ * 在 `PRESETS` / `FONTS` 上栽过同一种跟头）。导出的形状不变（`none: null` +
+ * `id → 'wallpaper-<id>.webp'`），消费方与测试都不用动。
+ */
 export const BACKGROUNDS = {
-  none: null,
-  sakura: 'wallpaper-sakura.webp',
-  promo: 'wallpaper-promo.webp',
-  pool: 'wallpaper-pool.webp',
-  ultrawide: 'wallpaper-ultrawide.webp',
-  dark: 'wallpaper-dark.webp',
-  portrait: 'wallpaper-portrait.webp',
-  vertical: 'wallpaper-vertical.webp',
-  contour: 'wallpaper-contour.webp'
+  [BACKGROUND_NONE]: null,
+  ...Object.fromEntries(WALLPAPERS.map((w) => [w.id, w.file]))
 }
+
+/** 壁纸的合法 id（含 `none`，不含 `'custom'` —— 那是运行时上传的哨兵值）。 */
+export const BACKGROUND_IDS = BACKGROUND_NONE in BACKGROUNDS ? Object.keys(BACKGROUNDS) : []
 
 /** 背景定位方式。 */
 export const POSITIONS = ['cover', 'right', 'tile']
