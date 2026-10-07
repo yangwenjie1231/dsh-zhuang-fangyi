@@ -10,6 +10,35 @@
 
 ---
 
+## [0.5.1] - 2026-10-07
+
+### 修复
+
+- **`?once=1` 退路会把「0 轮 / 0 步」当成权威读数显示**。
+  宿主 `buildPayload` 里 `source` 是**写死的 `'host'`**，所以「会话不在宿主」
+  时也报 `host` —— 而那份载荷的每个数字都是 `emptyFold()` 的**占位 0**，
+  不是宿主的真实读数。
+
+  SSE 那条路没事：会话不在宿主时宿主发 `hello(live:false)` + `unavailable`，
+  客户端会把载荷置空。但 `?once=1` 是**轮询退路**（载体不吃流式时改用它），
+  那条路没有 `unavailable` 帧 —— 轮询的客户端只会看到 `source:'host'` 与一串 0。
+
+  两处一起改：
+  - 宿主：`live !== true` → `source: 'none'`（明确表示「这份数字不是宿主的」）；
+  - 客户端：`streamPayload()` 先挡 `live === false` 再查新鲜度 —— 两条路都不会
+    再把占位 0 当权威读数，而是回退 DOM。
+
+  实测复现：`/stream?once=1`（不带 session）返回
+  `{"live":false,…,"turns":0,"source":"host"}`。
+
+### 工程
+
+- 无头测试 **999 → 1005 项**（新增 6 条盯 `live` / `source` 语义）。
+  两个新断言都拿反例验过：把客户端的 `live` 兜底删掉、或把宿主 `source`
+  改回写死 `'host'`，对应断言立刻失败。
+
+---
+
 ## [0.5.0] - 2026-10-07
 
 四项功能（C12–C15）。设置结构 v5 → v6 —— 四个新键**全部是可选叠加**，
@@ -271,6 +300,7 @@
 
 ---
 
+[0.5.1]: https://github.com/yangwenjie1231/dsh-zhuang-fangyi/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/yangwenjie1231/dsh-zhuang-fangyi/compare/v0.4.2...v0.5.0
 [0.4.2]: https://github.com/yangwenjie1231/dsh-zhuang-fangyi/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/yangwenjie1231/dsh-zhuang-fangyi/compare/v0.4.0...v0.4.1

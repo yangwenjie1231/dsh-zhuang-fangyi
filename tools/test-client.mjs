@@ -4745,6 +4745,17 @@ function shellDom (opts = {}) {
     Object.keys(payload.usage).join(',') === 'input,output,cacheRead,cacheWrite,total',
     Object.keys(payload.usage).join(','))
 
+  // `source` 必须反映**这份数字是不是真来自宿主**（会话在宿主 → host）
+  ok('会话在宿主时 source = host', payload.source === 'host', payload.source)
+  // 会话不在宿主 → 每个数字都是 emptyFold() 的占位 0，不是真实读数。
+  // 早先这里写死 'host'，于是 `?once=1`（轮询退路，没有 unavailable 帧）
+  // 会把「0 轮 / 0 步」当成权威读数显示。
+  const ghost = S.buildPayload({ fold: null, state: 'idle', sessionId: 'ghost', live: false })
+  ok('会话不在宿主时 source = none（不是 host）', ghost.source === 'none', ghost.source)
+  ok('会话不在宿主时 live = false', ghost.live === false)
+  ok('source=none 时数字确实是占位 0（所以不能当权威）',
+    ghost.turns === 0 && ghost.steps === 0 && ghost.tokensTotal === 0)
+
   // ── 3) 传输：桩 ctx + 假 res ──────────────────────────────────────────
   const makeCtx = (session) => {
     const handlers = new Map()
@@ -4903,6 +4914,15 @@ function shellDom (opts = {}) {
     JSON.stringify(mixed))
   ok('空载荷也不炸（全回退）',
     T.formatStats(undefined, domStats).turns === 'D轮')
+
+  // 2b) `live:false` 的载荷必须被挡掉 —— 那是宿主在「会话不在宿主」时给的
+  // **占位全 0**，不是真实读数。SSE 路径靠 `unavailable` 帧置空，
+  // 但 `?once=1` 轮询退路没有那一帧，所以客户端要按 `live` 再兜一道。
+  ok('streamPayload 会拒绝 live:false 的载荷（占位 0 不能当权威）',
+    /if \(p\.live === false\) return null/.test(csrc))
+  ok('streamPayload 先查 live 再查新鲜度（顺序不能反）',
+    csrc.indexOf('if (p.live === false) return null') <
+    csrc.indexOf('Date.now() - streamState.at < STREAM_FRESH_MS ? p : null'))
 
   // 3) 会话 id 从哪读
   const dom = makeDom()

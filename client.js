@@ -722,10 +722,19 @@ window.__ModuleLoader__.load({
       }
     }
 
-    /** 新鲜才算数：10s 没帧就当作不可用（回退 DOM），而不是显示陈旧数字。 */
+    /**
+     * 新鲜才算数：10s 没帧就当作不可用（回退 DOM），而不是显示陈旧数字。
+     *
+     * 另外必须挡住 `live:false` 的载荷 —— 那是「会话不在宿主」时宿主给的
+     * **占位全 0**，不是真实读数。SSE 路径靠 `unavailable` 帧把载荷置空，
+     * 但 `?once=1` 轮询退路没有那一帧（宿主已把 `source` 标成 `none`，
+     * 这里再按 `live` 兜一道，两条路都不会把 0 当成权威读数）。
+     */
     function streamPayload () {
-      if (streamState.payload === null) return null
-      return Date.now() - streamState.at < STREAM_FRESH_MS ? streamState.payload : null
+      const p = streamState.payload
+      if (p === null) return null
+      if (p.live === false) return null
+      return Date.now() - streamState.at < STREAM_FRESH_MS ? p : null
     }
 
     function closeSessionStream (reason) {

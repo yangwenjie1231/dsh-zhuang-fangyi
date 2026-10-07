@@ -174,6 +174,19 @@ export function deriveState (fold, running) {
  *
  * 只包含：数字读数、状态枚举、模型名、日志位置、是否运行中。
  * 任何正文 / 参数 / 文件名都不在字段表里（想加字段必须先想清楚它是不是内容）。
+ *
+ * ── `source` 必须反映**这份数字是不是真的来自宿主** ──────────────────
+ *
+ * 早先这里写死 `source: 'host'`，于是「会话不在宿主」时也报 `host` ——
+ * 而那份载荷的每个数字都是 `emptyFold()` 的**占位 0**，不是宿主的真实读数。
+ *
+ * SSE 那条路没事：会话不在宿主时宿主发 `hello(live:false)` + `unavailable`，
+ * 客户端会把载荷置空。但 `?once=1` 是**轮询退路**（载体不吃流式时改用它），
+ * 那条路没有 `unavailable` 帧 —— 轮询的客户端只会看到 `source:'host'` 与
+ * 一串 0，于是把「0 轮 / 0 步」当成权威读数显示，而不是回退 DOM。
+ *
+ * 所以：`live !== true` → `source: 'none'`，明确表示「这份数字不是宿主的」。
+ * 客户端据此回退（`formatStats` 的字段级回退本来就是按 null 走的）。
  */
 export function buildPayload ({ fold, state, contextUsed = null, rate = null, sessionId = null, live = true }) {
   const f = fold ?? emptyFold()
@@ -198,7 +211,8 @@ export function buildPayload ({ fold, state, contextUsed = null, rate = null, se
     context: { used: typeof contextUsed === 'number' && Number.isFinite(contextUsed) ? contextUsed : null },
     model: typeof f.model === 'string' ? f.model : null,
     turnStartedAt: typeof f.lastTurnStart === 'number' ? f.lastTurnStart : null,
-    source: 'host'
+    // 只有**会话确实在宿主**时这份数字才是权威的（见上方注释）
+    source: live === true ? 'host' : 'none'
   }
 }
 
