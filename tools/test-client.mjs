@@ -3466,6 +3466,106 @@ function shellDom (opts = {}) {
   ok('观测栏有「无」选项（与其它项同尺寸保持网格整齐）',
     csrc.includes('zf-rail__art--none'))
 
+  // 6b) 观测栏网格**行不能被压扁**（用户截图：59 张挤成细横条）
+  //
+  // 这条必须用**真实引擎量行距**，不能读 CSS 文本：
+  //   · 只写 `max-height:260px` 时容器限高，但 20 个 auto 行被 grid 平均压到
+  //     13px 行距，而格子因 `aspect-ratio` 仍是 48px → 互相重叠 35px，
+  //     看起来就是一堆细横条。**光看声明完全看不出**（声明本身没有错）。
+  //   · 实测过：加 `grid-auto-rows:max-content` 后行距回到 54.1px、内容 1077px、
+  //     容器 260px 正常滚动。所以断言「行距 ≈ 格高 + gap」。
+  {
+    // ⚠️ 这段 CSS 在**宿主** `index.js` 的 `structureCss()` 里，不在 client.js ——
+    // 第一版在 `csrc` 里找，永远找不到，于是无论有没有修复都报「完全没写」。
+    // 断言找错文件 = 恒假失败，比不写断言更误导。
+    const hostCss = fs.readFileSync(path.join(ROOT, 'index.js'), 'utf8')
+    const gridCssStart = hostCss.indexOf("'.zf-rail__artgrid{'")
+    const gridCssEnd = hostCss.indexOf("'.zf-rail__art{'")
+    const gridCss = (gridCssStart < 0 || gridCssEnd < 0)
+      ? ''
+      : hostCss.slice(gridCssStart, gridCssEnd)
+    ok('观测栏网格声明了 grid-auto-rows:max-content（否则行会被压扁）',
+      gridCss.includes('grid-auto-rows:max-content'),
+      gridCss.includes('grid-auto-rows') ? '写了但不是 max-content' : '完全没写')
+
+    const EDGE_GRID = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
+    if (fs.existsSync(EDGE_GRID)) {
+      // `execFileSync` 必须在这里**局部导入** —— 本文件顶部没有它，
+      // 直接引用会 ReferenceError，而它落在 `try` 里就被吞成「拿不到行距」，
+      // 看起来像引擎问题、其实是自己少了一行 import（踩过一次）。
+      const { execFileSync } = await import('node:child_process')
+      // 从宿主源码里抠出 `.zf-rail__artgrid{...}` 的声明。
+      //
+      // ⚠️ 不要用「匹配到 `'  }',` 为止」那种正则 —— 第一版就是那样，只要
+      // 声明换一种写法（例如 `grid-auto-rows:auto;`）就抠不出内容，探针拿不到
+      // 值，于是**负向测试里两条断言一起失败**、分不清是「行距被压」还是
+      // 「探针坏了」。现在按「收集引号行直到第一个只含 `}` 的行」来取，
+      // 并且**单独断言抠出来的声明里确实有 max-height**（证明抠对了）。
+      const hostSrcForCss = fs.readFileSync(path.join(ROOT, 'index.js'), 'utf8')
+      const start = hostSrcForCss.indexOf("'.zf-rail__artgrid{'")
+      let decls = ''
+      if (start >= 0) {
+        const rest = hostSrcForCss.slice(start + "'.zf-rail__artgrid{'".length)
+        const out = []
+        for (const raw of rest.split('\n')) {
+          const line = raw.trim()
+          if (line.startsWith('//')) continue
+          if (/^'\s*\}',?$/.test(line)) break
+          const m2 = /^'(.*)',?$/.exec(line)
+          if (m2) out.push(m2[1].replace(/\\'/g, "'"))
+        }
+        decls = out.join('')
+      }
+      ok('抠出了观测栏网格的 CSS 声明（含 max-height）',
+        decls.includes('max-height') && decls.includes('display:grid'),
+        decls.slice(0, 80) || '（空）')
+
+      const N = 59
+      const cells = Array.from({ length: N }, () =>
+        '<button type="button" class="zf-rail__art"><img src="data:image/svg+xml,' +
+        "<svg xmlns='http://www.w3.org/2000/svg' width='8' height='5'>" +
+        "<rect width='8' height='5' fill='%23336699'/></svg>\"></button>").join('')
+      const html = `<!doctype html><meta charset=utf-8><title>pending</title>
+<style>html,body{margin:0}
+.zf-rail{position:fixed;top:0;bottom:0;right:0;width:288px;box-sizing:border-box;
+  display:flex;flex-direction:column;gap:14px;padding:16px 14px;overflow-y:auto}
+.zf-rail__group{display:flex;flex-direction:column;gap:7px}
+.zf-rail__artgrid{${decls}}
+.zf-rail__art{position:relative;padding:0;cursor:pointer;overflow:hidden;
+  aspect-ratio:8 / 5;box-sizing:border-box;border:1px solid #444;border-radius:6px;background:#222}
+.zf-rail__art img{width:100%;height:100%;object-fit:cover;display:block}</style>
+<div class="zf-rail"><div class="zf-rail__group">
+  <div style="height:120px"></div>
+  <div class="zf-rail__artgrid" id="g">${cells}</div>
+</div></div>
+<script>
+  var g=document.getElementById('g'),a=g.querySelectorAll('.zf-rail__art');
+  var r0=a[0].getBoundingClientRect(),r3=a[3].getBoundingClientRect();
+  document.title=JSON.stringify({cellH:+r0.height.toFixed(1),pitch:+(r3.top-r0.top).toFixed(1)});
+<\/script>`
+      const f = path.join(os.tmpdir(), 'zf-railgrid-assert.html')
+      fs.writeFileSync(f, html, 'utf8')
+      let res = null
+      try {
+        const dom = execFileSync(EDGE_GRID, [
+          '--headless=new', '--disable-gpu', '--no-sandbox', '--window-size=1280,700',
+          '--virtual-time-budget=1500', '--dump-dom', `file:///${f.replace(/\\/g, '/')}`
+        ], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] })
+        const t = /<title>([^<]*)<\/title>/.exec(dom)
+        if (t && t[1] !== 'pending') res = JSON.parse(t[1].replace(/&quot;/g, '"'))
+      } catch { res = null }
+      ok('拿到观测栏网格的真实行距', res !== null)
+      if (res !== null) {
+        const expect = res.cellH + 6           // 行距应 = 格高 + gap
+        ok('行距未被压缩（行距 ≈ 格高 + gap）',
+          Math.abs(res.pitch - expect) <= 1.5,
+          `行距 ${res.pitch}，期望 ${expect.toFixed(1)}（差 ${(expect - res.pitch).toFixed(1)}px）`)
+      }
+    } else {
+      console.log('  SKIP 无 Edge —— 观测栏行距实测跳过；本地 Windows 会执行')
+    }
+  }
+
   // 7) isDarkActive：DOM 判据 + 兜底
   const dark = T.isDarkActive
   ok('isDarkActive 已导出', typeof dark === 'function')

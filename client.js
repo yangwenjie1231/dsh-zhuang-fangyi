@@ -3256,9 +3256,18 @@ window.__ModuleLoader__.load({
       const artGroupTitleStyle = {
         fontSize: 11, lineHeight: '16px', color: 'var(--dsw-alias-label-tertiary)'
       }
-      /** 自适应列数：容器窄时自动降列，不必写死 4 列。 */
+      /**
+       * 自适应列数：容器窄时自动降列，不必写死 4 列。
+       *
+       * `gridAutoRows:'max-content'` 是**预防性**的：现在这个网格没有限高
+       * （靠外层 `artPanelStyle` 撑开、由面板滚动），所以行不会被压。但
+       * 观测栏那个同类网格正是因为只有 `max-height` 而**行被压成 13px、
+       * 格子互相重叠 35px**（用户截图里的「细横条」）。一旦哪天给这里加
+       * 限高，没有这一行就会立刻踩同一个坑 —— 提前钉住。
+       */
       const artGridStyle = {
-        display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(104px, 1fr))', gap: 8
+        display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(104px, 1fr))', gap: 8,
+        gridAutoRows: 'max-content'
       }
       /** 网格里的一格。比例与观测栏一致（8/5），`object-fit:cover` 裁齐。 */
       const artTileStyle = {

@@ -1037,6 +1037,14 @@ export function structureCss () {
      */
     '.zf-rail__artgrid{',
     '  display:grid;grid-template-columns:repeat(3, 1fr);gap:6px;',
+    // ⚠️ `grid-auto-rows:max-content` 不是可选项，是**必需的**。
+    //
+    // 只写 `max-height` 时：容器被限到 260px，而 59 张 ÷ 3 列 = 20 个 **auto** 行
+    // 会被 grid 平均压到 13px 行距 —— 格子自身因 `aspect-ratio` 仍是 48px，
+    // 于是每格向下溢出、互相重叠 35px，视觉上就是一堆「细横条」（用户截图）。
+    // `max-height` 只约束**容器**，不阻止行被压缩；`max-content` 把行高钉在
+    // 内容所需高度，容器这才真正开始滚动（实测内容高 1077px，行距 54.1px）。
+    '  grid-auto-rows:max-content;',
     '  max-height:260px;overflow-y:auto;overscroll-behavior:contain;',
     '  padding-right:2px;',
     '  --dsh-scrollbar-thumb:var(--dsw-alias-scrollbar-bg-l2);',
