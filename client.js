@@ -88,20 +88,27 @@ window.__ModuleLoader__.load({
     const DICT = {
       zh: {
         nav: '庄方宜',
-        subtitle: '官方素材取色 · 浅色与深色各自适配',
         groupTheme: '主题',
-        groupOverview: '总览',
-        groupOverviewHint: '整体开关、风格预设，以及一次配好整套观感',
-        groupScheme: '明暗',
-        groupSchemeHint: '浅色与深色可以各自指定预设 —— 留「跟随主预设」就与上面一致',
+        // ── 五个页签（0.9.0）──────────────────────────────────────────
+        // 原先的 7 组说明（groupXxxHint）已被页说明取代。
+        tabLook: '外观',
+        tabLookHint: '总开关、配色预设、明暗与排版',
+        tabBackground: '背景',
+        tabBackgroundHint: '壁纸、纱的厚薄与轮播',
+        tabDetails: '细节',
+        tabDetailsHint: '强调色与几处装饰性开关',
+        tabMotion: '动效',
+        tabMotionHint: '「跟随系统」会尊重系统的「减少动态效果」',
+        tabSkin: '皮肤',
+        tabSkinHint: '观测栏与头像气泡重绘',
+        tabReset: '恢复本页',
+        // 观测栏仍在用 groupWallpaper —— 它不再是页签标签，只是右栏那一组的名字
         groupWallpaper: '背景',
-        groupWallpaperHint: '壁纸、纱的厚薄与轮播',
-        groupType: '排版',
-        groupTypeHint: '字体、字号与正文列宽',
-        groupDetail: '细节',
-        groupDetailHint: '强调色与几处装饰性开关',
-        groupMotion: '动效',
-        groupMotionHint: '「跟随系统」会尊重系统的「减少动态效果」',
+        // 壁纸选择器（0.9.0：收起一行 + 点击展开网格）
+        bgChange: '更换图片',
+        bgSearch: '搜索壁纸',
+        bgGroupMine: '我的图片',
+        bgEmpty: '没有匹配的壁纸',
         enabled: '启用主题',
         enabledHint: '关闭后界面立即回到 DSH 默认配色',
         preset: '配色预设',
@@ -224,8 +231,6 @@ window.__ModuleLoader__.load({
         tokenTotal: 'token 总量',
         cache: '缓存命中',
         contextPct: '上下文',
-        groupSkin: '皮肤',
-        groupSkinHint: '观测栏与头像气泡重绘',
         railHint: '右栏展开时作为官方标签页显示，收起时为右侧浮层；原生面板展开时让位；窄于 1180px 隐藏',
         railWidth: '观测栏宽度',
         avatarBubbles: '头像与气泡重绘',
@@ -233,20 +238,25 @@ window.__ModuleLoader__.load({
       },
       en: {
         nav: 'Zhuang Fangyi',
-        subtitle: 'Colors sampled from official art · light and dark tuned separately',
         groupTheme: 'Theme',
-        groupOverview: 'Overview',
-        groupOverviewHint: 'Master switch, style preset, and a one-click full look',
-        groupScheme: 'Light / dark',
-        groupSchemeHint: 'Light and dark can each use their own preset — leave it on "Follow main preset" to match the one above',
+        // ── five tabs (0.9.0) ──────────────────────────────────────────
+        tabLook: 'Look',
+        tabLookHint: 'Master switch, palette preset, light/dark and typography',
+        tabBackground: 'Background',
+        tabBackgroundHint: 'Wallpaper, veil thickness and rotation',
+        tabDetails: 'Details',
+        tabDetailsHint: 'Accent colour and a few decorative switches',
+        tabMotion: 'Motion',
+        tabMotionHint: '"Follow system" respects the OS "reduce motion" setting',
+        tabSkin: 'Skin',
+        tabSkinHint: 'Observation rail and avatar / bubble repaint',
+        tabReset: 'Restore this page',
+        // Still used by the observation rail — no longer a settings tab label
         groupWallpaper: 'Background',
-        groupWallpaperHint: 'Wallpaper, veil thickness and rotation',
-        groupType: 'Typography',
-        groupTypeHint: 'Typeface, text size and reading width',
-        groupDetail: 'Details',
-        groupDetailHint: 'Accent colour and a few decorative switches',
-        groupMotion: 'Motion',
-        groupMotionHint: '"Follow system" respects the OS "reduce motion" setting',
+        bgChange: 'Change image',
+        bgSearch: 'Search wallpapers',
+        bgGroupMine: 'My images',
+        bgEmpty: 'No matching wallpaper',
         enabled: 'Enable theme',
         enabledHint: 'Turning this off restores the default DSH palette immediately',
         preset: 'Palette preset',
@@ -369,8 +379,6 @@ window.__ModuleLoader__.load({
         tokenTotal: 'Tokens',
         cache: 'Cache hit',
         contextPct: 'Context',
-        groupSkin: 'Skin',
-        groupSkinHint: 'Observation rail and avatar / bubble repaint',
         railHint: 'Official tab when the right panel is open, side overlay when collapsed; yields to native panels; hidden below 1180px',
         railWidth: 'Rail width',
         avatarBubbles: 'Avatar and bubble restyle',
@@ -462,9 +470,19 @@ window.__ModuleLoader__.load({
       { id: 'texture', zh: '纹理与极简', en: 'Texture' },
     ]
 
-    /** 壁纸 id → 分组 id。 */
+    /**
+     * 壁纸 id → 分组 id。
+     *
+     * ⚠️ **`none` 刻意不在表里**（0.9.0）：「无」不是某张壁纸，是「关掉壁纸」。
+     * 它原先被归进 `texture` 组，于是排在「纹理与极简」那一段的末尾 ——
+     * 要滚过 58 张图才能找到「不设背景」，而且语义上它和等高线纹理
+     * 根本不是一类东西。现在设置页把它作为**独立的第一格**排在所有组之前，
+     * 观测栏同理。
+     *
+     * 删掉这一项而不是换个组：它在两处都是单独渲染的，进组只会让它
+     * 混在一堆真壁纸中间。
+     */
     const BG_GROUP_OF = {
-      none: 'texture',
       sakura: 'scene',
       promo: 'scene',
       pool: 'scene',
@@ -1873,6 +1891,18 @@ window.__ModuleLoader__.load({
       /** 运行时状态。 */
       const state = {
         settings: null,
+        /**
+         * 设置默认值（**宿主下发**，0.9.0 起）。
+         *
+         * 每个页签右侧的「恢复本页」要拿它做差集：客户端知道某个键属于
+         * 哪一页，默认值却只在宿主那边，所以必须由宿主随 `GET /settings`
+         * 一起下发。
+         *
+         * **`null` 是受支持的降级态**：宿主没升级（或测试桩没跟上）时它就是
+         * null，此时「恢复本页」按钮整个不渲染，其余功能完全不受影响 ——
+         * 不能因为一个装饰性按钮缺席就让设置页残废。
+         */
+        defaults: null,
         themes: [],
         overrides: {},
         themeRoles: {},
@@ -1918,6 +1948,36 @@ window.__ModuleLoader__.load({
         customBgLimits: null,
         /** 是否正在上传（禁用上传格，防重复提交）。 */
         uploading: false,
+        /**
+         * 壁纸选择器是否处于展开态（0.9.0）。
+         *
+         * 放共享 `state` 而不是组件内 `useState`，原因与 `notice` /
+         * `confirmReset` 完全一样：`save()` 会触发全量重渲染，局部 state
+         * 会被重置，用户刚展开的网格会自己合上。
+         *
+         * **刻意不落盘**：浏览器本地存储（`browser:local-storage`）是发行
+         * 清单里明确禁止的权限，`tools/check-manifest.mjs` 里有一条反向
+         * 断言在盯着仓库里**连注释都不许出现那个词**。代价是重开设置页
+         * 回到收起态 —— 明确接受。
+         */
+        pickerOpen: false,
+        /** 壁纸搜索词（空 = 不过滤）。同样只在会话内存活。 */
+        pickerQuery: '',
+        /**
+         * 当前页签（0.9.0）。
+         *
+         * 放共享 `state` 而不是组件内 `useState`：设置面板关闭时 `Section`
+         * 会卸载，`useState` 随之归零，用户每开一次设置都回到第一页。放这里
+         * 则**同一会话内记住上次停留的页**（面板重开还在原地）。
+         *
+         * 另一个好处是**可测**：测试桩里 `useState` 返回 undefined，用它存
+         * 页签的话，除了第一页以外的任何一页都没法验证。
+         *
+         * 仍然**不落盘**：浏览器本地存储是发行清单里明确禁止的权限
+         * （`tools/check-manifest.mjs` 里有反向断言），写进 settings.json
+         * 又会把用户的设置文件弄脏。同一会话内记住已经够用。
+         */
+        activeTab: 'look',
         /**
          * C13：`applySettings` 重入闸门。
          *
@@ -2448,6 +2508,9 @@ window.__ModuleLoader__.load({
             api('/themes')
           ])
           state.settings = settingsPayload.settings
+          // 「恢复本页」要拿默认值做差集。缺失就留 null（见 state.defaults 的
+          // 注释）—— 那是受支持的降级态，不是错误，所以不写 lastError。
+          state.defaults = settingsPayload.defaults ?? null
           state.themes = themePayload.themes ?? []
           state.overrides = themePayload.overrides ?? {}
           state.themeRoles = themePayload.roles ?? {}
@@ -2983,41 +3046,103 @@ window.__ModuleLoader__.load({
       /* ---------------- 设置页 ---------------- */
 
       /**
-       * 设置页的**分组定义**（顺序即渲染顺序）。
+       * 设置页的**页签定义**（顺序即渲染顺序，一次只渲染一页）。
        *
-       * ── 为什么写成显式常量，而不是散在 JSX 里 ─────────────────────────
+       * ── 为什么从「7 个组」改成「5 个页签」（0.9.0）──────────────────────
        *
-       * 原先分组只是渲染代码里的几行 `h('div', { style: groupStyle }, …)`，
-       * 于是「加一个设置项」很容易顺手塞进最近的那组 —— 实测结果：装饰组堆到
-       * **10 行**，把字号、阅读宽度、强调色、动效、启动动效、等高线、微光、
-       * 空白页头像、标题栏跟随全混在一起，语义完全不同。
+       * 7 组 24 行平铺在一页里约 1900px，而面板内容列只有约 720px ——
+       * 要滚 2.5 屏。这不是分组分得不好，是**没有分层**。
        *
-       * 抽成常量后，测试可以断言「每行恰好归属一个组」与「组内行数上限」，
-       * 以后加设置项忘了归组会**直接失败**，而不是默默堆进装饰组。
+       * 改成顶部页签后每页 5–8 行，实测最坏的一页（外观，8 行 6 条说明）
+       * 约 596px，全部一屏内。分组常量本身没白做：它从「排版装饰」升级成
+       * 「页面骨架 + 行数预算」，0.6.0 立的「加了设置项忘了归组会失败」
+       * 那条规矩原样保留，只是键从组换成了页。
        *
        * 字段：
-       *   id     组 id（也是测试里的键）
+       *   id     页签 id（也是测试里的键）
        *   label  DICT 键
-       *   hint   可选的组说明 DICT 键
-       *   max    组内行数上限（超过说明该拆组了）
+       *   hint   页说明 DICT 键（页签栏下方那一行）
+       *   max    页内行数上限 —— **超过就是这一页塞不下了一屏**，
+       *         该拆页，不是该调 max
+       *   keys   这一页负责的设置键。客户端不能 import src/，所以键的
+       *         归属关系在这里是**第二份映射** —— 用测试双向钉死
+       *         （见 tools/test-client.mjs「每个设置键都归属某一页」）。
        */
-      const SETTINGS_GROUPS = [
-        { id: 'overview', label: 'groupOverview', hint: 'groupOverviewHint', max: 3 },
-        { id: 'scheme', label: 'groupScheme', hint: 'groupSchemeHint', max: 3 },
-        { id: 'wallpaper', label: 'groupWallpaper', hint: 'groupWallpaperHint', max: 6 },
-        { id: 'type', label: 'groupType', hint: 'groupTypeHint', max: 3 },
-        { id: 'detail', label: 'groupDetail', hint: 'groupDetailHint', max: 5 },
-        { id: 'motion', label: 'groupMotion', hint: 'groupMotionHint', max: 2 },
-        { id: 'skin', label: 'groupSkin', hint: 'groupSkinHint', max: 4 }
+      const SETTINGS_TABS = [
+        {
+          id: 'look',
+          label: 'tabLook',
+          hint: 'tabLookHint',
+          max: 8,
+          keys: [
+            'enabled', 'preset', 'scheme', 'presetLight', 'presetDark',
+            'fontFamily', 'fontScale', 'contentWidth'
+          ]
+        },
+        {
+          id: 'background',
+          label: 'tabBackground',
+          hint: 'tabBackgroundHint',
+          max: 6,
+          keys: [
+            'background', 'backgroundOpacity', 'backgroundBlur', 'backgroundPosition',
+            'backgroundRotate', 'backgroundRotateOrder', 'customBackground'
+          ]
+        },
+        {
+          id: 'details',
+          label: 'tabDetails',
+          hint: 'tabDetailsHint',
+          max: 5,
+          keys: ['accentHue', 'contourBorder', 'accentGlow', 'heroAvatar', 'titlebarFollow']
+        },
+        { id: 'motion', label: 'tabMotion', hint: 'tabMotionHint', max: 2, keys: ['motion', 'splash'] },
+        { id: 'skin', label: 'tabSkin', hint: 'tabSkinHint', max: 3, keys: ['rail', 'railWidth', 'avatarBubbles'] }
       ]
 
-      /** 组标题（带上下分隔，让分组边界在视觉上成立）。 */
-      function Group ({ groupId }) {
-        const g = SETTINGS_GROUPS.find(x => x.id === groupId)
-        if (g === undefined) return null
-        return h('div', { style: groupStyle },
-          h('div', { style: groupTitleStyle }, t(g.label)),
-          g.hint !== undefined && h('div', { style: groupHintStyle }, t(g.hint)))
+      /**
+       * 有设置项**没有** UI 行的键，测试里必须显式列出并说明原因。
+       *
+       * 「每个设置键都归属某一页」这条断言要双向全等，光有 UI 的键不够 ——
+       * 一个键如果哪页都不属于，它就永远不会出现在界面上，那才是真的漂移。
+       * 把这两个例外写在这里（而不是偷偷放宽断言），例外本身也就被钉住了。
+       *
+       *   version       格式号，不是用户可调项
+       *   potentialDots v2 遗留字段，早已没有 UI 与效果
+       */
+      const UNASSIGNED_KEYS = ['version', 'potentialDots']
+
+      /**
+       * 算出「把某页恢复成默认值」需要写入的补丁。
+       *
+       * ── 纯函数，且刻意返回 `null` 表示「无事可做」──────────────────────
+       *
+       * 抽成纯函数是为了可测：它是「哪一页拥有哪些键」与「哪些键真的被改过」
+       * 这两件事的唯一交点，而这两件事在渲染代码里是分开的。
+       *
+       * 返回 `null` 而不是空对象，是为了让「本页已经是默认值」与「本页要改 3 个键」
+       * 在调用点上可区分 —— 前者禁用按钮，后者照常写。
+       *
+       * ⚠️ 只比对**本页的键**：`background` 回退时可能正指向 `custom`，
+       *   `customBackground` 记录与磁盘文件都保留（只是这一页不再引用它），
+       *   重新选中即可 —— 不能顺手把用户的图删了。
+       *
+       * @param {string} tabId 页签 id
+       * @param {object} settings 当前设置
+       * @param {object|null} defaults 宿主下发的默认值（null = 未下发）
+       * @returns {object|null} 补丁；无需改动时返回 null
+       */
+      function tabDefaultsPatch (tabId, settings, defaults) {
+        if (defaults === null || defaults === undefined) return null
+        const tab = SETTINGS_TABS.find(x => x.id === tabId)
+        if (tab === undefined || settings === null || settings === undefined) return null
+        const patch = {}
+        for (const key of tab.keys) {
+          if (!Object.prototype.hasOwnProperty.call(defaults, key)) continue
+          if (JSON.stringify(settings[key]) === JSON.stringify(defaults[key])) continue
+          patch[key] = defaults[key]
+        }
+        return Object.keys(patch).length === 0 ? null : patch
       }
 
       /**
@@ -3038,16 +3163,62 @@ window.__ModuleLoader__.load({
         boxSizing: 'border-box',
         width: '100%'
       }
-      const groupStyle = {
-        margin: '22px 0 0', paddingTop: 10,
-        borderTop: '1px solid var(--dsw-alias-border-l2)'
+      /**
+       * 页签栏：吸顶在内容列顶部。
+       *
+       * 背景必须给 —— 内容列本身是 `overflow-y:auto` 的滚动容器，吸顶元素
+       * 不铺底色的话，下面的行会从页签**之间**透出来。
+       * `--dsw-alias-bg-layer-2` 正是外壳设置面板 `.panel` 的底色
+       * （`SettingsRoot.module.css`），所以这里的颜色与面板天然一致，
+       * 换主题也不用另外维护一份。
+       */
+      const tabBarStyle = {
+        position: 'sticky', top: 0, zIndex: 1,
+        display: 'flex', alignItems: 'center', gap: 12,
+        paddingBottom: 8,
+        background: 'var(--dsw-alias-bg-layer-2)'
       }
-      const groupTitleStyle = {
-        fontSize: 12, fontWeight: 600, letterSpacing: '.04em',
-        color: 'var(--dsw-alias-label-secondary)'
+      /** 页说明：页签栏正下方那一行，随当前页切换。 */
+      const tabHintStyle = {
+        fontSize: 12, lineHeight: '18px', marginTop: 6, marginBottom: 2,
+        color: 'var(--dsw-alias-label-tertiary)'
       }
-      const groupHintStyle = {
-        fontSize: 11, marginTop: 3, color: 'var(--dsw-alias-label-tertiary)'
+      /** 壁纸展开面板的 DOM id（「更换图片」按钮的 `aria-controls` 指向它）。 */
+      const ART_PANEL_ID = 'zf-art-picker'
+      /** 壁纸预览缩略（收起态）。全尺寸图在 96×60 下不糊，所以不是 thumbs。 */
+      const artPreviewStyle = {
+        width: 96, height: 60, flex: '0 0 auto', boxSizing: 'border-box',
+        borderRadius: 7, overflow: 'hidden', position: 'relative',
+        border: '1px solid var(--dsw-alias-border-l2)',
+        background: 'var(--dsw-alias-bg-layer-1)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center'
+      }
+      /** 壁纸网格的展开面板 —— 背景页里唯一的滚动容器。 */
+      const artPanelStyle = {
+        display: 'flex', flexDirection: 'column', gap: 8,
+        margin: '8px 0', padding: 10, boxSizing: 'border-box',
+        border: '1px solid var(--dsw-alias-border-l2)', borderRadius: 8,
+        background: 'var(--dsw-alias-bg-layer-1)'
+      }
+      const artGroupTitleStyle = {
+        fontSize: 11, lineHeight: '16px', color: 'var(--dsw-alias-label-tertiary)'
+      }
+      /** 自适应列数：容器窄时自动降列，不必写死 4 列。 */
+      const artGridStyle = {
+        display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(104px, 1fr))', gap: 8
+      }
+      /** 网格里的一格。比例与观测栏一致（8/5），`object-fit:cover` 裁齐。 */
+      const artTileStyle = {
+        position: 'relative', padding: 0, width: '100%', boxSizing: 'border-box',
+        aspectRatio: '8 / 5', borderRadius: 7, overflow: 'hidden', cursor: 'pointer',
+        border: '1px solid var(--dsw-alias-border-l2)',
+        background: 'var(--dsw-alias-bg-layer-1)'
+      }
+      const artSearchStyle = {
+        fontSize: 12, height: 30, padding: '0 10px', width: '100%', boxSizing: 'border-box',
+        borderRadius: 8, color: 'var(--dsw-alias-label-primary)',
+        background: 'var(--dsw-alias-bg-layer-1)',
+        border: '1px solid var(--dsw-alias-border-l2)'
       }
       const labelStyle = { fontSize: 13, color: 'var(--dsw-alias-label-primary)', minWidth: 0 }
       const hintStyle = {
@@ -3121,18 +3292,53 @@ window.__ModuleLoader__.load({
       }
 
       /**
-       * 分段选择器。
+       * 分段选择器 / 页签栏。
        *
        * 设置页与观测栏**共用这一个**（原先观测栏自己手写了一份：同样的配色、
        * 边框、选中态，只是尺寸小一点 —— 两份实现必然漂移，正是「同一设置两处
        * 风格不一致」的来源）。
        *
+       * ── `role: 'tablist'` 是唯一的新增能力（0.9.0）──────────────────────
+       *
+       * 传了 `role` 才切到页签语义（`role="tab"` / `aria-selected` /
+       * `aria-controls` / roving tabindex / 方向键）；**不传时行为与 0.8.0
+       * 一模一样**，观测栏那两处调用不受影响。
+       *
+       * 为什么不给页签另写一个组件：段选器与页签的视觉形态本来就是同一个东西，
+       * 两份实现必然漂移 —— 这正是本文件开头那条「观测栏自己手写了一份」的教训。
+       *
        * @param {boolean} [compact] 观测栏用：更小的字号与内边距
        * @param {boolean} [grow]    等宽铺满容器（观测栏的窄栏里更好看）
+       * @param {string}  [role]    `'tablist'` = 页签语义（0.9.0）
+       * @param {string}  [idPrefix] 页签模式下 id 的前缀。约定：
+       *        按钮 `id = <prefix>-tab-<value>`、`aria-controls = <prefix>-panel-<value>`。
+       *        用**一套约定**而不是让调用方分别传两个函数，是为了避免两者
+       *        拼错 —— 拼错的表现只是 `aria-controls` 指到一个不存在的元素，
+       *        界面上完全看不出来。
        */
-      function Segmented ({ value, options, onChange, compact, grow }) {
+      function Segmented ({
+        value, options, onChange, compact, grow, role, idPrefix
+      }) {
         const pad = compact ? '4px 6px' : '5px 10px'
+        const isTabs = role === 'tablist'
+        // 页签用 roving tabindex：整条栏在 Tab 序列里只占一格，方向键在页签间移动。
+        // 这是 WAI-ARIA 的标准做法 —— 否则 5 个页签会把 Tab 键卡住 5 次。
+        const onKeyDown = event => {
+          if (!isTabs) return
+          const index = options.findIndex(o => o.value === value)
+          if (index < 0) return
+          let next = index
+          if (event.key === 'ArrowRight') next = (index + 1) % options.length
+          else if (event.key === 'ArrowLeft') next = (index - 1 + options.length) % options.length
+          else if (event.key === 'Home') next = 0
+          else if (event.key === 'End') next = options.length - 1
+          else return
+          event.preventDefault()
+          onChange(options[next].value)
+        }
         return h('div', {
+          role: isTabs ? 'tablist' : undefined,
+          onKeyDown: isTabs ? onKeyDown : undefined,
           style: {
             display: grow === true ? 'flex' : 'inline-flex',
             border: '1px solid var(--dsw-alias-border-l2)',
@@ -3140,17 +3346,27 @@ window.__ModuleLoader__.load({
             overflow: 'hidden',
             width: grow === true ? '100%' : undefined
           }
-        }, options.map(opt => h('button', {
-          key: opt.value,
-          type: 'button',
-          onClick: () => onChange(opt.value),
-          style: {
-            border: 'none', cursor: 'pointer', fontSize: compact ? 11 : 12, padding: pad,
-            flex: grow === true ? '1 1 0' : undefined,
-            background: value === opt.value ? 'var(--dsw-alias-brand-primary)' : 'transparent',
-            color: value === opt.value ? 'var(--dsw-alias-label-primary-foreground)' : 'var(--dsw-alias-label-secondary)'
-          }
-        }, opt.label)))
+        }, options.map(opt => {
+          const selected = value === opt.value
+          return h('button', {
+            key: opt.value,
+            type: 'button',
+            role: isTabs ? 'tab' : undefined,
+            id: isTabs && idPrefix !== undefined ? `${idPrefix}-tab-${opt.value}` : undefined,
+            'aria-selected': isTabs ? (selected ? 'true' : 'false') : undefined,
+            'aria-controls': isTabs && idPrefix !== undefined ? `${idPrefix}-panel-${opt.value}` : undefined,
+            tabIndex: isTabs ? (selected ? 0 : -1) : undefined,
+            onClick: () => onChange(opt.value),
+            style: {
+              border: 'none', cursor: 'pointer', fontSize: compact ? 11 : 12, padding: pad,
+              flex: grow === true ? '1 1 0' : undefined,
+              minWidth: 0,
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              background: selected ? 'var(--dsw-alias-brand-primary)' : 'transparent',
+              color: selected ? 'var(--dsw-alias-label-primary-foreground)' : 'var(--dsw-alias-label-secondary)'
+            }
+          }, opt.label)
+        }))
       }
 
       function Select ({ value, options, onChange }) {
@@ -3213,6 +3429,437 @@ window.__ModuleLoader__.load({
           return () => state.listeners.delete(fn)
         }, [])
         return state
+      }
+
+      /**
+       * 五个页签的**行**，各自一个组件。
+       *
+       * ── 为什么不写在 `Section` 的 return 里 ──────────────────────────────
+       *
+       * 写成 `return h('div', …, rowA, rowB, rowC)` 时，为了「一次只渲染一页」
+       * 就得把五页的行都塞进数组里，行缩进整体深两级，几百行 diff 全是空白。
+       * 拆成组件后**每行的缩进与 0.8.0 完全一致**，diff 里只看得出真实的改动。
+       *
+       * 另一个好处是**每页的行数变得可测**：测试按 `function TabXxx (ctx)`
+       * 切块数 `h(Row, `，与 `SETTINGS_TABS[].max` 对照 —— 「这一页塞不下
+       * 一屏」会直接失败，而不是等用户发现要滚。
+       *
+       * 所有依赖都走**一个 `ctx` 参数**，而不是各写各的闭包 —— 页签之间
+       * 需要的输入完全相同，逐个签名只会各自漂移。
+       *
+       * @param {object} ctx `{ settings, set, presetOptions, applyCombo, … }`
+       * @returns {Array} 若干个 `h(Row, …)`
+       */
+
+      /** 「外观」页：原「总览」「明暗」「排版」三组合并（8 行）。 */
+      function TabLook (ctx) {
+        const { settings, set, presetOptions, applyCombo } = ctx
+        return [
+          h(Row, { label: t('enabled'), hint: t('enabledHint') },
+            h(Toggle, { value: settings.enabled, onChange: v => set({ enabled: v }) })),
+          h(Row, { label: t('preset') },
+            h(Select, {
+              value: settings.preset,
+              // 文案带上风格名（「本体黄绿 · 明亮轻盈」）——
+              // 预设是**整套风格**而不只是配色，光看色名体现不出来。
+              // style 缺失时不留下孤立的 ' · '（宿主未升级/字段缺失时也要好看）。
+              options: PRESETS.map(p => {
+                const style = state.presetStyles?.[p]?.style
+                return {
+                  value: p,
+                  label: style ? `${PRESET_LABELS[p].zh} · ${style}` : PRESET_LABELS[p].zh
+                }
+              }),
+              onChange: v => set({ preset: v })
+            })),
+          // C14：一键推荐组合。放在预设行**紧下面** —— 它是「这套预设该怎么配」
+          // 的动作，离预设越近越好找。
+          //
+          // 不自动触发（与「推荐壁纸只提示、不自动切换」同一原则）：套用会改动
+          // 壁纸与排版，必须是用户显式点击。
+          h(Row, { label: t('applyCombo'), hint: t('applyComboHint') },
+            h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, justifyContent: 'flex-end' } },
+              h('button', {
+                type: 'button',
+                onClick: () => applyCombo(settings.preset),
+                style: buttonStyle(false)
+              }, t('applyCombo')))),
+          h(Row, { label: t('scheme'), hint: t('schemeHint') },
+            h(Segmented, {
+              value: settings.scheme,
+              options: [
+                { value: 'system', label: t('schemeSystem') },
+                { value: 'light', label: t('schemeLight') },
+                { value: 'dark', label: t('schemeDark') }
+              ],
+              onChange: v => set({ scheme: v })
+            })),
+          // C13：明暗分档预设。默认两格都是「跟随主预设」——
+          // 不选就不分叉，老用户升级后行为完全不变。
+          //
+          // 两格各自带标签：并排两个下拉若都不标，看不出哪个管浅色。
+          // （原先就是这个问题：`presetLight` / `presetDark` 两个 DICT 键
+          // 定义了却从未渲染 —— 有断言盯着这一点。）
+          h(Row, { label: t('schemePresets'), hint: t('schemePresetsHint') },
+            h('div', { style: { display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' } },
+              h('div', { style: fieldStyle },
+                h('span', { style: fieldLabelStyle }, t('presetLight')),
+                h(Select, {
+                  value: settings.presetLight ?? FOLLOW,
+                  options: presetOptions(),
+                  onChange: v => set({ presetLight: v === FOLLOW ? null : v })
+                })),
+              h('div', { style: fieldStyle },
+                h('span', { style: fieldLabelStyle }, t('presetDark')),
+                h(Select, {
+                  value: settings.presetDark ?? FOLLOW,
+                  options: presetOptions(),
+                  onChange: v => set({ presetDark: v === FOLLOW ? null : v })
+                })))),
+          h(Row, { label: t('fontFamily'), hint: t('fontFamilyHint') },
+            h(Select, {
+              value: settings.fontFamily ?? 'default',
+              // 显示名走 t()（与其它设置项一致，由宿主 locale 决定语言）；
+              // DICT 里没有该键时 t() 会原样返回键名，所以档位名直接写进 DICT
+              options: FONT_FAMILIES.map(f => ({ value: f, label: t(`font_${f}`) })),
+              onChange: v => set({ fontFamily: v })
+            })),
+          h(Row, { label: t('fontScale'), hint: t('fontScaleHint') },
+            h(Segmented, {
+              value: String(settings.fontScale ?? 1),
+              options: FONT_SCALES.map(sc => ({
+                value: String(sc),
+                label: t(`fontScale_${String(sc).replace('.', '_')}`)
+              })),
+              onChange: v => set({ fontScale: Number(v) })
+            })),
+          h(Row, { label: t('contentWidth'), hint: t('contentWidthHint') },
+            h(Segmented, {
+              value: String(settings.contentWidth ?? 'auto'),
+              options: CONTENT_WIDTH_MODES.map(m => ({ value: m, label: t(`contentWidth_${m}`) })),
+              onChange: v => set({ contentWidth: v })
+            }))
+        ]
+      }
+
+      /** 「背景」页：壁纸与其调节（6 行）。 */
+      function TabBackground (ctx) {
+        const { settings, set, customList, uploading } = ctx
+        const pickerOpen = state.pickerOpen === true
+        const needle = (state.pickerQuery ?? '').trim().toLowerCase()
+        const matches = label => needle === '' || label.toLowerCase().includes(needle)
+        const recommendedOf = id =>
+          isRecommendedArt(state.presetStyles, presetForScheme(settings, currentScheme(theme)), id)
+
+        /** 当前壁纸：收起态那一格预览。 */
+        const current = (() => {
+          if (settings.background === CUSTOM_BACKGROUND) {
+            const file = settings.customBackground?.file
+            return {
+              label: t('bgCustom'),
+              src: typeof file === 'string'
+                ? `${ROUTE}/backgrounds/${encodeURIComponent(file)}` : null
+            }
+          }
+          if (settings.background === 'none') return { label: t('bgNone'), src: null }
+          return {
+            label: bgLabel(settings.background),
+            src: `${ROUTE}/art/wallpaper-${settings.background}.webp`
+          }
+        })()
+
+        /** 网格里的一格内置壁纸。 */
+        const tile = id => {
+          const pressed = settings.background === id
+          const recommended = recommendedOf(id)
+          const label = bgLabel(id)
+          return h('button', {
+            key: id, type: 'button',
+            className: recommended ? 'zf-art-recommended' : undefined,
+            'data-zf-recommended': recommended ? 'true' : undefined,
+            title: recommended ? `${label}${t('presetRecommend')}` : label,
+            'aria-label': recommended ? `${label}${t('presetRecommend')}` : label,
+            'aria-pressed': pressed ? 'true' : 'false',
+            onClick: () => set({ background: id }),
+            style: {
+              ...artTileStyle,
+              border: pressed
+                ? '2px solid var(--dsw-alias-brand-primary)'
+                : artTileStyle.border
+            }
+          }, h('img', {
+            src: `${ROUTE}/art/thumbs/wallpaper-${id}.webp`,
+            alt: label,
+            loading: 'lazy',
+            style: { width: '100%', height: '100%', objectFit: 'cover', display: 'block' }
+          }))
+        }
+
+        /** 一个分组标题 + 一片格子。空组不渲染（免得出现只有标题的空行）。 */
+        const group = (key, title, tiles) => tiles.length === 0
+          ? null
+          : h('div', { key, style: { width: '100%' } },
+              h('div', { style: artGroupTitleStyle }, title),
+              h('div', { style: artGridStyle }, ...tiles))
+
+        const bgGroups = BG_GROUPS.map(g => group(
+          g.id,
+          bgLang() === 'zh' ? g.zh : g.en,
+          BACKGROUNDS.filter(b => BG_GROUP_OF[b] === g.id && matches(bgLabel(b))).map(tile)
+        ))
+        const mineTiles = customList
+          .filter(entry => matches(t('bgCustom')))
+          .map(entry => {
+            const pressed = settings.background === CUSTOM_BACKGROUND &&
+              settings.customBackground?.file === entry.file
+            return h('div', { key: entry.file, style: { position: 'relative' } },
+              h('button', {
+                type: 'button',
+                title: t('bgCustom'),
+                'aria-label': t('bgCustom'),
+                'aria-pressed': pressed ? 'true' : 'false',
+                onClick: () => set({ background: CUSTOM_BACKGROUND, customBackground: entry }),
+                style: {
+                  ...artTileStyle,
+                  border: pressed
+                    ? '2px solid var(--dsw-alias-brand-primary)'
+                    : artTileStyle.border
+                }
+              }, h('img', {
+                src: `${ROUTE}/backgrounds/${encodeURIComponent(entry.file)}`,
+                alt: t('bgCustom'),
+                loading: 'lazy',
+                style: { width: '100%', height: '100%', objectFit: 'cover', display: 'block' }
+              })),
+              // 删除角标：压在格子右上角（原先缩略图只有 64×40，角标会盖住画面）
+              h('button', {
+                type: 'button',
+                title: t('bgCustomRemove'),
+                'aria-label': t('bgCustomRemove'),
+                onClick: event => {
+                  event.stopPropagation()
+                  void ctx.removeBackground(entry.file)
+                },
+                style: {
+                  position: 'absolute', top: 2, right: 2, width: 18, height: 18,
+                  lineHeight: '16px', padding: 0, fontSize: 12, cursor: 'pointer',
+                  borderRadius: 9, border: 'none',
+                  background: 'var(--dsw-alias-bg-layer-2)',
+                  color: 'var(--dsw-alias-label-secondary)'
+                }
+              }, '×'))
+          })
+        // 上传格恒在（哪怕「我的图片」是空的），否则没上传过时用户找不到入口
+        const uploadTile = h('label', {
+          key: '__upload__',
+          title: uploading ? t('bgUploading') : t('bgUpload'),
+          style: {
+            ...artTileStyle,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            cursor: uploading ? 'progress' : 'pointer',
+            border: '1px dashed var(--dsw-alias-border-l3)',
+            fontSize: 11, color: 'var(--dsw-alias-label-tertiary)', textAlign: 'center'
+          }
+        },
+        uploading ? t('bgUploading') : `＋ ${t('bgUpload')}`,
+        h('input', {
+          type: 'file',
+          accept: 'image/png,image/jpeg,image/gif,image/webp',
+          disabled: uploading,
+          style: { display: 'none' },
+          onChange: event => {
+            const file = event.target.files?.[0] ?? null
+            void ctx.uploadBackground(file)
+            // 清空 input：否则连续传同一个文件不会再触发 change
+            event.target.value = ''
+          }
+        }))
+        // 「无」独立成格排在最前 —— 它是「关掉壁纸」而不是某张图，
+        // 不该混在「纹理与极简」组里当一张（0.8.0 就是这么放的，是语义错误）。
+        // 它也**不参与搜索过滤**：搜索壁纸时找不到「关闭壁纸」毫无意义。
+        const noneTile = h('button', {
+          key: 'none', type: 'button',
+          title: t('bgNone'), 'aria-label': t('bgNone'),
+          'aria-pressed': settings.background === 'none' ? 'true' : 'false',
+          onClick: () => set({ background: 'none' }),
+          style: {
+            ...artTileStyle,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: 11, color: 'var(--dsw-alias-label-tertiary)',
+            border: settings.background === 'none'
+              ? '2px solid var(--dsw-alias-brand-primary)'
+              : artTileStyle.border
+          }
+        }, t('bgNone'))
+
+        const visible = bgGroups.filter(x => x !== null)
+        const noMatch = needle !== '' && visible.length === 0 && mineTiles.length === 0
+
+        return [
+          h(Row, { label: t('background') },
+            h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, justifyContent: 'flex-end' } },
+              h('div', { style: artPreviewStyle },
+                current.src === null
+                  ? h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-tertiary)' } }, current.label)
+                  : h('img', {
+                      src: current.src,
+                      alt: current.label,
+                      style: { width: '100%', height: '100%', objectFit: 'cover', display: 'block' }
+                    })),
+              h('span', {
+                style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary)', minWidth: 0 }
+              }, current.label),
+              h('button', {
+                type: 'button',
+                'aria-expanded': pickerOpen ? 'true' : 'false',
+                'aria-controls': ART_PANEL_ID,
+                onClick: () => {
+                  state.pickerOpen = !pickerOpen
+                  emit()
+                },
+                style: buttonStyle(false)
+              }, t('bgChange')))),
+          pickerOpen && h('div', { id: ART_PANEL_ID, style: artPanelStyle },
+            // 图例放在展开区里：收起时那一行说明只是白占高度
+            h('div', { style: { fontSize: 11, lineHeight: '16px', color: 'var(--dsw-alias-label-tertiary)' } },
+              t('wallpaperRecommend')),
+            h('input', {
+              type: 'search',
+              value: state.pickerQuery ?? '',
+              placeholder: t('bgSearch'),
+              'aria-label': t('bgSearch'),
+              onChange: event => {
+                state.pickerQuery = event.target.value
+                emit()
+              },
+              style: artSearchStyle
+            }),
+            noneTile,
+            ...visible,
+            group('mine', t('bgGroupMine'), [...mineTiles, uploadTile]),
+            noMatch && h('div', {
+              style: { fontSize: 12, color: 'var(--dsw-alias-label-tertiary)' }
+            }, t('bgEmpty'))),
+          h(Row, { label: t('opacity') },
+            h(Slider, {
+              // 上限同样与 BG_OPACITY_MAX 对齐（有测试断言）
+              value: settings.backgroundOpacity, min: 0, max: 90, step: 1, suffix: '%',
+              onChange: v => set({ backgroundOpacity: v })
+            })),
+          h(Row, { label: t('blur') },
+            h(Slider, {
+              value: settings.backgroundBlur, min: 0, max: 16, step: 1, suffix: 'px',
+              onChange: v => set({ backgroundBlur: v })
+            })),
+          h(Row, { label: t('position') },
+            h(Segmented, {
+              value: settings.backgroundPosition,
+              options: POSITIONS.map(p => ({ value: p, label: t(POS_LABELS[p]) })),
+              onChange: v => set({ backgroundPosition: v })
+            })),
+          // C15：轮播。选「关闭」以外的档位才显示顺序选择 —— 关闭时它无意义。
+          h(Row, { label: t('rotate'), hint: t('rotateHint') },
+            h(Segmented, {
+              value: settings.backgroundRotate ?? 'off',
+              options: [
+                { value: 'off', label: t('rotateOff') },
+                { value: '60s', label: t('rotate60s') },
+                { value: '5m', label: t('rotate5m') },
+                { value: '30m', label: t('rotate30m') }
+              ],
+              onChange: v => set({ backgroundRotate: v })
+            })),
+          settings.backgroundRotate !== 'off' && h(Row, { label: t('rotateOrder') },
+            h(Segmented, {
+              value: settings.backgroundRotateOrder ?? 'sequential',
+              options: [
+                { value: 'sequential', label: t('rotateSequential') },
+                { value: 'random', label: t('rotateRandom') }
+              ],
+              onChange: v => set({ backgroundRotateOrder: v })
+            }))
+        ].filter(Boolean)
+      }
+
+      /** 「细节」页：强调色与装饰开关（5 行）。 */
+      function TabDetails (ctx) {
+        const { settings, set } = ctx
+        return [
+          h(Row, { label: t('accentHue'), hint: t('accentHueHint') },
+            h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', justifyContent: 'flex-end' } },
+              h('button', {
+                type: 'button',
+                'aria-pressed': settings.accentHue === 'preset' ? 'true' : 'false',
+                onClick: () => set({ accentHue: 'preset' }),
+                style: buttonStyle(settings.accentHue === 'preset')
+              }, t('accentHuePreset')),
+              h(Slider, {
+                value: typeof settings.accentHue === 'number' ? settings.accentHue : 0,
+                min: 0,
+                max: 359,
+                step: 1,
+                suffix: '°',
+                onChange: v => set({ accentHue: v })
+              }))),
+          h(Row, { label: t('contourBorder') },
+            h(Toggle, { value: settings.contourBorder, onChange: v => set({ contourBorder: v }) })),
+          h(Row, { label: t('accentGlow'), hint: t('accentGlowHint') },
+            h(Toggle, { value: settings.accentGlow, onChange: v => set({ accentGlow: v }) })),
+          h(Row, { label: t('heroAvatar') },
+            h(Toggle, { value: settings.heroAvatar, onChange: v => set({ heroAvatar: v }) })),
+          // A3：只在有原生 Windows 标题栏的载体上显示 —— 它在别处是空开关。
+          // **只隐藏 UI，不动设置值**：用户切到别的平台再切回来时值还在。
+          hasWindowsTitlebar(document) && h(Row, { label: t('titlebarFollow'), hint: t('titlebarFollowHint') },
+            h(Toggle, { value: settings.titlebarFollow, onChange: v => set({ titlebarFollow: v }) }))
+        ].filter(Boolean)
+      }
+
+      /** 「动效」页（2 行）。`motion` 含**无障碍**语义（尊重系统「减少动态效果」）。 */
+      function TabMotion (ctx) {
+        const { settings, set } = ctx
+        return [
+          h(Row, { label: t('motion'), hint: t('motionHint') },
+            h(Segmented, {
+              value: settings.motion,
+              options: [
+                { value: 'on', label: t('motionOn') },
+                { value: 'auto', label: t('motionAuto') },
+                { value: 'reduced', label: t('motionReduced') }
+              ],
+              onChange: v => set({ motion: v })
+            })),
+          h(Row, { label: t('splash'), hint: t('splashHint') },
+            h(Toggle, { value: settings.splash !== false, onChange: v => set({ splash: v }) }))
+        ]
+      }
+
+      /** 「皮肤」页：观测栏与头像气泡（3 行）。 */
+      function TabSkin (ctx) {
+        const { settings, set } = ctx
+        return [
+          h(Row, { label: t('rail'), hint: t('railHint') },
+            h(Toggle, { value: settings.rail, onChange: v => set({ rail: v }) })),
+          h(Row, { label: t('railWidth') },
+            h(Slider, {
+              value: settings.railWidth,
+              min: 240,
+              max: 380,
+              step: 4,
+              suffix: 'px',
+              onChange: v => set({ railWidth: v })
+            })),
+          h(Row, { label: t('avatarBubbles'), hint: t('avatarBubblesHint') },
+            h(Toggle, { value: settings.avatarBubbles, onChange: v => set({ avatarBubbles: v }) }))
+        ]
+      }
+
+      /** 页签 id → 该页的行组件。测试按 `TabXxx` 切块数行（见上）。 */
+      const TAB_BODIES = {
+        look: TabLook,
+        background: TabBackground,
+        details: TabDetails,
+        motion: TabMotion,
+        skin: TabSkin
       }
 
       function Section () {
@@ -3294,342 +3941,78 @@ window.__ModuleLoader__.load({
           setNotice(t('applyComboDone'))
         }
 
+// ── 0.9.0：顶部页签，一次只渲染当前页 ────────────────────────────────
+        //
+        // 7 组 24 行平铺在一页里约 1900px，而面板内容列只有约 720px（800 面板
+        // − 188 导航 − 48 内边距），要滚 2.5 屏。这不是分组分得不好，是
+        // **没有分层** —— 0.6.0 把语义理顺了，但没解决「一屏放不下」。
+        //
+        // 页签状态放共享 `state.activeTab`（不是组件内 `useState`）：面板关闭时
+        // `Section` 卸载，`useState` 会归零，用户每开一次设置都被弹回第一页。
+        // 放 `state` 则同一会话内记住上次停留的页，而且可测（测试桩的
+        // `useState` 返回 undefined）。
+        //
+        // 仍然不落盘：浏览器本地存储是发行清单里明确禁止的权限，写进
+        // settings.json 又会把用户的设置文件弄脏。
+        const ctx = {
+          settings,
+          set,
+          presetOptions,
+          applyCombo,
+          customList,
+          uploading,
+          uploadBackground,
+          removeBackground
+        }
+        const activeTab = SETTINGS_TABS.find(x => x.id === s.activeTab) ?? SETTINGS_TABS[0]
+        const activeBody = TAB_BODIES[activeTab.id] ?? TabLook
+        // 「恢复本页」：本页已经全是默认值时**禁用** —— 一个按了没反应的死
+        // 按钮比没有这个按钮更糟（用户分不清是坏了还是本来就那样）。
+        const tabPatch = tabDefaultsPatch(activeTab.id, settings, s.defaults)
+
         return h('div', { style: { padding: '4px 0 20px', maxWidth: 720 } },
-          h('div', { style: { fontSize: 13, color: 'var(--dsw-alias-label-tertiary)' } }, t('subtitle')),
-
-          h(Group, { groupId: 'overview' }),
-          h(Row, { label: t('enabled'), hint: t('enabledHint') },
-            h(Toggle, { value: settings.enabled, onChange: v => set({ enabled: v }) })),
-          h(Row, { label: t('preset') },
-            h(Select, {
-              value: settings.preset,
-              // 文案带上风格名（「本体黄绿 · 明亮轻盈」）——
-              // 预设是**整套风格**而不只是配色，光看色名体现不出来。
-              // style 缺失时不留下孤立的 ' · '（宿主未升级/字段缺失时也要好看）。
-              options: PRESETS.map(p => {
-                const style = state.presetStyles?.[p]?.style
-                return {
-                  value: p,
-                  label: style ? `${PRESET_LABELS[p].zh} · ${style}` : PRESET_LABELS[p].zh
+          // 页签栏吸顶：每一页滚起来时页签始终可见（`background` 页展开壁纸
+          // 网格后是唯一会滚的地方）。背景色必须给 —— 外壳内容列本身是
+          // `overflow-y:auto`，不铺底色的话行会从页签**之间**透出来。
+          h('div', { style: tabBarStyle },
+            h('div', { style: { flex: '1 1 auto', minWidth: 0 } },
+              h(Segmented, {
+                value: activeTab.id,
+                role: 'tablist',
+                grow: true,
+                idPrefix: 'zf',
+                options: SETTINGS_TABS.map(x => ({ value: x.id, label: t(x.label) })),
+                onChange: v => {
+                  state.activeTab = v
+                  emit()
                 }
-              }),
-              onChange: v => set({ preset: v })
-            })),
-          // C14：一键推荐组合。放在预设行**紧下面** —— 它是「这套预设该怎么配」
-          // 的动作，离预设越近越好找。
-          //
-          // 不自动触发（与「推荐壁纸只提示、不自动切换」同一原则）：套用会改动
-          // 壁纸与排版，必须是用户显式点击。
-          h(Row, { label: t('applyCombo'), hint: t('applyComboHint') },
-            h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, justifyContent: 'flex-end' } },
-              h('button', {
-                type: 'button',
-                onClick: () => applyCombo(settings.preset),
-                style: buttonStyle(false)
-              }, t('applyCombo')))),
-          h(Group, { groupId: 'scheme' }),
-          h(Row, { label: t('scheme'), hint: t('schemeHint') },
-            h(Segmented, {
-              value: settings.scheme,
-              options: [
-                { value: 'system', label: t('schemeSystem') },
-                { value: 'light', label: t('schemeLight') },
-                { value: 'dark', label: t('schemeDark') }
-              ],
-              onChange: v => set({ scheme: v })
-            })),
-          // C13：明暗分档预设。默认两格都是「跟随主预设」——
-          // 不选就不分叉，老用户升级后行为完全不变。
-          //
-          // 两格各自带标签：并排两个下拉若都不标，看不出哪个管浅色。
-          // （原先就是这个问题：`presetLight` / `presetDark` 两个 DICT 键
-          // 定义了却从未渲染 —— 有断言盯着这一点。）
-          h(Row, { label: t('schemePresets'), hint: t('schemePresetsHint') },
-            h('div', { style: { display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' } },
-              h('div', { style: fieldStyle },
-                h('span', { style: fieldLabelStyle }, t('presetLight')),
-                h(Select, {
-                  value: settings.presetLight ?? FOLLOW,
-                  options: presetOptions(),
-                  onChange: v => set({ presetLight: v === FOLLOW ? null : v })
-                })),
-              h('div', { style: fieldStyle },
-                h('span', { style: fieldLabelStyle }, t('presetDark')),
-                h(Select, {
-                  value: settings.presetDark ?? FOLLOW,
-                  options: presetOptions(),
-                  onChange: v => set({ presetDark: v === FOLLOW ? null : v })
-                })))),
-
-          h(Group, { groupId: 'wallpaper' }),
-          h(Row, { label: t('background') },
-            // 缩略图条（所见即所得）。
-            //
-            // 0.8.0 起壁纸从 8 张扩到 58 张，原来「一个 flexWrap 平铺 59 格」
-            // 会把设置面板撑出十来行，所以改成**按组分节 + 可滚动**：
-            //   · 组标题用小字，组内才是缩略图；
-            //   · 容器限高滚动（160px ≈ 两行缩略图），滚轮/触摸都能滑；
-            //   · `<img loading="lazy">` 让没滚到的组不发起请求（59 个请求 → 实际可见的十几个）。
-            // 优化前是 3 处手抄清单 + 一个平铺 div；清单已由生成器接管（见文件头生成标记）。
-            h('div', {
-              style: {
-                display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'flex-end',
-                maxWidth: 300, maxHeight: 168, overflowY: 'auto', overscrollBehavior: 'contain',
-                paddingRight: 2, boxSizing: 'border-box'
-              }
-            },
-            ...BG_GROUPS.map(g => {
-              const ids = BACKGROUNDS.filter(b => BG_GROUP_OF[b] === g.id)
-              if (!ids.length) return null
-              return h('div', { key: g.id, style: { width: '100%' } },
-                h('div', {
-                  style: {
-                    fontSize: 10, lineHeight: '14px', marginBottom: 3,
-                    color: 'var(--dsw-alias-label-tertiary)', textAlign: 'right'
-                  }
-                }, bgLang() === 'zh' ? g.zh : g.en),
-                h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6, justifyContent: 'flex-end' } },
-                  ...ids.map(b => {
-                    const pressed = settings.background === b
-                    const file = b === 'none' ? null : `wallpaper-${b}.webp`
-                    // 本预设的推荐壁纸 —— **只标记，不自动应用**（用户明确要求）。
-                    const recommended = isRecommendedArt(state.presetStyles, presetForScheme(settings, currentScheme(theme)), b)
-                    const label = bgLabel(b)
-                    return h('button', {
-                      key: b, type: 'button',
-                      className: recommended ? 'zf-art-recommended' : undefined,
-                      'data-zf-recommended': recommended ? 'true' : undefined,
-                      title: recommended ? `${label}${t('presetRecommend')}` : label,
-                      'aria-label': recommended ? `${label}${t('presetRecommend')}` : label,
-                      'aria-pressed': pressed ? 'true' : 'false',
-                      onClick: () => set({ background: b }),
-                      style: {
-                        padding: 0, width: 64, height: 40, borderRadius: 7, overflow: 'hidden',
-                        cursor: 'pointer', boxSizing: 'border-box',
-                        border: pressed
-                          ? '2px solid var(--dsw-alias-brand-primary)'
-                          : '1px solid var(--dsw-alias-border-l2)',
-                        background: 'var(--dsw-alias-bg-layer-1)',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center'
-                      }
-                    },
-                    file === null
-                      ? h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-tertiary)' } }, t('bgNone'))
-                      : h('img', {
-                          src: `${ROUTE}/art/thumbs/${file}`,
-                          alt: label,
-                          loading: 'lazy',
-                          style: { width: '100%', height: '100%', objectFit: 'cover', display: 'block' }
-                        }))
-                  }))
-              )
-            }),
-              // ── 自定义背景（v7）──────────────────────────────────────────
-              //
-              // 与内置图同尺寸并列（所见即所得），末尾再跟一个「＋」上传格。
-              // 上传成功后**不自动切换**（与「推荐壁纸只提示、不自动切换」同一原则）：
-              // 新图出现在条里，由用户点选。
-              ...customList.map(entry => {
-                const pressed = settings.background === CUSTOM_BACKGROUND &&
-                  settings.customBackground?.file === entry.file
-                return h('div', {
-                  key: entry.file,
-                  style: { position: 'relative', width: 64, height: 40 }
-                },
-                h('button', {
-                  type: 'button',
-                  title: t('bgCustom'),
-                  'aria-label': t('bgCustom'),
-                  'aria-pressed': pressed ? 'true' : 'false',
-                  onClick: () => set({ background: CUSTOM_BACKGROUND, customBackground: entry }),
-                  style: {
-                    padding: 0, width: '100%', height: '100%', borderRadius: 7, overflow: 'hidden',
-                    cursor: 'pointer', boxSizing: 'border-box',
-                    border: pressed
-                      ? '2px solid var(--dsw-alias-brand-primary)'
-                      : '1px solid var(--dsw-alias-border-l2)',
-                    background: 'var(--dsw-alias-bg-layer-1)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center'
-                  }
-                }, h('img', {
-                  src: `${ROUTE}/backgrounds/${encodeURIComponent(entry.file)}`,
-                  alt: t('bgCustom'),
-                  loading: 'lazy',
-                  style: { width: '100%', height: '100%', objectFit: 'cover', display: 'block' }
-                })),
-                // 删除按钮：悬停/聚焦时才明显（常显会让缩略图条很吵）
-                h('button', {
-                  type: 'button',
-                  title: t('bgCustomRemove'),
-                  'aria-label': t('bgCustomRemove'),
-                  onClick: event => {
-                    event.stopPropagation()
-                    void removeBackground(entry.file)
-                  },
-                  style: {
-                    position: 'absolute', top: -4, right: -4, width: 16, height: 16,
-                    lineHeight: '14px', padding: 0, fontSize: 11, cursor: 'pointer',
-                    borderRadius: 8, border: '1px solid var(--dsw-alias-border-l2)',
-                    background: 'var(--dsw-alias-bg-layer-2)',
-                    color: 'var(--dsw-alias-label-secondary)'
-                  }
-                }, '×'))
-              }),
-              // 上传格：用 `<label>` 包隐藏 input（与 C12 导入同一写法）
-              h('label', {
-                title: uploading ? t('bgUploading') : t('bgUpload'),
-                style: {
-                  width: 64, height: 40, borderRadius: 7, boxSizing: 'border-box',
-                  cursor: uploading ? 'progress' : 'pointer',
-                  border: '1px dashed var(--dsw-alias-border-l3)',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  fontSize: 11, color: 'var(--dsw-alias-label-tertiary)',
-                  background: 'var(--dsw-alias-bg-layer-1)', textAlign: 'center'
-                }
-              },
-              uploading ? t('bgUploading') : `＋ ${t('bgUpload')}`,
-              h('input', {
-                type: 'file',
-                accept: 'image/png,image/jpeg,image/gif,image/webp',
-                disabled: uploading,
-                style: { display: 'none' },
-                onChange: event => {
-                  const file = event.target.files?.[0] ?? null
-                  void uploadBackground(file)
-                  // 清空 input：否则连续传同一个文件不会再触发 change
-                  event.target.value = ''
-                }
-              })))),
-          // 说明「推荐」的含义：避免用户以为切换预设会自动换壁纸
-          // （我们刻意不这么做 —— 壁纸永远由用户手动选）
-          h('div', {
-            style: {
-              fontSize: 11, lineHeight: '16px', marginTop: -2,
-              color: 'var(--dsw-alias-label-tertiary)'
-            }
-          }, t('wallpaperRecommend')),
-          h(Row, { label: t('opacity') },
-            h(Slider, {
-              // 上限同样与 BG_OPACITY_MAX 对齐（有测试断言）
-              value: settings.backgroundOpacity, min: 0, max: 90, step: 1, suffix: '%',
-              onChange: v => set({ backgroundOpacity: v })
-            })),
-          h(Row, { label: t('blur') },
-            h(Slider, {
-              value: settings.backgroundBlur, min: 0, max: 16, step: 1, suffix: 'px',
-              onChange: v => set({ backgroundBlur: v })
-            })),
-          h(Row, { label: t('position') },
-            h(Segmented, {
-              value: settings.backgroundPosition,
-              options: POSITIONS.map(p => ({ value: p, label: t(POS_LABELS[p]) })),
-              onChange: v => set({ backgroundPosition: v })
-            })),
-          // C15：轮播。选「关闭」以外的档位才显示顺序选择 —— 关闭时它无意义。
-          h(Row, { label: t('rotate'), hint: t('rotateHint') },
-            h(Segmented, {
-              value: settings.backgroundRotate ?? 'off',
-              options: [
-                { value: 'off', label: t('rotateOff') },
-                { value: '60s', label: t('rotate60s') },
-                { value: '5m', label: t('rotate5m') },
-                { value: '30m', label: t('rotate30m') }
-              ],
-              onChange: v => set({ backgroundRotate: v })
-            })),
-          settings.backgroundRotate !== 'off' && h(Row, { label: t('rotateOrder') },
-            h(Segmented, {
-              value: settings.backgroundRotateOrder ?? 'sequential',
-              options: [
-                { value: 'sequential', label: t('rotateSequential') },
-                { value: 'random', label: t('rotateRandom') }
-              ],
-              onChange: v => set({ backgroundRotateOrder: v })
-            })),
-
-          h(Group, { groupId: 'type' }),
-          h(Row, { label: t('fontFamily'), hint: t('fontFamilyHint') },
-            h(Select, {
-              value: settings.fontFamily ?? 'default',
-              // 显示名走 t()（与其它设置项一致，由宿主 locale 决定语言）；
-              // DICT 里没有该键时 t() 会原样返回键名，所以档位名直接写进 DICT
-              options: FONT_FAMILIES.map(f => ({ value: f, label: t(`font_${f}`) })),
-              onChange: v => set({ fontFamily: v })
-            })),
-          h(Row, { label: t('fontScale'), hint: t('fontScaleHint') },
-            h(Segmented, {
-              value: String(settings.fontScale ?? 1),
-              options: FONT_SCALES.map(sc => ({
-                value: String(sc),
-                label: t(`fontScale_${String(sc).replace('.', '_')}`)
               })),
-              onChange: v => set({ fontScale: Number(v) })
-            })),
-          h(Row, { label: t('contentWidth'), hint: t('contentWidthHint') },
-            h(Segmented, {
-              value: String(settings.contentWidth ?? 'auto'),
-              options: CONTENT_WIDTH_MODES.map(m => ({ value: m, label: t(`contentWidth_${m}`) })),
-              onChange: v => set({ contentWidth: v })
-            })),
-          h(Group, { groupId: 'detail' }),
-          h(Row, { label: t('accentHue'), hint: t('accentHueHint') },
-            h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', justifyContent: 'flex-end' } },
-              h('button', {
-                type: 'button',
-                'aria-pressed': settings.accentHue === 'preset' ? 'true' : 'false',
-                onClick: () => set({ accentHue: 'preset' }),
-                style: buttonStyle(settings.accentHue === 'preset')
-              }, t('accentHuePreset')),
-              h(Slider, {
-                value: typeof settings.accentHue === 'number' ? settings.accentHue : 0,
-                min: 0,
-                max: 359,
-                step: 1,
-                suffix: '°',
-                onChange: v => set({ accentHue: v })
-              }))),
-          h(Row, { label: t('contourBorder') },
-            h(Toggle, { value: settings.contourBorder, onChange: v => set({ contourBorder: v }) })),
-          h(Row, { label: t('accentGlow'), hint: t('accentGlowHint') },
-            h(Toggle, { value: settings.accentGlow, onChange: v => set({ accentGlow: v }) })),
-          h(Row, { label: t('heroAvatar') },
-            h(Toggle, { value: settings.heroAvatar, onChange: v => set({ heroAvatar: v }) })),
-          // A3：只在有原生 Windows 标题栏的载体上显示 —— 它在别处是空开关。
-          // **只隐藏 UI，不动设置值**：用户切到别的平台再切回来时值还在。
-          hasWindowsTitlebar(document) && h(Row, { label: t('titlebarFollow'), hint: t('titlebarFollowHint') },
-            h(Toggle, { value: settings.titlebarFollow, onChange: v => set({ titlebarFollow: v }) })),
-
-          // 动效单独成组：`motion` 含**无障碍**语义（「减少动态效果」是系统级偏好），
-          // 混在装饰里容易被当成纯装饰开关随手关掉。
-          h(Group, { groupId: 'motion' }),
-          h(Row, { label: t('motion'), hint: t('motionHint') },
-            h(Segmented, {
-              value: settings.motion,
-              options: [
-                { value: 'on', label: t('motionOn') },
-                { value: 'auto', label: t('motionAuto') },
-                { value: 'reduced', label: t('motionReduced') }
-              ],
-              onChange: v => set({ motion: v })
-            })),
-          h(Row, { label: t('splash'), hint: t('splashHint') },
-            h(Toggle, { value: settings.splash !== false, onChange: v => set({ splash: v }) })),
-
-          h(Group, { groupId: 'skin' }),
-          h(Row, { label: t('rail'), hint: t('railHint') },
-            h(Toggle, { value: settings.rail, onChange: v => set({ rail: v }) })),
-          h(Row, { label: t('railWidth') },
-            h(Slider, {
-              value: settings.railWidth,
-              min: 240,
-              max: 380,
-              step: 4,
-              suffix: 'px',
-              onChange: v => set({ railWidth: v })
-            })),
-          h(Row, { label: t('avatarBubbles'), hint: t('avatarBubblesHint') },
-            h(Toggle, { value: settings.avatarBubbles, onChange: v => set({ avatarBubbles: v }) })),
-
+            // 「恢复本页」跟在页签栏右边 —— 任何一页都够得着，不必滚到页脚。
+            // `state.defaults === null`（宿主未升级）时整个按钮不渲染。
+            s.defaults !== null && h('button', {
+              type: 'button',
+              title: t('tabReset'),
+              'aria-label': t('tabReset'),
+              disabled: tabPatch === null,
+              onClick: () => { if (tabPatch !== null) set(tabPatch) },
+              style: {
+                fontSize: 12, flex: 'none', padding: '4px 2px',
+                border: 'none', background: 'transparent',
+                cursor: tabPatch === null ? 'default' : 'pointer',
+                color: tabPatch === null
+                  ? 'var(--dsw-alias-label-tertiary)'
+                  : 'var(--dsw-alias-label-secondary)',
+                opacity: tabPatch === null ? 0.5 : 1
+              }
+            }, t('tabReset'))),
+          h('div', { style: tabHintStyle }, t(activeTab.hint)),
+          h('div', {
+            key: activeTab.id,
+            role: 'tabpanel',
+            id: `zf-panel-${activeTab.id}`,
+            'aria-labelledby': `zf-tab-${activeTab.id}`,
+            tabIndex: -1
+          }, ...activeBody(ctx)),
           // 底部动作区分**危险 / 中性 / 主要**三档 —— 原先四个按钮同级同色，
           // 主次不分，而「恢复默认」这种一键抹掉全部设置的动作与「重试」并排、
           // 样式相同，很容易误点。
@@ -3834,7 +4217,22 @@ window.__ModuleLoader__.load({
             // 又长又空，而且**看不出壁纸长什么样**（用户截图反馈「有点丑」）。
             // 设置页早就用了缩略图网格（64×40，直接可见），这里保持一致：
             // 3 列网格一屏放得下，同时修掉「显示原始 id」那个 bug。
+            //
+            // 0.9.0：「无」从**末尾移到首位**（与设置页一致），且网格加了
+            // 高度上限（见 index.js 的 `.zf-rail__artgrid`）—— 58 张排下来
+            // 约 20 行，没有上限会把右栏撑成一根长滚动条。
             h('div', { className: 'zf-rail__artgrid' },
+              // 「无」（清空壁纸）：与其它项同尺寸保持网格整齐，但它是
+              // 「关掉壁纸」而不是某张图，所以排在最前而不是末尾。
+              h('button', {
+                key: 'none',
+                type: 'button',
+                className: 'zf-rail__art zf-rail__art--none',
+                'aria-pressed': settings.background === 'none' ? 'true' : 'false',
+                'aria-label': t('bgNone'),
+                title: t('bgNone'),
+                onClick: () => set({ background: 'none' })
+              }, h('span', null, t('bgNone'))),
               ...BACKGROUNDS.filter(b => b !== 'none').map(b => {
                 const pressed = settings.background === b
                 const file = `wallpaper-${b}.webp`
@@ -3852,17 +4250,7 @@ window.__ModuleLoader__.load({
                   onClick: () => set({ background: pressed ? 'none' : b })
                 },
                 h('img', { src: `${ROUTE}/art/thumbs/${file}`, alt: '', loading: 'lazy' }))
-              }),
-              // 「无」（清空壁纸）：与其它项同尺寸，保持网格整齐
-              h('button', {
-                key: 'none',
-                type: 'button',
-                className: 'zf-rail__art zf-rail__art--none',
-                'aria-pressed': settings.background === 'none' ? 'true' : 'false',
-                'aria-label': t('bgNone'),
-                title: t('bgNone'),
-                onClick: () => set({ background: 'none' })
-              }, h('span', null, t('bgNone'))))))
+              }))))
       }
 
       /**
@@ -4434,7 +4822,7 @@ window.__ModuleLoader__.load({
       void load()
 
       exports.__test = {
-        DICT, PRESETS, SCHEMES, BACKGROUNDS, POSITIONS, NS,
+        DICT, PRESETS, SCHEMES, BACKGROUNDS, BG_GROUPS, BG_GROUP_OF, POSITIONS, NS,
         // 供无头测试直接验证定位/打标逻辑
         makeModuleClass, makeMarker, readSessionState, readStats, nativeRightbarOpen,
         // 观测台路径裁决与设置同步（用例 41/42），以及官方 tab 的自动打开（用例 44）
@@ -4463,7 +4851,8 @@ window.__ModuleLoader__.load({
         // C15 壁纸轮播（用例 82）
         nextWallpaper, syncRotation, stopRotation, ROTATE_MS, ROTATE_POOL,
         // 设置页结构（用例 83）：分组常量 + 平台判据
-        SETTINGS_GROUPS, hasWindowsTitlebar,
+        SETTINGS_TABS, UNASSIGNED_KEYS, TAB_BODIES, ART_PANEL_ID, tabDefaultsPatch,
+        hasWindowsTitlebar,
         // 自定义背景（用例 84）
         artSrcOf, artFitOf, fitOfSize, CUSTOM_BACKGROUND, PORTRAIT_RATIO,
         uploadBackground, removeBackground,

@@ -1024,9 +1024,23 @@ export function structureCss () {
      *
      * 缩略图是 128×80 的 WebP（`prepare-art.py` 产出），比例 1.6:1；
      * 这里用 `aspect-ratio:8/5` 对齐，`object-fit:cover` 裁齐。
+     *
+     * ── 限高滚动（0.9.0）─────────────────────────────────────────────
+     *
+     * 0.8.0 把内置壁纸从 8 张扩到 58 张，但**网格没有高度上限**：3 列
+     * 排下来约 20 行，把右栏撑到近 900px，观测台自己就成了一个长滚动条，
+     * 顶部的会话读数被顶出视野。
+     *
+     * 限高 260px（约 6 行）而不是继续加长：`--dsh-scrollbar-thumb*`
+     * 是外壳自己给设置面板用的那两个变量名，借用它们让这里的滚动条
+     * 颜色与外壳一致（见 `SettingsRoot.module.css` 的 `.panel`）。
      */
     '.zf-rail__artgrid{',
     '  display:grid;grid-template-columns:repeat(3, 1fr);gap:6px;',
+    '  max-height:260px;overflow-y:auto;overscroll-behavior:contain;',
+    '  padding-right:2px;',
+    '  --dsh-scrollbar-thumb:var(--dsw-alias-scrollbar-bg-l2);',
+    '  --dsh-scrollbar-thumb-hover:var(--dsw-alias-scrollbar-hover-l2);',
     '}',
     '.zf-rail__art{',
     '  position:relative;padding:0;cursor:pointer;overflow:hidden;',
@@ -1949,7 +1963,18 @@ export function apply (ctx, config) {
 
       if (route === '/settings') {
         if (req.method === 'GET') {
-          sendJson(res, 200, { settings: settings.get(), presets: PRESET_IDS })
+          // `defaults` 是**纯追加**字段（0.9.0）：设置页每个页签右侧的
+          // 「恢复本页」要拿它做差集 —— 只有客户端知道某个键属于哪一页，
+          // 默认值却只存在于这里，所以必须由宿主下发。
+          //
+          // 为什么不给 POST 加「只回退这些键」的接口：那一路已经在做
+          // 「按 patch 合并」了（`settings.replace({settings: next})`），
+          // 客户端算好差集再 POST 就行，不必再开一个写入口。
+          sendJson(res, 200, {
+            settings: settings.get(),
+            presets: PRESET_IDS,
+            defaults: defaultSettings()
+          })
           return
         }
         if (req.method === 'POST' || req.method === 'PUT') {

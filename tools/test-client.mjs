@@ -315,6 +315,83 @@ function rightServices (tabs, right) {
   }
 }
 
+/** 宿主 `GET /settings` 下发的默认值（0.9.0 起随响应带 `defaults`）。 */
+let _hostDefaults = null
+const hostDefaults = async () =>
+  (_hostDefaults ??= (await import('../src/settings.js')).defaultSettings())
+
+/**
+ * 深度渲染一棵 React 元素树（不用 React，也不用渲染器）。
+ *
+ * ── 为什么需要它 ──────────────────────────────────────────────────────
+ *
+ * `component({})` 返回的是**元素树**，不是渲染结果：函数组件
+ * （`Segmented` / `Row` / `Toggle` …）在树里只是一个 `{type: fn, props}`
+ * 节点，它们的输出要等 React 真正渲染时才产生。
+ *
+ * 0.8.0 之前这不影响断言 —— 设置页的 `img` 都是 `h(Row, …, h('img'))`
+ * 这样**作为实参提前算好**塞进树里的，遍历 `children` 就能看见。
+ * 0.9.0 引入页签后，页签按钮在 `Segmented` **内部**生成，只看原始树
+ * 会得到「一个 tab 都没有」的假阴性。
+ *
+ * 无头桩里 `useState` / `useEffect` 都是空实现，所以直接调用函数组件是
+ * 安全的：唯一的 Hook 使用者是 `Slider`，而它对 `undefined` 有回落
+ * （`typeof local === 'number' ? local : value`）。
+ *
+ * @param {*} node 元素 / 数组 / 原始值
+ * @returns {*} 同构的树，函数组件已展开
+ */
+
+/**
+ * 递归深度上限，**别设太紧**。
+ *
+ * 它数的是「宿主元素 + 函数组件」两类节点，而函数组件会**多消耗一层** ——
+ * 设置页最深的一处（背景页的预览 `<img>`，外面套着 Row 与三层 flex 容器）
+ * 实测落在第 **13** 层。第一版写成 `depth > 12`，那个 img 被**静默丢掉**，
+ * 表现是「预览图不渲染」这种极难定位的假阴性。
+ */
+const RENDER_MAX_DEPTH = 64
+
+const renderDeep = (node, depth = 0) => {
+  if (node === null || node === undefined || typeof node !== 'object') return node
+  if (depth > RENDER_MAX_DEPTH) return null
+  if (Array.isArray(node)) return node.map(n => renderDeep(n, depth + 1))
+  const type = node.type
+  // ⚠️ children 在本桩里放在**元素本身**上（`createElement` 返回
+  // `{type, props, children}`），真实 React 放在 `props.children`。
+  // 两件事必须同时照顾到，缺一个就是假阴性：
+  //   ① 渲染宿主元素时，从 `node.children` 取子节点（取 props.children 会清空整棵树）；
+  //   ② 调用函数组件时，把子节点**塞回 props** —— 否则 `Row` / `Slider`
+  //      这些靠 `props.children` 拿内容的组件会渲染成空的，
+  //      表现为「所有断言都拿到 0 个节点」。
+  const kids = node.children !== undefined ? node.children : (node.props ?? {}).children
+  if (typeof type === 'function') {
+    const props = node.props ?? {}
+    return renderDeep(type(kids === undefined ? props : { ...props, children: kids }), depth + 1)
+  }
+  return { ...node, children: renderDeep(kids, depth + 1) }
+}
+
+/**
+ * 渲染设置区，并把页签 / 壁纸选择器状态摆好。
+ *
+ * 页签与展开态都在共享 `state` 里（这是 0.9.0 的设计决定），所以测试
+ * 直接写 `state` 就能切到任意一页 —— 若它们在组件内 `useState`，
+ * 无头桩返回 undefined，除第一页外的任何一页都验证不了。
+ *
+ * @param {object} probe `boot()` 的返回值
+ * @param {object} [opts] `{ tab, pickerOpen, pickerQuery }`
+ * @returns {*} 深度渲染后的元素树
+ */
+const sectionView = (probe, opts = {}) => {
+  const st = probe.mod.__test.state
+  if (opts.tab !== undefined) st.activeTab = opts.tab
+  st.pickerOpen = opts.pickerOpen === true
+  if (opts.pickerQuery !== undefined) st.pickerQuery = opts.pickerQuery
+  const reg = probe.h.slotRegistrations.find(r => r.meta.name === 'settings.section')
+  return renderDeep(reg.component({}))
+}
+
 function makeHarness (settingsPayload, themePayload, stylePayload = DEFAULT_STYLE, serviceFixture = DEFAULT_SERVICES) {
   const dom = makeDom()
   const effects = []
@@ -529,9 +606,11 @@ function makeHarness (settingsPayload, themePayload, stylePayload = DEFAULT_STYL
       const queued = globalThis.__zfNextSettings
       if (queued !== undefined && init?.method !== 'POST') {
         globalThis.__zfNextSettings = undefined
-        return { ok: true, json: async () => ({ settings: queued }) }
+        return { ok: true, json: async () => ({ settings: queued, defaults: await hostDefaults() }) }
       }
-      return { ok: true, json: async () => settingsPayload }
+      // `defaults` 是宿主 0.9.0 起随 GET 下发的字段（「恢复本页」要靠它做差集）。
+      // 缺了它按钮会整个不渲染 —— 那是受支持的降级态，不是错误。
+      return { ok: true, json: async () => ({ ...settingsPayload, defaults: await hostDefaults() }) }
     }
     // 皮肤结构样式表。客户端**必须自己取并插 <style>**：桌面端的
     // `tapIndex` 永远不执行（渲染进程直接从磁盘读 index.html），
@@ -1914,8 +1993,11 @@ function shellDom (opts = {}) {
     return out
   }
   const sectionTree = sectionReg.component({})
-  const thumbs = collect(sectionTree, []).filter(s => s.includes('/art/thumbs/'))
-  // 0.8.0：58 张内置 + 1 个「无」格（无格没有 img）。分组渲染不影响 img 总数。
+  // 0.9.0：壁纸选择器**默认收起**（一行预览），58 张缩略图要展开才有。
+  // 下面所有缩略图断言都必须先切到「背景」页并展开，否则拿到的是 0 张。
+  const sectionOpen = sectionView(a, { tab: 'background', pickerOpen: true })
+  const thumbs = collect(sectionOpen, []).filter(s => s.includes('/art/thumbs/'))
+  // 0.9.0：58 张内置（「无」是一格文字，没有 img）。分组渲染不影响 img 总数。
   ok('缩略条渲染 58 张图', thumbs.length === 58, `实际 ${thumbs.length}`)
   // 明暗不再分版：浅深两档用的都是同一批 `wallpaper-<id>.webp`。
   // 用**集合比对**而不是子串：预设 id 里有 `dark`（暗调水面月影），
@@ -1929,7 +2011,7 @@ function shellDom (opts = {}) {
   // 5) 固定深色 → **同样这批文件**（0.8.0 起明暗共用，不再有 -dark 变体）
   const b2 = await boot({ ...baseSettings, scheme: 'dark' })
   const thumbsDark = collect(
-    b2.h.slotRegistrations.find(r => r.meta.name === 'settings.section').component({}), []
+    sectionView(b2, { tab: 'background', pickerOpen: true }), []
   ).filter(s => s.includes('/art/thumbs/'))
   ok('深色 scheme 用同一批图（无 -dark）',
     thumbsDark.length === thumbs.length && thumbsDark.every(s => lightFiles.has(nameOf(s))),
@@ -5496,44 +5578,77 @@ function shellDom (opts = {}) {
   const probe = await boot(baseSettings)
   const T = probe.mod.__test
 
-  // 1) 分组常量存在且结构合法
-  const groups = T.SETTINGS_GROUPS
-  ok('SETTINGS_GROUPS 是显式常量', Array.isArray(groups) && groups.length >= 5, String(groups?.length))
-  ok('每个分组都有 id / label / max',
-    groups.every(g => typeof g.id === 'string' && typeof g.label === 'string' && typeof g.max === 'number'))
-  ok('分组 id 不重复', new Set(groups.map(g => g.id)).size === groups.length)
+  // 1) 页签常量存在且结构合法
+  const tabs = T.SETTINGS_TABS
+  ok('SETTINGS_TABS 是显式常量', Array.isArray(tabs) && tabs.length >= 5, String(tabs?.length))
+  ok('每个页签都有 id / label / hint / max / keys',
+    tabs.every(g => typeof g.id === 'string' && typeof g.label === 'string' &&
+      typeof g.hint === 'string' && typeof g.max === 'number' &&
+      Array.isArray(g.keys) && g.keys.length > 0))
+  ok('页签 id 不重复', new Set(tabs.map(g => g.id)).size === tabs.length)
+  // 行数上限**合计必须还是 24**：页签化是重新分层，不是增删设置项。
+  // 少了说明有行被弄丢（用户再也找不到那个开关），多了说明多算了。
+  ok('各页行数上限合计仍是 24',
+    tabs.reduce((n, g) => n + g.max, 0) === 24,
+    String(tabs.reduce((n, g) => n + g.max, 0)))
 
-  // 2) 分组标签都必须在 DICT 里（否则界面显示键名）
-  const missingGroupLabel = groups.filter(g => T.DICT.zh[g.label] === undefined).map(g => g.label)
-  ok('每个分组标签都是存在的 DICT 键', missingGroupLabel.length === 0, missingGroupLabel.join(', '))
-  const missingGroupHint = groups.filter(g => g.hint !== undefined && T.DICT.zh[g.hint] === undefined)
-  ok('分组说明（若有）也是存在的 DICT 键', missingGroupHint.length === 0,
-    missingGroupHint.map(g => g.hint).join(', '))
+  // 2) 页签标签/说明都必须在 DICT 里（否则界面显示键名）
+  const missingLabel = tabs.filter(g => T.DICT.zh[g.label] === undefined).map(g => g.label)
+  ok('每个页签标签都是存在的 DICT 键', missingLabel.length === 0, missingLabel.join(', '))
+  const missingHint = tabs.filter(g => T.DICT.zh[g.hint] === undefined).map(g => g.hint)
+  ok('页签说明也是存在的 DICT 键', missingHint.length === 0, missingHint.join(', '))
 
-  // 3) 渲染出来的分组顺序与常量一致（防止渲染里漏掉某个 Group）
-  const renderGroupIds = [...csrc.matchAll(/h\(Group, \{ groupId: '([a-z]+)' \}\)/g)].map(m => m[1])
-  ok('渲染的分组顺序与 SETTINGS_GROUPS 完全一致',
-    renderGroupIds.join(',') === groups.map(g => g.id).join(','),
-    `渲染 [${renderGroupIds.join(',')}] vs 常量 [${groups.map(g => g.id).join(',')}]`)
+  // 2b) 中英两侧的键集合必须一致 —— 只补了 zh 的键会在英文界面显示键名
+  const zhOnly = Object.keys(T.DICT.zh).filter(k => T.DICT.en[k] === undefined)
+  const enOnly = Object.keys(T.DICT.en).filter(k => T.DICT.zh[k] === undefined)
+  ok('DICT 中英键集合一致', zhOnly.length === 0 && enOnly.length === 0,
+    `仅 zh: ${zhOnly.join(',')} ｜ 仅 en: ${enOnly.join(', ')}`)
 
-  // 4) 每组行数不超过 max —— 超了就说明该拆组了
+  // 3) 渲染出来的页签顺序与常量一致（防止渲染里漏掉某一页）
   //
-  // 用「渲染里每个 Group 到下一个 Group 之间的 h(Row, 计数」来数。
+  // 渲染标记是 `function Tab<Id> (ctx)`（页签 id 首字母大写）。
+  // 用它切块数行，而不是找 `h('div', {role:'tabpanel'})` —— 后者在源码里是
+  // 一句 `activeBody(ctx)`，切不出五块。
+  const bodyName = id => `Tab${id[0].toUpperCase()}${id.slice(1)}`
+  const renderTabIds = []
+  for (const tab of tabs) {
+    if (csrc.includes(`function ${bodyName(tab.id)} (ctx)`)) renderTabIds.push(tab.id)
+  }
+  ok('渲染的页签顺序与 SETTINGS_TABS 完全一致',
+    renderTabIds.join(',') === tabs.map(g => g.id).join(','),
+    `渲染 [${renderTabIds.join(',')}] vs 常量 [${tabs.map(g => g.id).join(',')}]`)
+  ok('TAB_BODIES 覆盖全部页签（漏一个就会渲染空页）',
+    tabs.every(tab => typeof T.TAB_BODIES?.[tab.id] === 'function'),
+    tabs.filter(tab => typeof T.TAB_BODIES?.[tab.id] !== 'function').map(t => t.id).join(', '))
+
+  // 4) 每页行数不超过 max —— 超了就说明**这一页塞不进一屏**了
+  //
+  // 用 `function Tab<Id> (ctx)` 把源码切成五块再数 `h(Row, `。
+  // 这是「每页一屏内」那条约定唯一的执行点：不靠自觉，靠它会失败。
   const rowCounts = {}
   {
-    const parts = csrc.split(/h\(Group, \{ groupId: '([a-z]+)' \}\)/)
-    // parts: [前置, id1, 片段1, id2, 片段2, …]
+    const parts = csrc.split(/function (Tab[A-Z][a-zA-Z]*) \(ctx\)/)
+    // parts: [前置, 函数名1, 片段1, 函数名2, 片段2, …]
     for (let i = 1; i < parts.length; i += 2) {
-      const id = parts[i]
-      const body = parts[i + 1] ?? ''
-      rowCounts[id] = (body.match(/h\(Row, /g) ?? []).length
+      const name = parts[i]
+      const id = tabs.find(g => bodyName(g.id) === name)?.id
+      if (id === undefined) continue
+      rowCounts[id] = (parts[i + 1] ?? '').match(/h\(Row, /g)?.length ?? 0
     }
   }
-  const over = groups.filter(g => (rowCounts[g.id] ?? 0) > g.max)
+  const missing = tabs.filter(g => rowCounts[g.id] === undefined).map(g => g.id)
+  ok('每个页签都有对应的渲染块', missing.length === 0, missing.join(', '))
+  const over = tabs.filter(g => (rowCounts[g.id] ?? 0) > g.max)
     .map(g => `${g.id}=${rowCounts[g.id]}>${g.max}`)
-  ok('每组行数不超过声明上限（超了说明该拆组）', over.length === 0, over.join(', '))
-  // 而且装饰组必须已经被拆开 —— 它曾经有 10 行
-  ok('「细节」组不再吞下排版与动效（≤ 5 行）', (rowCounts.detail ?? 0) <= 5, String(rowCounts.detail))
+  ok('每页行数不超过声明上限（超了说明这一页塞不进一屏）', over.length === 0, over.join(', '))
+  // 行数**下限**也要对：0 行说明那一页被清空了，用户点进去看到一片空白
+  const empty = tabs.filter(g => (rowCounts[g.id] ?? 0) === 0).map(g => g.id)
+  ok('没有空页', empty.length === 0, empty.join(', '))
+  // 总行数必须仍是 24（页签化是重新分层，不增不减）
+  const totalRows = Object.values(rowCounts).reduce((a, b) => a + b, 0)
+  ok('设置项总数仍是 24 行', totalRows === 24, String(totalRows))
+  // 而且「细节」页不能把排版与动效吞回来 —— 它曾经有 10 行
+  ok('「细节」页不吞排版与动效（≤ 5 行）', (rowCounts.details ?? 0) <= 5, String(rowCounts.details))
 
   // 5) A2：分档两个下拉各自带标签（原先定义了键却从未渲染）
   ok('浅色预设标签真的被渲染', csrc.includes("t('presetLight')"))
@@ -5567,25 +5682,25 @@ function shellDom (opts = {}) {
   //
   // 两类键不走字面量调用，必须排除，否则会误报：
   //   ① **动态拼接**的键（`t(\`font_${f}\`)` 之类）—— 用前缀白名单；
-  //   ② **分组标签**（`t(g.label)` / `t(g.hint)`）—— 直接从 SETTINGS_GROUPS
-  //      推导，而不是手写一份（手写的白名单会与常量漂移）。
+  //   ② **页签标签**（`t(x.label)` / `t(activeTab.hint)`）—— 直接从
+  //      SETTINGS_TABS 推导，而不是手写一份（手写的白名单会与常量漂移）。
   const stripComments2 = s => s
     .replace(/\/\*[\s\S]*?\*\//g, ' ')
     .replace(/(^|[^:])\/\/[^\n]*/g, '$1 ')
   const code2 = stripComments2(csrc)
   const DYNAMIC_PREFIX = /^(font_|fontScale_|contentWidth_|bg|pos|preset)/
-  const groupKeys = new Set()
-  for (const g of groups) {
-    groupKeys.add(g.label)
-    if (g.hint !== undefined) groupKeys.add(g.hint)
+  const tabKeys = new Set()
+  for (const g of tabs) {
+    tabKeys.add(g.label)
+    if (g.hint !== undefined) tabKeys.add(g.hint)
   }
   const dead = Object.keys(T.DICT.zh).filter(k =>
-    !DYNAMIC_PREFIX.test(k) && !groupKeys.has(k) && !code2.includes(`t('${k}')`))
+    !DYNAMIC_PREFIX.test(k) && !tabKeys.has(k) && !code2.includes(`t('${k}')`))
   ok('DICT 没有死键（每个键都有真实调用）', dead.length === 0, dead.join(', '))
-  // 反向自检：白名单确实只放过了分组键，不是把整类都豁免了
-  ok('死键检测的白名单只含分组标签（未过度豁免）',
-    [...groupKeys].every(k => T.DICT.zh[k] !== undefined) && groupKeys.size === groups.length + 7,
-    `白名单 ${groupKeys.size} 项`)
+  // 反向自检：白名单确实只放过了页签键，不是把整类都豁免了
+  ok('死键检测的白名单只含页签标签（未过度豁免）',
+    [...tabKeys].every(k => T.DICT.zh[k] !== undefined) && tabKeys.size === tabs.length * 2,
+    `白名单 ${tabKeys.size} 项`)
 
   // 10) 底部按钮主次：危险动作弱化 + 二次确认，主要动作在最右
   ok('危险动作使用弱化样式（quiet）', csrc.includes("buttonStyle(false, 'quiet')"))
@@ -5599,6 +5714,180 @@ function shellDom (opts = {}) {
     /h\(Segmented, \{[\s\S]{0,400}?compact: true[\s\S]{0,200}?grow: true/.test(csrc))
   ok('观测栏不再手写分段按钮的内联样式',
     !csrc.includes("flex: '1 1 0',"))
+
+  // ── 12) 0.9.0：键的归属 + 页签交互 + 壁纸选择器 ──────────────────────
+  //
+  // 两个局部工具：把渲染树摊平成节点数组、把 `<img src>` 收集成字符串数组。
+  // 渲染树是普通的 React 元素对象，没有 test renderer 也照样能走。
+  const walkTree = (node, out = []) => {
+    if (node === null || node === undefined) return out
+    if (Array.isArray(node)) { for (const c of node) walkTree(c, out); return out }
+    if (typeof node !== 'object') return out
+    out.push(node)
+    walkTree(node.children, out)
+    return out
+  }
+  const srcOf = tree => walkTree(tree)
+    .filter(n => n.type === 'img' && typeof n.props?.src === 'string')
+    .map(n => n.props.src)
+  const sectionReg = probe.h.slotRegistrations.find(r => r.meta.name === 'settings.section')
+  ok('设置区已注册', sectionReg !== undefined)
+  // 必须走 renderDeep：`role="tab"` 的按钮在 `Segmented` 内部生成，
+  // 只看 `component({})` 的原始元素树会一个都找不到（假阴性）。
+  const sectionTree = (opts) => sectionView(probe, opts)
+  const settingsMod = await import('../src/settings.js')
+  // 「本页全是默认值」的探针。**必须用完整的 `defaultSettings()`**：
+  // `baseSettings` 只列了 11 个键，其余是 `undefined`，与默认值不等，
+  // 于是每一页都「有改动」，禁用态断言会假失败。
+  const pristine = await boot({ ...settingsMod.defaultSettings() })
+  const defaultKeys = Object.keys(settingsMod.defaultSettings())
+
+  // 12a) **每个设置键都归属某一页**（双向全等）
+  //
+  // 这是 0.6.0「加了设置项忘了归组会失败」那条的加强版：从覆盖「渲染出来的行」
+  // 扩到覆盖 `defaultSettings()` 的**全部键**。
+  //
+  // 双向是关键：只查「声明的键都存在」会漏掉「某个键哪页都不属于」——
+  // 那种键永远不出现在界面上，用户也找不到对应开关。
+  const declaredKeys = tabs.flatMap(g => g.keys)
+  const unassigned = T.UNASSIGNED_KEYS ?? []
+  const allReal = defaultKeys.filter(k => !unassigned.includes(k))
+  const dupes = declaredKeys.filter((k, i) => declaredKeys.indexOf(k) !== i)
+  ok('各页声明的键没有重复', dupes.length === 0, dupes.join(', '))
+  const missingKeys = allReal.filter(k => !declaredKeys.includes(k))
+  const extraKeys = declaredKeys.filter(k => !allReal.includes(k))
+  ok('每个设置键都归属某一页（漏一个 = 用户找不到那个开关）',
+    missingKeys.length === 0, missingKeys.join(', '))
+  ok('页签没有声明不存在的键（写错的键名永远不会被写入）',
+    extraKeys.length === 0, extraKeys.join(', '))
+  ok('UNASSIGNED_KEYS 里的例外都是真例外（确实没有 UI 行）',
+    unassigned.every(k => defaultKeys.includes(k) && !declaredKeys.includes(k)),
+    JSON.stringify(unassigned))
+
+  // 12b) **页内声明的键确实在这一页被写**
+  //
+  // 单向校验（不做排他）：「一键推荐组合」按设计就跨页写 5 个键，
+  // 排他校验会把它误报成漂移。
+  const keyNotWritten = []
+  for (const tab of tabs) {
+    const parts = csrc.split(new RegExp(`function ${bodyName(tab.id)} \\(ctx\\)`))
+    const body = parts[1] ?? ''
+    for (const key of tab.keys) {
+      if (!new RegExp(`set\\(\\{[^}]*\\b${key}\\b`).test(body)) keyNotWritten.push(`${tab.id}:${key}`)
+    }
+  }
+  ok('页内声明的键确实在该页被写（不会「声明了却没这一行」）',
+    keyNotWritten.length === 0, keyNotWritten.join(', '))
+
+  // 12c) 页签 ARIA 完整：一个 role="tab" 选中，aria-controls 指向真实面板
+  const tabNodes = walkTree(sectionView(pristine, { tab: 'look' })).filter(n => n.props?.role === 'tab')
+  ok('恰好 5 个 role="tab"', tabNodes.length === tabs.length, String(tabNodes.length))
+  const selectedTabs = tabNodes.filter(n => n.props['aria-selected'] === 'true')
+  ok('恰好 1 个选中页签', selectedTabs.length === 1, String(selectedTabs.length))
+  const panelNodes = walkTree(sectionView(pristine, { tab: 'look' }))
+    .filter(n => n.props?.role === 'tabpanel')
+  ok('恰好 1 个 role="tabpanel"（一次只渲染一页）', panelNodes.length === 1, String(panelNodes.length))
+  ok('选中的 tab 的 aria-controls === 面板的 id（不能指空）',
+    panelNodes.length === 1 && selectedTabs.length === 1 &&
+    selectedTabs[0].props['aria-controls'] === panelNodes[0].props.id,
+    `${selectedTabs[0]?.props?.['aria-controls']} vs ${panelNodes[0]?.props?.id}`)
+  ok('面板的 aria-labelledby 指向选中的 tab',
+    selectedTabs.length === 1 && panelNodes.length === 1 &&
+    panelNodes[0].props['aria-labelledby'] === selectedTabs[0].props.id)
+  // roving tabindex：只有选中的那个能被 Tab 键够到
+  ok('roving tabindex：只有选中项 tabIndex=0',
+    tabNodes.filter(n => n.props?.tabIndex === 0).length === 1 &&
+    tabNodes.filter(n => n.props?.tabIndex === -1).length === tabs.length - 1)
+  ok('页签栏声明了方向键切换（Segmented 的 tablist 分支）',
+    csrc.includes("event.key === 'ArrowRight'") && csrc.includes("event.key === 'ArrowLeft'"))
+  // 不传 role 时不能产生任何 ARIA（观测栏那两处调用不能被牵连）
+  ok('Segmented 默认不产生 ARIA（观测栏两处调用行为不变）',
+    /role: isTabs \? 'tab' : undefined/.test(csrc) &&
+    /role: isTabs \? 'tablist' : undefined/.test(csrc))
+
+  // 12d) 「恢复本页」：可禁用、降级不渲染、只回退本页
+  const resetLabel = T.DICT.zh.tabReset
+  const resetOf = tree => walkTree(tree)
+    .filter(n => n.type === 'button' && n.props?.['aria-label'] === resetLabel)
+  ok('页签栏右侧恰好一个「恢复本页」', resetOf(sectionView(pristine, { tab: 'look' })).length === 1)
+  ok('本页已是默认值时按钮禁用（不做死按钮）',
+    resetOf(sectionView(pristine, { tab: 'look' }))[0]?.props?.disabled === true)
+  ok('背景页也已全等默认时同样禁用',
+    resetOf(sectionView(pristine, { tab: 'background' }))[0]?.props?.disabled === true)
+  const dirty = await boot({ ...settingsMod.defaultSettings(), enabled: false })
+  ok('本页有改动时按钮可用',
+    resetOf(sectionView(dirty, { tab: 'look' }))[0]?.props?.disabled === false)
+  // 改的是**别的页**时，本页按钮不该被牵连
+  const otherPage = await boot({ ...settingsMod.defaultSettings(), background: 'pool' })
+  ok('别的页有改动不影响本页按钮',
+    resetOf(sectionView(otherPage, { tab: 'look' }))[0]?.props?.disabled === true)
+  // `defaults` 没下发时按钮整个不渲染（宿主未升级的降级路径）
+  const noDefaults = await boot({ ...settingsMod.defaultSettings() })
+  noDefaults.mod.__test.state.defaults = null
+  ok('defaults 缺失时「恢复本页」不渲染（降级，不是报错）',
+    resetOf(sectionView(noDefaults, { tab: 'look' })).length === 0)
+  noDefaults.mod.__test.state.defaults = await hostDefaults()
+  // 纯函数：只回退本页的键
+  const patchFn = T.tabDefaultsPatch
+  const dflt = settingsMod.defaultSettings()
+  const lookPatch = patchFn('look', { ...dflt, enabled: false, motion: 'on' }, dflt)
+  ok('恢复本页只回退本页的键（motion 不属于外观页）',
+    lookPatch !== null && JSON.stringify(lookPatch) === JSON.stringify({ enabled: true }),
+    JSON.stringify(lookPatch))
+  const bgPatch = patchFn('background', { ...dflt, background: 'pool', rail: false }, dflt)
+  ok('背景页的补丁只含背景键（不含 rail）',
+    bgPatch !== null && Object.keys(bgPatch).sort().join(',') === 'background',
+    JSON.stringify(bgPatch))
+  ok('本页已全等默认时返回 null（与「要改几个键」可区分）',
+    patchFn('look', dflt, dflt) === null && patchFn('skin', dflt, dflt) === null)
+  ok('defaults 为 null 时返回 null（宿主未升级的降级路径）',
+    patchFn('look', dflt, null) === null && patchFn('look', dflt, undefined) === null)
+  ok('未知页签 id 返回 null 而不是抛错',
+    patchFn('__nope__', dflt, dflt) === null)
+
+  // 12e) 壁纸选择器：默认收起 / 展开后 58 张 / 「无」不再塞在纹理组
+  const thumbsOf = tree => srcOf(tree).filter(x => x.includes('/art/thumbs/'))
+  const bgCollapsed = sectionView(pristine, { tab: 'background', pickerOpen: false })
+  const bgOpen = sectionView(pristine, { tab: 'background', pickerOpen: true })
+  ok('默认收起时不渲染任何缩略图（那一行只有预览）',
+    thumbsOf(bgCollapsed).length === 0, String(thumbsOf(bgCollapsed).length))
+  ok('默认收起时预览走**全尺寸** URL（96×60 用缩略图会糊）',
+    srcOf(bgCollapsed).some(x => /\/art\/wallpaper-[a-z0-9]+\.webp$/.test(x)),
+    srcOf(bgCollapsed).slice(0, 3).join(' | '))
+  ok('展开后渲染 58 张内置缩略图', thumbsOf(bgOpen).length === 58, String(thumbsOf(bgOpen).length))
+  ok('「无」不再是某一张内置图（BG_GROUP_OF 里没有 none）',
+    T.BG_GROUP_OF.none === undefined)
+  const noneTile = walkTree(bgOpen).filter(
+    n => n.type === 'button' && n.props?.['aria-label'] === T.DICT.zh.bgNone)
+  ok('「无」作为独立格存在', noneTile.length === 1, String(noneTile.length))
+  // 「无」必须排在**所有内置图之前**。用渲染树的文档顺序判定：遍历网格时
+  // 第一个 aria-label 为壁纸名的节点，应当出现在 58 张图全部走完之后。
+  {
+    const panel = walkTree(bgOpen).find(n => n.props?.id === T.ART_PANEL_ID)
+    const seq = panel === undefined ? [] : walkTree(panel)
+    let sawNone = false
+    let noneBeforeFirstArt = false
+    let firstArtSeen = false
+    for (const n of seq) {
+      if (n.type === 'button' && n.props?.['aria-label'] === T.DICT.zh.bgNone) sawNone = true
+      else if (n.type === 'img' && String(n.props?.src ?? '').includes('/art/thumbs/')) {
+        if (!firstArtSeen) { firstArtSeen = true; noneBeforeFirstArt = sawNone }
+      }
+    }
+    ok('「无」排在网格最前（它不是某张图，不该混在纹理组末尾）',
+      sawNone && firstArtSeen && noneBeforeFirstArt,
+      `见到无=${sawNone} 第一张图=${firstArtSeen} 无在前=${noneBeforeFirstArt}`)
+  }
+  ok('背景页不再有内嵌滚动盒（展开区才滚动）',
+    !/maxHeight: 168/.test(csrc) && csrc.includes('ART_PANEL_ID'))
+  ok('展开面板 id 与「更换图片」按钮的 aria-controls 一致',
+    csrc.includes("'aria-controls': ART_PANEL_ID") && csrc.includes('id: ART_PANEL_ID'))
+  ok('「我的图片」独立成组', T.DICT.zh.bgGroupMine !== undefined && csrc.includes("t('bgGroupMine')"))
+  ok('壁纸搜索按当前语言标签过滤', csrc.includes('bgLabel(b)'))
+  // 发行清单里 `browser:local-storage` 是**禁止权限**，`check-manifest.mjs`
+  // 对 client.js 做的是纯文本扫描（连注释都算）。这里只查代码更严一档：
+  // 注释里也不该出现那个词，否则清单自检会红。
+  ok('UI 态不进浏览器本地存储（发行清单禁止该权限）', !csrc.includes('localStorage'))
 }
 
 // 用例 84：自定义背景（v7）
