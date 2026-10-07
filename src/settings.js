@@ -32,6 +32,20 @@ export const BACKGROUNDS = {
 export const POSITIONS = ['cover', 'right', 'tile']
 
 /**
+ * 「自定义背景」的哨兵值。
+ *
+ * `settings.background` 复用同一个字段（这样「当前选哪张壁纸」只有一个来源，
+ * 壁纸选择器不必分两套状态），但 `'custom'` **不在** `BACKGROUNDS` 里 ——
+ * 它表示「用 `customBackground` 里那个上传的文件」。
+ *
+ * 为什么不塞进 `BACKGROUNDS`：那张表是**内置素材的单一事实来源**，还被
+ * `artWhitelist()` 与 `structureCss()` 消费（后者在模块加载时静态生成
+ * `--zf-art-<id>` 变量）。把运行时的自定义图混进去，会让「静态可枚举」
+ * 这个前提失效。
+ */
+export const CUSTOM_BACKGROUND = 'custom'
+
+/**
  * 背景不透明度上限。
  *
  * 演变：30% → 45% → 90%。
@@ -58,8 +72,9 @@ export const BG_OPACITY_MAX = 90
  *   v4 → v5：加入阅读宽度（`contentWidth`）
  *   v5 → v6：加入明暗分档预设（`presetLight` / `presetDark`）
  *            与壁纸轮播（`backgroundRotate` / `backgroundRotateOrder`）
+ *   v6 → v7：加入自定义背景（`customBackground`）
  */
-export const SETTINGS_VERSION = 6
+export const SETTINGS_VERSION = 7
 
 /**
  * 动效模式取值。
@@ -144,6 +159,8 @@ export function defaultSettings () {
     presetDark: PRESET_FOLLOW,
     backgroundRotate: 'off',
     backgroundRotateOrder: 'sequential',
+    // v7 新增：自定义背景（上传的图，存在 $DSH_HOME/zhuang-fangyi/backgrounds/）
+    customBackground: null,
     // v2 新增：皮肤层（顶栏已移除，字段不再使用）
     rail: true,
     railWidth: RAIL_WIDTH.default,
@@ -158,6 +175,32 @@ function clamp (value, min, max, fallback) {
   return Math.min(max, Math.max(min, n))
 }
 
+/**
+ * 归一化「自定义背景」那条记录。
+ *
+ * 只认我们自己生成的形状与文件名（`custom-<…>.<ext>`）—— 文件名是**宿主**
+ * 生成的，这里再做一次格式校验，是为了挡住手改设置文件塞进来的路径
+ * （`../../etc/passwd` 之类）。真正的路径安全在宿主侧的 `path.basename`
+ * + 目录白名单，这里是第二道。
+ *
+ * 尺寸可选但**必须成对**（只有宽或只有高没用）—— 它决定竖图要不要 contain。
+ */
+function normalizeCustomBackground (input) {
+  if (input === null || typeof input !== 'object') return null
+  const file = input.file
+  if (typeof file !== 'string') return null
+  if (!/^custom-[0-9a-z-]+\.(png|jpg|gif|webp)$/.test(file)) return null
+  const width = Number(input.size?.width)
+  const height = Number(input.size?.height)
+  const valid = Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0
+  return {
+    file,
+    bytes: Number.isFinite(Number(input.bytes)) ? Number(input.bytes) : 0,
+    size: valid ? { width, height } : null,
+    addedAt: Number.isFinite(Number(input.addedAt)) ? Number(input.addedAt) : 0
+  }
+}
+
 /** 从任意来源归一化为合法设置；损坏字段逐项回落，不整体丢弃。 */
 export function normalizeSettings (input) {
   const base = defaultSettings()
@@ -167,9 +210,25 @@ export function normalizeSettings (input) {
   if (typeof input.enabled === 'boolean') out.enabled = input.enabled
   if (PRESET_IDS.includes(input.preset)) out.preset = input.preset
   if (SCHEMES.includes(input.scheme)) out.scheme = input.scheme
+
+  // v7：自定义背景。先归一化 `customBackground`，再决定 `background` 能否取
+  // `'custom'` —— 顺序不能反，否则「选了自定义但那条记录坏了」会落成一个
+  // 悬空引用（客户端拿着 `custom` 却找不到文件）。
+  out.customBackground = normalizeCustomBackground(input.customBackground)
   if (typeof input.background === 'string' && input.background in BACKGROUNDS) {
     out.background = input.background
+  } else if (input.background === CUSTOM_BACKGROUND) {
+    // 用户显式选了「自定义」：
+    //   · 记录有效 → 就用它；
+    //   · 记录没了（文件被删 / 字段损坏）→ 回落 `none`。
+    //
+    // ⚠️ 这里**必须给 `custom` 一个落点**，不能「不匹配就沿用默认值」——
+    // 那会让 `out.background` 停在 `defaultSettings()` 的 `sakura`，
+    // 于是「我选的图没了」变成「莫名冒出一张官方壁纸」，比没有壁纸更困惑。
+    // 实测踩过（归一化只写了 if/else-if，没写 else）。
+    out.background = out.customBackground !== null ? CUSTOM_BACKGROUND : 'none'
   }
+
   out.backgroundOpacity = clamp(input.backgroundOpacity, 0, BG_OPACITY_MAX, base.backgroundOpacity)
   out.backgroundBlur = clamp(input.backgroundBlur, 0, 16, base.backgroundBlur)
   if (POSITIONS.includes(input.backgroundPosition)) out.backgroundPosition = input.backgroundPosition
@@ -214,6 +273,17 @@ export function normalizeSettings (input) {
 export function backgroundArtId (settings) {
   if (settings.background === 'none') return null
   return settings.background
+}
+
+/**
+ * 当前背景**是否是自定义图**（且那条记录有效）。
+ *
+ * 客户端与宿主都用它分流：自定义图走 `<ROUTE>/backgrounds/<file>`，
+ * 内置图走 `var(--zf-art-<id>)`。
+ */
+export function customBackgroundOf (settings) {
+  if (settings?.background !== CUSTOM_BACKGROUND) return null
+  return settings.customBackground ?? null
 }
 
 /**

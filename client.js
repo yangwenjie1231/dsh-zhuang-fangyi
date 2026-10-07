@@ -59,6 +59,32 @@ window.__ModuleLoader__.load({
     ]
     const POSITIONS = ['cover', 'right', 'tile']
 
+    /**
+     * 「自定义背景」的哨兵值 —— 必须与 `src/settings.js` 的 `CUSTOM_BACKGROUND`
+     * 一致（客户端不能 import src/，所以是本地副本；有断言盯着两侧相等）。
+     *
+     * `'custom'` **不在** `BACKGROUNDS` 里：那张表是内置素材的静态清单，会被
+     * 壁纸缩略图条与轮播池遍历。自定义图是运行时增删的，单独处理。
+     */
+    const CUSTOM_BACKGROUND = 'custom'
+
+    /**
+     * 竖图阈值：宽高比 < 0.87 → `contain`。
+     *
+     * ⚠️ 与两处必须一致：`tools/prepare-art.py`（内置图清单的判据）与
+     * `src/imageInfo.js` 的 `PORTRAIT_RATIO`。三处不一致会出现「内置竖图
+     * contain、自定义竖图被裁」这种莫名其妙的不一致，所以有断言盯着。
+     */
+    const PORTRAIT_RATIO = 0.87
+
+    /** 尺寸 → cover / contain（与 `src/imageInfo.js` 的 `fitOfSize` 同规则）。 */
+    function fitOfSize (size) {
+      if (size === null || size === undefined) return 'cover'
+      const { width, height } = size
+      if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return 'cover'
+      return width / height < PORTRAIT_RATIO ? 'contain' : 'cover'
+    }
+
     /** 文案。zh 为准，en 覆盖同一 key 集。 */
     const DICT = {
       zh: {
@@ -171,6 +197,17 @@ window.__ModuleLoader__.load({
         reset: '恢复默认',
         resetConfirm: '确认恢复默认？',
         resave: '重新保存',
+        // v7 自定义背景
+        bgCustom: '自定义',
+        bgUpload: '上传图片',
+        bgUploading: '上传中…',
+        bgCustomRemove: '删除这张自定义背景',
+        bgUploaded: '图片已上传，点缩略图即可选用',
+        bgTooLarge: '图片太大（上限 24 MB）',
+        bgBadFormat: '不支持的格式（只接受 PNG / JPEG / GIF / WebP）',
+        bgUnreadable: '读不出图片尺寸，文件可能已损坏',
+        bgUploadFailed: '上传失败',
+        bgRemoved: '已删除',
         retry: '重试',
         loading: '正在读取设置…',
         loadFailed: '无法连接插件后端，暂用默认设置',
@@ -305,6 +342,17 @@ window.__ModuleLoader__.load({
         reset: 'Restore defaults',
         resetConfirm: 'Confirm restore?',
         resave: 'Save again',
+        // v7 custom background
+        bgCustom: 'Custom',
+        bgUpload: 'Upload image',
+        bgUploading: 'Uploading…',
+        bgCustomRemove: 'Remove this custom background',
+        bgUploaded: 'Uploaded — click the thumbnail to use it',
+        bgTooLarge: 'Image too large (24 MB limit)',
+        bgBadFormat: 'Unsupported format (PNG / JPEG / GIF / WebP only)',
+        bgUnreadable: 'Could not read the image size — the file may be corrupt',
+        bgUploadFailed: 'Upload failed',
+        bgRemoved: 'Removed',
         retry: 'Retry',
         loading: 'Loading settings…',
         loadFailed: 'Cannot reach the plugin host; using defaults',
@@ -383,6 +431,49 @@ window.__ModuleLoader__.load({
         if (scheme === 'light' || scheme === 'dark') return scheme
       } catch { /* 服务不可用 */ }
       return 'light'
+    }
+
+    /**
+     * 当前背景对应的 `--zf-art-src` 值。
+     *
+     * ── 为什么要分两路 ──────────────────────────────────────────────────
+     *
+     * 内置壁纸写成 `var(--zf-art-<id>)`：变量表由宿主在 `structureCss()` 里
+     * **静态生成**（遍历 `BACKGROUNDS`），所以客户端只需要写变量名。
+     *
+     * 自定义图**没有固定 URL**（文件名是上传时才生成的），走不了那张静态表 ——
+     * 只能由客户端直接写 `url(...)`。
+     *
+     * ⚠️ 自定义图**不拼 `-dark`**：用户只上传一张，明暗两套共用（产品决定）。
+     * 拼了会指向一个不存在的文件 → 一切到深色背景就消失。
+     *
+     * @param {object} settings
+     * @param {'light'|'dark'} scheme
+     * @returns {string} `var(--zf-art-…)` / `url("…")` / `'none'`
+     */
+    function artSrcOf (settings, scheme) {
+      if (settings?.background === 'none') return 'none'
+      if (settings?.background === CUSTOM_BACKGROUND) {
+        const custom = settings.customBackground
+        if (custom === null || custom === undefined || typeof custom.file !== 'string') return 'none'
+        return `url("${ROUTE}/backgrounds/${encodeURIComponent(custom.file)}")`
+      }
+      return `var(--zf-art-${settings.background}${scheme === 'dark' ? '-dark' : ''})`
+    }
+
+    /**
+     * 当前背景的「该 cover 还是 contain」。
+     *
+     * 内置图查宿主下发的 `wallpapers.json`（生成器按宽高比算好）；
+     * 自定义图没有清单条目，用**上传时存下的尺寸**按同一阈值判
+     * （`fitOfSize` 的 0.87 与 `prepare-art.py` 一致，有断言盯着这两个数相等）。
+     */
+    function artFitOf (settings, meta) {
+      if (settings?.background === CUSTOM_BACKGROUND) {
+        return fitOfSize(settings.customBackground?.size) === 'contain' ? 'contain' : 'cover'
+      }
+      const file = `wallpaper-${settings.background}.webp`
+      return meta?.[file]?.fit === 'contain' ? 'contain' : 'cover'
     }
 
     /**
@@ -884,9 +975,10 @@ window.__ModuleLoader__.load({
       // ── B6：换图前的准备（必须在写 `--zf-art-src` **之前**）────────────
       // 新值先算出来只为**比较**：只有真的换了图才做交叉淡入 —— 拖动
       // 不透明度/模糊/位置滑杆会反复重跑本函数，那时绝不该闪一下。
-      const nextArtSrc = hasWallpaper
-        ? `var(--zf-art-${settings.background}${currentScheme(theme) === 'dark' ? '-dark' : ''})`
-        : 'none'
+      //
+      // 自定义图走 `url(...)`（`artSrcOf` 内部分流），且**一张图两套明暗共用**
+      // → 切明暗时 URL 不变 → 自然不会触发淡入。这是期望行为（没换图就不该闪）。
+      const nextArtSrc = hasWallpaper ? artSrcOf(settings, currentScheme(theme)) : 'none'
       const curArtSrc = root.style.getPropertyValue('--zf-art-src').trim()
       const fireArtFade = nextArtSrc !== curArtSrc && artFadeAllowed(settings)
         ? armArtFade(root, document)
@@ -911,28 +1003,35 @@ window.__ModuleLoader__.load({
 
         // ── 竖图用 contain + 模糊垫底（见 index.js 的 `::after` 层）────────
         //
-        // 判断来自宿主下发的 `wallpapers.json` 清单（生成器按宽高比算好），
-        // 客户端**不猜**：1080×1920 这类竖图在横屏用 cover 只剩中间 40%，
-        // 必须 contain 完整显示，两侧由同图重模糊的垫底层补上。
-        const artId = `${settings.background}${scheme === 'dark' ? '-dark' : ''}`
-        const artFile = `wallpaper-${artId}.webp`
-        const fit = meta?.[artFile]?.fit === 'contain' ? 'contain' : 'cover'
+        // 内置图查宿主下发的 `wallpapers.json`（生成器按宽高比算好），
+        // 自定义图用它自己的尺寸（`artFitOf` 内部已分流）。客户端**不猜**：
+        // 1080×1920 这类竖图在横屏用 cover 只剩中间 40%，必须 contain 完整显示，
+        // 两侧由同图重模糊的垫底层补上。
+        const artSrc = artSrcOf(settings, scheme)
+        const fit = artFitOf(settings, meta)
+        const isCustom = settings.background === CUSTOM_BACKGROUND
+        const artFile = isCustom
+          ? null
+          : `wallpaper-${settings.background}${scheme === 'dark' ? '-dark' : ''}.webp`
         // 用户显式选了「平铺」就尊重他（平铺本身不裁切，不需要垫底）
         const tiled = pos === 'tile'
         const effectiveFit = tiled ? 'auto' : fit
 
-        root.style.setProperty('--zf-art-src', nextArtSrc)
+        root.style.setProperty('--zf-art-src', artSrc)
         root.style.setProperty('--zf-blur', `${blur}px`)
         // 模糊会把四边糊出去，轻微放大补上；不模糊时不放大，避免无谓重采样
         root.style.setProperty('--zf-art-scale', blur > 0 ? '1.04' : '1')
         root.style.setProperty('--zf-art-size', effectiveFit)
-        // B8：清单里的逐图 `focus` 优先（用户显式选「靠右」时不覆盖它）
+        // B8：清单里的逐图 `focus` 优先（用户显式选「靠右」时不覆盖它）。
+        // 自定义图没有 focus（不做裁剪调整），传 undefined 即走居中。
         root.style.setProperty('--zf-art-position',
-          artPosition({ tiled, pos, fit, focus: meta?.[artFile]?.focus }))
+          artPosition({ tiled, pos, fit, focus: artFile === null ? undefined : meta?.[artFile]?.focus }))
         root.style.setProperty('--zf-art-repeat', tiled ? 'repeat' : 'no-repeat')
-        // 垫底层：只有 contain 时才需要（横图铺满，没有空隙）
+        // 垫底层：只有 contain 时才需要（横图铺满，没有空隙）。
+        // 用**同一个 artSrc** 而不是重建 `var(--zf-art-<id>)` —— 自定义图
+        // 没有那个变量（垫底会变成空 → 竖图两侧留黑）。
         root.style.setProperty('--zf-art-backdrop',
-          !tiled && fit === 'contain' ? `var(--zf-art-${artId})` : 'none')
+          !tiled && fit === 'contain' ? artSrc : 'none')
         // 垫底亮度：深色主题下压得更暗，避免两侧比前景还亮
         root.style.setProperty('--zf-backdrop-lum', scheme === 'dark' ? '0.5' : '0.72')
         root.setAttribute('data-zf-art-fit', !tiled && fit === 'contain' ? 'contain' : 'cover')
@@ -1006,21 +1105,21 @@ window.__ModuleLoader__.load({
       // B9：明暗切换时代码高亮也要跟着切（与壁纸无关）
       applyCodeTokens(document.body, roles?.[presetForScheme(settings, scheme)]?.[scheme]?.shiki)
       if (settings.background !== 'none') {
-        const artId = `${settings.background}${scheme === 'dark' ? '-dark' : ''}`
-        const artFile = `wallpaper-${artId}.webp`
-        const fit = meta?.[artFile]?.fit === 'contain' ? 'contain' : 'cover'
+        const fit = artFitOf(settings, meta)
         const tiled = settings.backgroundPosition === 'tile'
         const root = document.documentElement
-        // B6：明暗切换也是**换图**（暗版是另一张实拍图），同样交叉淡入
-        const nextArtSrc = `var(--zf-art-${artId})`
+        // B6：明暗切换也是**换图**（内置壁纸的暗版是另一张实拍图），同样交叉淡入。
+        // 自定义图只有一张、URL 与明暗无关 → 比较结果相同 → 不会白闪一下。
+        const nextArtSrc = artSrcOf(settings, scheme)
         const fireArtFade = nextArtSrc !== root.style.getPropertyValue('--zf-art-src').trim() &&
           artFadeAllowed(settings)
           ? armArtFade(root, document)
           : null
         root.style.setProperty('--zf-art-src', nextArtSrc)
-        // 明暗切换时前景与垫底一起切（暗版是另一张图，不能沿用亮版 url）
+        // 明暗切换时前景与垫底一起切（内置暗版是另一张图，不能沿用亮版 url）。
+        // 用同一个 nextArtSrc：自定义图没有 `--zf-art-<id>` 变量可引用。
         document.documentElement.style.setProperty('--zf-art-backdrop',
-          !tiled && fit === 'contain' ? `var(--zf-art-${artId})` : 'none')
+          !tiled && fit === 'contain' ? nextArtSrc : 'none')
         document.documentElement.style.setProperty('--zf-backdrop-lum',
           scheme === 'dark' ? '0.5' : '0.72')
         document.documentElement.setAttribute('data-zf-art-fit',
@@ -1656,6 +1755,12 @@ window.__ModuleLoader__.load({
         confirmReset: false,
         /** 待确认状态的自动复原定时器。 */
         confirmResetTimer: null,
+        /** 自定义背景清单（宿主下发：`[{file, bytes, size, addedAt}]`）。 */
+        customBackgrounds: [],
+        /** 自定义背景的上传上限（宿主下发，避免客户端写死一个可能与宿主不一致的数）。 */
+        customBgLimits: null,
+        /** 是否正在上传（禁用上传格，防重复提交）。 */
+        uploading: false,
         /**
          * C13：`applySettings` 重入闸门。
          *
@@ -2191,6 +2296,8 @@ window.__ModuleLoader__.load({
           state.themeRoles = themePayload.roles ?? {}
           state.presetStyles = themePayload.presetStyles ?? {}
           state.presetCombos = themePayload.presetCombos ?? {}
+          state.customBackgrounds = themePayload.customBackgrounds ?? []
+          state.customBgLimits = themePayload.customBackgroundLimits ?? null
           // 壁纸清单：竖图用 contain 的依据（宿主从 art/wallpapers.json 读）
           state.wallpaperMeta = themePayload.wallpaperMeta ?? {}
           state.lastError = null
@@ -2291,6 +2398,83 @@ window.__ModuleLoader__.load({
         // 里有缓存（`registerThemes` 见到已注册 id 会跳过）。所以要先注销、
         // 重取 `/themes`、再注册，否则改动不生效（表现为「选了色相没反应」）。
         if (next.accentHue !== prevAccent) await reloadThemes()
+        emit()
+      }
+
+      /* ---------------- 自定义背景（v7） ---------------- */
+
+      /**
+       * 上传一张本地图片作为背景。
+       *
+       * 客户端**不做格式/尺寸校验** —— 那两件事只有宿主能做对：
+       *   · 格式要看**字节魔数**（不看 `content-type`，也不看扩展名），
+       *     客户端拿到的 `File.type` 是浏览器根据扩展名猜的，不可信；
+       *   · 尺寸要解析图片头，而这需要完整字节。
+       * 所以这里只挡一个「明显太大」的早退（省一次 24 MB 的上传），
+       * 真正的边界在宿主 `saveBackground()`。
+       *
+       * 上传成功后**不自动切换**壁纸（与「推荐壁纸只提示、不自动切换」同一
+       * 原则）：刷新列表 + 提示，由用户在缩略图条里点选。
+       */
+      async function uploadBackground (file) {
+        if (file === null || file === undefined) return
+        const limit = state.customBgLimits?.maxBytes ?? 0
+        if (limit > 0 && typeof file.size === 'number' && file.size > limit) {
+          state.lastError = t('bgTooLarge')
+          emit()
+          return
+        }
+        state.uploading = true
+        emit()
+        try {
+          const res = await fetch(`${ROUTE}/backgrounds`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/octet-stream' },
+            body: file
+          })
+          const payload = await res.json().catch(() => null)
+          if (res.ok !== true) {
+            // 宿主的错误码 → 可读文案
+            const code = payload?.error
+            state.lastError = code === 'too-large'
+              ? t('bgTooLarge')
+              : code === 'unsupported-format'
+                ? t('bgBadFormat')
+                : code === 'unreadable-image'
+                  ? t('bgUnreadable')
+                  : `${t('bgUploadFailed')}（${code ?? res.status}）`
+            state.customBackgrounds = payload?.backgrounds ?? state.customBackgrounds
+          } else {
+            state.lastError = null
+            state.customBackgrounds = payload?.backgrounds ?? state.customBackgrounds
+            setNotice(t('bgUploaded'))
+          }
+        } catch (error) {
+          state.lastError = String(error?.message ?? error)
+          console.warn('[zhuang-fangyi] 背景上传失败：', state.lastError)
+        } finally {
+          state.uploading = false
+          emit()
+        }
+      }
+
+      /** 删除一张自定义背景。若正是当前壁纸，宿主会把 `background` 置回 `none`。 */
+      async function removeBackground (file) {
+        try {
+          const payload = await api(`/backgrounds/${encodeURIComponent(file)}`, { method: 'DELETE' })
+          state.customBackgrounds = payload?.backgrounds ?? state.customBackgrounds
+          // 宿主已把设置改掉（清掉死引用），这里**必须跟着更新本地设置**，
+          // 否则界面还指着那个已被删的文件（缩略图上仍是选中态、背景 404）。
+          if (payload?.settings !== undefined) {
+            state.settings = payload.settings
+            applySettings()
+          }
+          state.lastError = null
+          setNotice(t('bgRemoved'))
+        } catch (error) {
+          state.lastError = String(error?.message ?? error)
+          console.warn('[zhuang-fangyi] 背景删除失败：', state.lastError)
+        }
         emit()
       }
 
@@ -2417,7 +2601,7 @@ window.__ModuleLoader__.load({
       }
 
       /**
-       * 重新从宿主取主题定义与 token 表，并**重注册**。
+       * 重新从宿主拉取主题定义与 token 表，并**重注册**。
        *
        * 只在 token 表会变的设置项（目前是 `accentHue`）变化时调用 ——
        * 全量重注册会让外壳重新应用主题，能省则省。
@@ -2431,6 +2615,8 @@ window.__ModuleLoader__.load({
           state.themeRoles = payload.roles ?? {}
           state.presetStyles = payload.presetStyles ?? {}
           state.presetCombos = payload.presetCombos ?? {}
+          state.customBackgrounds = payload.customBackgrounds ?? []
+          state.customBgLimits = payload.customBackgroundLimits ?? null
           state.wallpaperMeta = payload.wallpaperMeta ?? {}
           registerThemes()
           applySettings()
@@ -2879,6 +3065,9 @@ window.__ModuleLoader__.load({
         // 局部 useState —— 保存会触发全量重渲染，局部 state 会被重置。
         const notice = s.notice
         const confirmReset = s.confirmReset === true
+        // 自定义背景清单与上传态（上传中要禁用上传格）
+        const customList = s.customBackgrounds ?? []
+        const uploading = s.uploading === true
 
         if (settings === null) {
           return h('div', { style: { padding: '8px 0', fontSize: 13, color: 'var(--dsw-alias-label-secondary)' } },
@@ -3059,7 +3248,83 @@ window.__ModuleLoader__.load({
                       loading: 'lazy',
                       style: { width: '100%', height: '100%', objectFit: 'cover', display: 'block' }
                     }))
-              }))),
+              }),
+              // ── 自定义背景（v7）──────────────────────────────────────────
+              //
+              // 与内置图同尺寸并列（所见即所得），末尾再跟一个「＋」上传格。
+              // 上传成功后**不自动切换**（与「推荐壁纸只提示、不自动切换」同一原则）：
+              // 新图出现在条里，由用户点选。
+              ...customList.map(entry => {
+                const pressed = settings.background === CUSTOM_BACKGROUND &&
+                  settings.customBackground?.file === entry.file
+                return h('div', {
+                  key: entry.file,
+                  style: { position: 'relative', width: 64, height: 40 }
+                },
+                h('button', {
+                  type: 'button',
+                  title: t('bgCustom'),
+                  'aria-label': t('bgCustom'),
+                  'aria-pressed': pressed ? 'true' : 'false',
+                  onClick: () => set({ background: CUSTOM_BACKGROUND, customBackground: entry }),
+                  style: {
+                    padding: 0, width: '100%', height: '100%', borderRadius: 7, overflow: 'hidden',
+                    cursor: 'pointer', boxSizing: 'border-box',
+                    border: pressed
+                      ? '2px solid var(--dsw-alias-brand-primary)'
+                      : '1px solid var(--dsw-alias-border-l2)',
+                    background: 'var(--dsw-alias-bg-layer-1)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center'
+                  }
+                }, h('img', {
+                  src: `${ROUTE}/backgrounds/${encodeURIComponent(entry.file)}`,
+                  alt: t('bgCustom'),
+                  loading: 'lazy',
+                  style: { width: '100%', height: '100%', objectFit: 'cover', display: 'block' }
+                })),
+                // 删除按钮：悬停/聚焦时才明显（常显会让缩略图条很吵）
+                h('button', {
+                  type: 'button',
+                  title: t('bgCustomRemove'),
+                  'aria-label': t('bgCustomRemove'),
+                  onClick: event => {
+                    event.stopPropagation()
+                    void removeBackground(entry.file)
+                  },
+                  style: {
+                    position: 'absolute', top: -4, right: -4, width: 16, height: 16,
+                    lineHeight: '14px', padding: 0, fontSize: 11, cursor: 'pointer',
+                    borderRadius: 8, border: '1px solid var(--dsw-alias-border-l2)',
+                    background: 'var(--dsw-alias-bg-layer-2)',
+                    color: 'var(--dsw-alias-label-secondary)'
+                  }
+                }, '×'))
+              }),
+              // 上传格：用 `<label>` 包隐藏 input（与 C12 导入同一写法）
+              h('label', {
+                title: uploading ? t('bgUploading') : t('bgUpload'),
+                style: {
+                  width: 64, height: 40, borderRadius: 7, boxSizing: 'border-box',
+                  cursor: uploading ? 'progress' : 'pointer',
+                  border: '1px dashed var(--dsw-alias-border-l3)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: 11, color: 'var(--dsw-alias-label-tertiary)',
+                  background: 'var(--dsw-alias-bg-layer-1)', textAlign: 'center'
+                }
+              },
+              uploading ? t('bgUploading') : `＋ ${t('bgUpload')}`,
+              h('input', {
+                type: 'file',
+                accept: 'image/png,image/jpeg,image/gif,image/webp',
+                disabled: uploading,
+                style: { display: 'none' },
+                onChange: event => {
+                  const file = event.target.files?.[0] ?? null
+                  void uploadBackground(file)
+                  // 清空 input：否则连续传同一个文件不会再触发 change
+                  event.target.value = ''
+                }
+              })))),
           // 说明「推荐」的含义：避免用户以为切换预设会自动换壁纸
           // （我们刻意不这么做 —— 壁纸永远由用户手动选）
           h('div', {
@@ -4025,6 +4290,9 @@ window.__ModuleLoader__.load({
         nextWallpaper, syncRotation, stopRotation, ROTATE_MS, ROTATE_POOL,
         // 设置页结构（用例 83）：分组常量 + 平台判据
         SETTINGS_GROUPS, hasWindowsTitlebar,
+        // 自定义背景（用例 84）
+        artSrcOf, artFitOf, fitOfSize, CUSTOM_BACKGROUND, PORTRAIT_RATIO,
+        uploadBackground, removeBackground,
         // 让测试能模拟「宿主设置被外部改动」：stub fetch 下一次 /settings 的返回
         setNextSettings (next) {
           globalThis.__zfNextSettings = next

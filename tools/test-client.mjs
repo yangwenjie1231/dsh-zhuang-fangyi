@@ -14,6 +14,7 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import zlib from 'node:zlib'
 import { fileURLToPath } from 'node:url'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
@@ -4480,8 +4481,8 @@ function shellDom (opts = {}) {
   const ssrc = fs.readFileSync(path.join(ROOT, 'src/settings.js'), 'utf8')
 
   // 1) 设置契约
-  ok('设置结构版本升到 6（v5 加阅读宽度，v6 加明暗分档与轮播）',
-    set.SETTINGS_VERSION === 6, String(set.SETTINGS_VERSION))
+  ok('设置结构版本升到 7（v6 加明暗分档与轮播，v7 加自定义背景）',
+    set.SETTINGS_VERSION === 7, String(set.SETTINGS_VERSION))
   ok('三档白名单', set.CONTENT_WIDTH_MODES.join(',') === 'auto,compact,wide',
     set.CONTENT_WIDTH_MODES.join(','))
   ok('默认交还外壳（auto）', set.normalizeSettings({}).contentWidth === 'auto')
@@ -4639,8 +4640,12 @@ function shellDom (opts = {}) {
     P({ tiled: false, pos: 'cover', fit: 'cover', focus: ' 65% 50% ' }) === '65% 50%')
 
   // 3) 接线：applyStyleVars 真的把清单里的 focus 传进去了
+  //
+  // 内置图要把清单里的 focus 交给 artPosition；自定义图没有 focus
+  // （不做裁剪调整），必须显式传 undefined 走居中 —— 传 null 会让
+  // `artPosition` 把 `null` 当字符串处理，落到 `background-position: null`。
   ok('applyStyleVars 从清单读 focus 并交给 artPosition',
-    csrc.includes('artPosition({ tiled, pos, fit, focus: meta?.[artFile]?.focus })'))
+    csrc.includes('focus: artFile === null ? undefined : meta?.[artFile]?.focus'))
 
   // 4) 真实引擎：focus 经 `--zf-art-position` 落到合成层的 background-position
   const { execFileSync } = await import('node:child_process')
@@ -5576,6 +5581,238 @@ function shellDom (opts = {}) {
     /h\(Segmented, \{[\s\S]{0,400}?compact: true[\s\S]{0,200}?grow: true/.test(csrc))
   ok('观测栏不再手写分段按钮的内联样式',
     !csrc.includes("flex: '1 1 0',"))
+}
+
+// 用例 84：自定义背景（v7）
+//
+// 上传接口是**唯一的写入面** —— 往里塞什么，之后就会被当图片服务出去。
+// 所以这一组的重点是「边界能不能挡住」，而不是「正常路径能跑通」。
+{
+  console.log('\n--- 自定义背景 ---')
+  const img = await import('../src/imageInfo.js')
+  const set = await import('../src/settings.js')
+  const isrc = fs.readFileSync(path.join(ROOT, 'index.js'), 'utf8')
+  const csrc = fs.readFileSync(path.join(ROOT, 'client.js'), 'utf8')
+  const T = SHARED_MOD.__test
+
+  // ── 1) 魔数嗅探：必须按字节判，不信扩展名与 content-type ─────────────
+  const pngHead = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d, 0x49, 0x48, 0x44, 0x52])
+  const jpegHead = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(12)])
+  const gifHead = Buffer.concat([Buffer.from('GIF89a', 'ascii'), Buffer.alloc(6)])
+  const webpHead = Buffer.concat([Buffer.from('RIFF', 'ascii'), Buffer.alloc(4), Buffer.from('WEBP', 'ascii'), Buffer.alloc(4)])
+  ok('嗅探 PNG', img.sniffFormat(pngHead) === 'png')
+  ok('嗅探 JPEG', img.sniffFormat(jpegHead) === 'jpeg')
+  ok('嗅探 GIF', img.sniffFormat(gifHead) === 'gif')
+  ok('嗅探 WebP', img.sniffFormat(webpHead) === 'webp')
+  // 反例：HTML 改名成 .png 也必须被拒（这正是「不信扩展名」的意义）
+  ok('HTML 内容不被认成图片',
+    img.sniffFormat(Buffer.from('<!doctype html><script>alert(1)</script>', 'utf8')) === null)
+  ok('空 / 过短 → null',
+    img.sniffFormat(Buffer.alloc(0)) === null && img.sniffFormat(Buffer.from([0xff, 0xd8])) === null)
+  ok('SVG（文本 XML）不被接受', img.sniffFormat(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>', 'utf8')) === null)
+
+  // ── 2) 尺寸解析（用**真实编码的图片**验，不用手搓的假头）─────────────
+  // 手搓的头只能验「解析器读了我写的偏移」，验不出「真实文件能不能读对」。
+  {
+    const { execFileSync } = await import('node:child_process')
+    const tmp = path.join(os.tmpdir(), 'zf-img-fixture')
+    fs.mkdirSync(tmp, { recursive: true })
+    // 用 Edge 生成真实 PNG/GIF/JPEG 不可靠，改用 Node 内置的 zlib 手写最小 PNG
+    // （IHDR + 空 IDAT + IEND），并用 .NET 生成的三个格式在别处已实测过；
+    // 这里至少锁住 PNG 的 IHDR 读取与 JPEG 的「逐段扫描」逻辑。
+    const png = makeMinimalPng(37, 91)
+    ok('真实 PNG：37x91', JSON.stringify(img.readSize(png, 'png')) === '{"width":37,"height":91}',
+      JSON.stringify(img.readSize(png, 'png')))
+    // 反例：PNG 签名对但 IHDR 被换成别的块名 → 必须拒绝（不能靠前 8 字节就下结论）
+    const badPng = Buffer.from(png)
+    badPng[12] = 0x58 // 'X' 取代 'I'
+    ok('PNG 缺 IHDR → null（不猜）', img.readSize(badPng, 'png') === null)
+    // 反例：GIF 宽高为 0 → 拒绝（合理性检查）
+    const gifZero = Buffer.concat([Buffer.from('GIF89a', 'ascii'), Buffer.from([0, 0, 0, 0])])
+    ok('GIF 宽高为 0 → null', img.readSize(gifZero, 'gif') === null)
+    // 反例：JPEG 只有一个 SOI 就结束 → 扫不到 SOFn → null
+    ok('JPEG 只有 SOI → null', img.readSize(Buffer.from([0xff, 0xd8, 0xff]), 'jpeg') === null)
+    fs.rmSync(tmp, { recursive: true, force: true })
+  }
+
+  // ── 3) 竖图阈值：与 prepare-art.py 必须一致（两处不一致就会出现
+  //        「内置竖图 contain、自定义竖图被裁」这种莫名其妙的不一致）─────
+  ok('竖图判据：1080x1920 → contain', img.fitOfSize({ width: 1080, height: 1920 }) === 'contain')
+  ok('竖图判据：2560x1440 → cover', img.fitOfSize({ width: 2560, height: 1440 }) === 'cover')
+  ok('竖图判据：尺寸缺失 → cover（不猜）', img.fitOfSize(null) === 'cover')
+  ok('竖图阈值 = 0.87', img.PORTRAIT_RATIO === 0.87, String(img.PORTRAIT_RATIO))
+  {
+    const py = fs.readFileSync(path.join(ROOT, 'tools/prepare-art.py'), 'utf8')
+    const m = py.match(/0\.87/)
+    ok('prepare-art.py 里确实是同一阈值 0.87（防两处漂移）', m !== null)
+  }
+  // 客户端是本地副本，必须与宿主同规则同阈值
+  ok('客户端 PORTRAIT_RATIO 与宿主一致',
+    csrc.includes('const PORTRAIT_RATIO = 0.87'))
+  ok('客户端 fitOfSize 与宿主同判据',
+    T.fitOfSize({ width: 1080, height: 1920 }) === img.fitOfSize({ width: 1080, height: 1920 }) &&
+    T.fitOfSize({ width: 2560, height: 1440 }) === img.fitOfSize({ width: 2560, height: 1440 }))
+  ok('客户端 CUSTOM_BACKGROUND 与宿主一致',
+    T.CUSTOM_BACKGROUND === set.CUSTOM_BACKGROUND, T.CUSTOM_BACKGROUND)
+
+  // ── 4) 设置层的三种落点 ─────────────────────────────────────────────
+  const goodRec = { file: 'custom-abc-1x2.webp', size: { width: 1080, height: 1920 }, bytes: 10, addedAt: 1 }
+  ok('记录有效 → background = custom',
+    set.normalizeSettings({ background: 'custom', customBackground: goodRec }).background === 'custom')
+  // ⚠️ 关键：记录缺失时必须回落 `none`，**不能**停在默认的 `sakura`
+  // （「我的图没了」变成「冒出张官方壁纸」比没有壁纸更困惑 —— 实测踩过）
+  ok('记录缺失 → 回落 none（不是默认 sakura）',
+    set.normalizeSettings({ background: 'custom' }).background === 'none',
+    set.normalizeSettings({ background: 'custom' }).background)
+  ok('记录非法 → 回落 none',
+    set.normalizeSettings({ background: 'custom', customBackground: { file: 'evil.png' } }).background === 'none')
+  // 路径遍历：手改设置文件塞进来的路径不能被接受
+  for (const bad of ['../../etc/passwd', 'custom-x.webp/../../y', '/etc/passwd', 'custom-.webp']) {
+    ok(`非法文件名被拒：${bad}`,
+      set.normalizeSettings({ background: 'custom', customBackground: { file: bad } }).customBackground === null)
+  }
+  ok('自定义背景不污染内置白名单（BACKGROUNDS 里没有 custom）',
+    !('custom' in set.BACKGROUNDS))
+  // v6 老文件行为不变
+  {
+    const old = set.normalizeSettings({ version: 6, background: 'sakura', preset: 'wine' })
+    ok('v6 老文件：background 保留 + customBackground = null',
+      old.background === 'sakura' && old.customBackground === null && old.version === 7)
+  }
+
+  // ── 5) 宿主侧的边界（静态核对 + 存在性）─────────────────────────────
+  ok('上传上限是 24 MB', img.CUSTOM_BG_MAX_BYTES === 24 * 1024 * 1024, String(img.CUSTOM_BG_MAX_BYTES))
+  ok('上传**不复用** readBody（那个上限只有 64 KB）',
+    isrc.includes('function readBinary') && isrc.includes('readBinary(req, CUSTOM_BG_MAX_BYTES)'))
+  ok('上传先做 content-length 预检（超限不读一个字节）',
+    /declared > limit/.test(isrc))
+  ok('流式累计也挡（content-length 可能缺失或撒谎）',
+    /size > limit/.test(isrc))
+  // ⚠️ 超限时**不能用 `req.destroy()`**：那会在响应写出去之前拆掉 socket，
+  // 客户端拿到的是「连接被重置」而不是我们构造的 413 —— 等于把
+  // 「图太大，换一张」变成「插件好像坏了」。要用 resume() 读完丢弃。
+  // 实测踩过：e2e 里那条断言一开始 status=0（连接被拒），改成 resume 才拿到 413。
+  //
+  // ⚠️ 断言必须**先剥注释**，否则会命中讲解这件事的注释本身
+  // （第一版就是这样误报的 —— 与「t('literal') 扫到注释」同一个坑）。
+  {
+    const stripC = s => s.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/[^\n]*/g, '$1 ')
+    // 只看 readBinary 这一段（readBody 里那处 destroy 是既有的、上限 64 KB 的 JSON 路径，不在此列）
+    const seg = isrc.slice(isrc.indexOf('function readBinary'), isrc.indexOf('function saveBackground'))
+    const code = stripC(seg)
+    ok('readBinary 超限时不 destroy socket（否则客户端拿不到 413）',
+      !code.includes('req.destroy()') && code.includes('req.resume()'))
+    ok('readBinary 里确实只有这两条防线（预检 + 累计）',
+      code.includes('declared > limit') && code.includes('size > limit'))
+  }
+  ok('内容类型由魔数决定，不用客户端给的 content-type',
+    isrc.includes('const fmt = sniffFormat(buf)') && !/content-type'\]\s*\?\?\s*'image/.test(isrc))
+  ok('文件名由宿主生成（不接受客户端路径）',
+    /const file = `custom-\$\{Date\.now\(\)\.toString\(36\)\}-\$\{rand\}\.\$\{IMAGE_FORMATS\[fmt\]\.ext\}`/.test(isrc))
+  ok('服务时用 path.basename + 目录白名单双重校验',
+    isrc.includes('path.basename(file)') && isrc.includes('backgroundWhitelist()'))
+  ok('自定义背景目录在**插件目录之外**（deploy 会先删目录，放里面会被抹掉）',
+    isrc.includes('const bgDir = path.join(dataDir, CUSTOM_BG_DIR)'))
+  ok('上传成功**不自动切换**壁纸（返回条目由用户点选）',
+    !/saveBackground\(buf\)[\s\S]{0,400}settings\.update\(\{ background: 'custom'/.test(isrc))
+  ok('删除时清掉设置里对它的引用（不留死引用）',
+    /settings\.update\(\{ background: 'none', customBackground: null \}\)/.test(isrc))
+
+  // ── 6) 客户端接线 ───────────────────────────────────────────────────
+  ok('自定义图走 url(...) 而不是 var(--zf-art-…)',
+    /settings\?\.background === CUSTOM_BACKGROUND[\s\S]{0,300}return `url\("/.test(csrc))
+  // 一张图两套明暗共用 → 绝不能拼 -dark，否则切深色就指向不存在的文件。
+  //
+  // ⚠️ 这条**必须用行为断言**，不能扫源码里有没有 `-dark` 字样：
+  // 内置图那条分支本来就该拼 `-dark`（同一个函数里），扫文本必然误报 ——
+  // 实测踩过（第一版写成 `!/CUSTOM_BACKGROUND[\s\S]{0,200}-dark/`，
+  // 结果命中了内置分支的 `-dark`）。
+  // 真正的判据是：同一个自定义图在 light/dark 下**算出的 URL 必须相同**。
+  {
+    const rec = { background: 'custom', customBackground: { file: 'custom-x-1.webp' } }
+    const a = T.artSrcOf(rec, 'light')
+    const b = T.artSrcOf(rec, 'dark')
+    ok('自定义图明暗两套 URL 相同（没拼 -dark）', a === b && !a.includes('-dark'), `${a} vs ${b}`)
+  }
+  ok('垫底层复用同一个 artSrc（自定义图没有 --zf-art 变量）',
+    csrc.includes("!tiled && fit === 'contain' ? nextArtSrc : 'none'") &&
+    csrc.includes("!tiled && fit === 'contain' ? artSrc : 'none'"))
+  ok('不再残留 `var(--zf-art-${artId})` 的旧写法',
+    !csrc.includes('--zf-art-${artId}'))
+  ok('UI 有上传入口（accept 限定图片格式）',
+    csrc.includes("accept: 'image/png,image/jpeg,image/gif,image/webp'"))
+  ok('UI 有删除按钮', csrc.includes("t('bgCustomRemove')"))
+  ok('上传中禁用（防重复提交）', csrc.includes('disabled: uploading'))
+  ok('删除后必须同步本地设置（否则界面仍指着已删文件）',
+    /removeBackground[\s\S]{0,600}state\.settings = payload\.settings/.test(csrc))
+
+  // ── 7) 行为：artSrcOf 两路分流 ──────────────────────────────────────
+  {
+    const builtin = T.artSrcOf({ background: 'sakura' }, 'light')
+    ok('内置图 light → var(--zf-art-sakura)', builtin === 'var(--zf-art-sakura)', builtin)
+    ok('内置图 dark → 拼 -dark',
+      T.artSrcOf({ background: 'sakura' }, 'dark') === 'var(--zf-art-sakura-dark)')
+    ok('none → none', T.artSrcOf({ background: 'none' }, 'light') === 'none')
+    const custom = { background: 'custom', customBackground: { file: 'custom-a-b.webp' } }
+    const lightSrc = T.artSrcOf(custom, 'light')
+    const darkSrc = T.artSrcOf(custom, 'dark')
+    ok('自定义图 → url(.../backgrounds/...)',
+      lightSrc.startsWith('url("') && lightSrc.includes('/backgrounds/custom-a-b.webp'), lightSrc)
+    ok('自定义图明暗两套**同一个** URL（共用一张图 → 切明暗不闪）',
+      lightSrc === darkSrc)
+    ok('自定义图记录坏了 → none（不给一个会 404 的 url）',
+      T.artSrcOf({ background: 'custom', customBackground: null }, 'light') === 'none')
+  }
+
+  // ── 8) 行为：artFitOf 竖图判据 ──────────────────────────────────────
+  {
+    const meta = { 'wallpaper-portrait.webp': { fit: 'contain' } }
+    ok('内置竖图（清单说 contain）→ contain',
+      T.artFitOf({ background: 'portrait' }, meta) === 'contain')
+    ok('内置横图（清单没有）→ cover',
+      T.artFitOf({ background: 'pool' }, meta) === 'cover')
+    ok('自定义竖图（尺寸 1080x1920）→ contain',
+      T.artFitOf({ background: 'custom', customBackground: { size: { width: 1080, height: 1920 } } }, meta) === 'contain')
+    ok('自定义横图 → cover',
+      T.artFitOf({ background: 'custom', customBackground: { size: { width: 2560, height: 1440 } } }, meta) === 'cover')
+    ok('自定义图尺寸缺失 → cover（不猜）',
+      T.artFitOf({ background: 'custom', customBackground: { size: null } }, meta) === 'cover')
+  }
+}
+
+/** 造一个最小但**结构正确**的 PNG（IHDR + 空 IDAT + IEND），用于验证 IHDR 读取。 */
+function makeMinimalPng (width, height) {
+  const chunk = (type, data) => {
+    const len = Buffer.alloc(4)
+    len.writeUInt32BE(data.length, 0)
+    const body = Buffer.concat([Buffer.from(type, 'ascii'), data])
+    const crc = Buffer.alloc(4)
+    crc.writeUInt32BE(crc32(body) >>> 0, 0)
+    return Buffer.concat([len, body, crc])
+  }
+  const ihdr = Buffer.alloc(13)
+  ihdr.writeUInt32BE(width, 0)
+  ihdr.writeUInt32BE(height, 4)
+  ihdr[8] = 8   // bit depth
+  ihdr[9] = 6   // RGBA
+  const raw = Buffer.concat([Buffer.alloc(1), Buffer.alloc(width * 4)])
+  const idat = zlib.deflateSync(raw)
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', ihdr),
+    chunk('IDAT', idat),
+    chunk('IEND', Buffer.alloc(0))
+  ])
+}
+
+/** PNG chunk 的 CRC32（测试自造 PNG 用）。 */
+function crc32 (buf) {
+  let c = ~0
+  for (let i = 0; i < buf.length; i++) {
+    c ^= buf[i]
+    for (let k = 0; k < 8; k++) c = (c >>> 1) ^ (0xedb88320 & -(c & 1))
+  }
+  return ~c
 }
 
 

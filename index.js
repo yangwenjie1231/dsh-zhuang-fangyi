@@ -23,6 +23,10 @@ import os from 'node:os'
 import { fileURLToPath } from 'node:url'
 
 import { PRESET_IDS, PRESETS, PRESET_STYLES, PRESET_COMBOS, buildTokens, codeTokens, overridesFor, themeDefinitions } from './src/palette.js'
+import {
+  sniffFormat, readSize, fitOfSize,
+  IMAGE_FORMATS, CUSTOM_BG_MAX_BYTES
+} from './src/imageInfo.js'
 // C11：会话读数的权威来源 —— 纯 reducer（不碰 DOM/网络，可被测试直接 import）
 import { buildPayload, contextUsedOf, deriveState, emptyFold, foldEvent, foldEvents, rateOf } from './src/sessionState.js'
 import { fontCss } from './src/fonts.js'
@@ -81,6 +85,18 @@ const PLUGIN_BUILD = '__ZF_BUILD__'
 
 /** 单文件大小上限（壁纸 12MB、图标 1MB）。 */
 const MAX_ART_BYTES = 12 * 1024 * 1024
+
+/**
+ * 自定义背景目录名（相对 `$DSH_HOME/zhuang-fangyi/`）。
+ *
+ * ⚠️ **必须在插件目录之外**：`tools/deploy.ps1` 是「先删旧目录再复制」
+ * （防 `Copy-Item -Recurse` 嵌套出 `art\art\`），放插件里的话每次重新部署
+ * 都会把用户上传的图抹掉。
+ *
+ * 与 `settings.json` 同级 → `install.ps1` / `uninstall.ps1` / `deploy.ps1`
+ * 都不碰它。
+ */
+const CUSTOM_BG_DIR = 'backgrounds'
 
 /** `$DSH_HOME` 优先，其次 `~/.dsh`（与外壳 home-paths 同一解析规则）。 */
 function resolveDshHome () {
@@ -1687,6 +1703,192 @@ export function apply (ctx, config) {
 
   ctx.effect(() => () => settings.dispose(), 'zhuang-fangyi: settings store')
 
+  /* ---------------- 自定义背景 ---------------- */
+
+  const bgDir = path.join(dataDir, CUSTOM_BG_DIR)
+
+  /** 确保目录存在；失败则返回 false（调用方给出可读错误）。 */
+  function ensureBgDir () {
+    try {
+      fs.mkdirSync(bgDir, { recursive: true })
+      return true
+    } catch (error) {
+      logger.warn?.(`zhuang-fangyi: 无法建立自定义背景目录（${error?.message ?? error}）`)
+      return false
+    }
+  }
+
+  /**
+   * 列出已上传背景。
+   *
+   * 只收**我们自己生成的**文件名（前缀 `custom-`），目录里若有别的东西
+   * （用户手放的文件、残留）一律忽略 —— 白名单是「什么能被服务出去」的边界。
+   */
+  function listBackgrounds () {
+    try {
+      return fs.readdirSync(bgDir)
+        .filter(n => /^custom-[0-9a-z-]+\.(png|jpg|gif|webp)$/.test(n))
+        .map(file => {
+          const abs = path.join(bgDir, file)
+          let stat
+          try { stat = fs.statSync(abs) } catch { return null }
+          if (!stat.isFile()) return null
+          let size = null
+          try {
+            // 只读开头就够（各格式的宽高都在前 32 字节内）
+            const fd = fs.openSync(abs, 'r')
+            const head = Buffer.alloc(Math.min(64, stat.size))
+            fs.readSync(fd, head, 0, head.length, 0)
+            fs.closeSync(fd)
+            size = readSize(head, sniffFormat(head))
+          } catch { /* 读不出来就给 null，前端按 cover 处理 */ }
+          return { file, bytes: stat.size, size, addedAt: Math.round(stat.mtimeMs) }
+        })
+        .filter(Boolean)
+        .sort((a, b) => b.addedAt - a.addedAt)
+    } catch {
+      return []
+    }
+  }
+
+  /** 白名单：当前目录里真实存在的自定义背景文件名。 */
+  function backgroundWhitelist () {
+    return new Set(listBackgrounds().map(b => b.file))
+  }
+
+  /** 服务一张自定义背景（字节 + 长缓存）。 */
+  function serveBackground (res, file) {
+    // `path.basename` 先剥掉任何路径成分，再查白名单 —— 双重保险
+    const name = path.basename(file)
+    if (!backgroundWhitelist().has(name)) return false
+    const abs = path.join(bgDir, name)
+    let stat
+    try { stat = fs.statSync(abs) } catch { return false }
+    if (!stat.isFile()) return false
+    const fmt = sniffFormat(readHead(abs))
+    if (fmt === null) return false
+    res.writeHead(200, {
+      'content-type': IMAGE_FORMATS[fmt].mime,
+      'content-length': String(stat.size),
+      // 文件名含时间戳与随机串 → 内容变了名字就变，可以长缓存
+      'cache-control': 'public, max-age=604800, immutable'
+    })
+    fs.createReadStream(abs).pipe(res)
+    return true
+  }
+
+  /** 读文件开头若干字节（判格式用）。 */
+  function readHead (abs, n = 64) {
+    const fd = fs.openSync(abs, 'r')
+    try {
+      const buf = Buffer.alloc(n)
+      const read = fs.readSync(fd, buf, 0, n, 0)
+      return buf.subarray(0, read)
+    } finally {
+      fs.closeSync(fd)
+    }
+  }
+
+  /**
+   * 收集上传的字节。
+   *
+   * ⚠️ **不能复用 `readBody`**（它的上限是 64 KB，是给 JSON 用的）——
+   * 图片要 24 MB。这里单独一条二进制读取路径，两道防线：
+   *   ① `content-length` 预检（超限直接拒绝，不读一个字节）；
+   *   ② 流式累计（`content-length` 可能缺失或撒谎）。
+   *
+   * ── 超限时**不能 `req.destroy()`** ─────────────────────────────────────
+   *
+   * 最早写的是 `reject(...)` 之后立刻 `req.destroy()`。结果：socket 在
+   * **响应写出去之前**就被拆掉了，客户端拿到的是「连接被重置」，而不是我们
+   * 精心构造的 413 —— 等于把「图太大，请换一张」变成「插件好像坏了」。
+   *
+   * 正确做法：停止收集（丢弃后续 chunk，不再占内存），让请求正常读到 end，
+   * 再由调用方写 413。`req.resume()` 把剩余数据读完丢掉，是 Express 生态里
+   * 处理「body 过大」的标准做法。
+   */
+  function readBinary (req, limit) {
+    return new Promise((resolve, reject) => {
+      const tooLarge = () => {
+        reject(Object.assign(new Error('too large'), { code: 'TOO_LARGE' }))
+        // 读掉并丢弃剩余数据（不 destroy —— 要留出写响应的机会）
+        try { req.resume() } catch { /* 已结束 */ }
+      }
+      const declared = Number(req.headers?.['content-length'])
+      if (Number.isFinite(declared) && declared > limit) {
+        tooLarge()
+        return
+      }
+      const chunks = []
+      let size = 0
+      let aborted = false
+      req.on('data', chunk => {
+        if (aborted) return
+        size += chunk.length
+        if (size > limit) {
+          aborted = true
+          // 已经攒下的立刻释放（24 MB 的引用不必留到请求结束）
+          chunks.length = 0
+          tooLarge()
+          return
+        }
+        chunks.push(chunk)
+      })
+      req.on('end', () => {
+        if (!aborted) resolve(Buffer.concat(chunks))
+      })
+      req.on('error', error => { if (!aborted) reject(error) })
+    })
+  }
+
+  /**
+   * 保存上传的图片。
+   *
+   * 校验顺序是**先小后大**：格式与尺寸只需要开头 64 字节，所以先把整个文件
+   * 拼出来再判也可以（最大 24 MB，可接受）。真正的边界是：
+   *   · 魔数（不信 `content-type`，也不信扩展名）；
+   *   · 尺寸可解析（解析不出就拒绝 —— 存下来只会是一张「亮不出来」的图）；
+   *   · 文件名由**宿主**生成（客户端传什么都不会被当成路径）。
+   */
+  function saveBackground (buf) {
+    const fmt = sniffFormat(buf)
+    if (fmt === null) return { error: 'unsupported-format' }
+    const size = readSize(buf, fmt)
+    if (size === null) return { error: 'unreadable-image' }
+    if (!ensureBgDir()) return { error: 'io' }
+    // 宿主生成文件名：时间戳 + 随机串（避免同毫秒并发撞名）
+    const rand = Math.random().toString(36).slice(2, 8)
+    const file = `custom-${Date.now().toString(36)}-${rand}.${IMAGE_FORMATS[fmt].ext}`
+    const abs = path.join(bgDir, file)
+    try {
+      // 临时文件 + rename：与 settings 一样的原子写，崩溃不留半截图
+      const tmp = `${abs}.tmp-${process.pid}`
+      fs.writeFileSync(tmp, buf)
+      fs.renameSync(tmp, abs)
+    } catch (error) {
+      logger.warn?.(`zhuang-fangyi: 背景写入失败（${error?.message ?? error}）`)
+      return { error: 'io' }
+    }
+    return { entry: { file, bytes: buf.length, size, addedAt: Date.now() } }
+  }
+
+  /** 删除一张自定义背景。同时清掉引用它的设置（否则会留下一个死引用）。 */
+  function deleteBackground (file) {
+    const name = path.basename(file ?? '')
+    if (!backgroundWhitelist().has(name)) return false
+    try {
+      fs.unlinkSync(path.join(bgDir, name))
+    } catch {
+      return false
+    }
+    const s = settings.get()
+    if (s?.customBackground?.file === name) {
+      settings.update({ background: 'none', customBackground: null })
+      settings.flush()
+    }
+    return true
+  }
+
   // C11：会话读数推送（宿主事件 → SSE）。空闲时零成本（无订阅者不折叠日志），
   // 停用时由 ctx.effect 关闭所有流。
   const sessionStream = makeSessionStream(ctx, {})
@@ -1801,7 +2003,11 @@ export function apply (ctx, config) {
           roles: rolesPayload(accentHue),
           // 每张壁纸的尺寸与「该 cover 还是 contain」（由 prepare-art.py 产出）。
           // 竖图必须 contain，否则横屏下只看到中间 40% 的高度。
-          wallpaperMeta: wallpaperMeta()
+          wallpaperMeta: wallpaperMeta(),
+          // 自定义背景清单（用户上传的图）。客户端据此渲染缩略图条里额外的一格，
+          // 并用它自己的 `size` 判「竖图该 contain」—— 自定义图不在 wallpaperMeta 里。
+          customBackgrounds: listBackgrounds(),
+          customBackgroundLimits: { maxBytes: CUSTOM_BG_MAX_BYTES }
         })
         return
       }
@@ -1854,6 +2060,71 @@ export function apply (ctx, config) {
             ? '浏览器半边从未上报 —— 说明它没有被加载（检查 dsh.client 声明与插件是否启用）'
             : '最近一次客户端自检'
         })
+        return
+      }
+
+      // ── 自定义背景 ────────────────────────────────────────────────────
+      //
+      // 走既有的前缀路由 → **不新增权限**（仍是 `web:http-route`）。
+      // 与 `/art/` 分开是因为两者的白名单机制不同：`/art/` 是**静态**白名单
+      // （模块加载时从 BACKGROUNDS 派生一次），而自定义图是**运行时**增删的，
+      // 必须在每次请求时重新核对目录内容。
+      if (route === '/backgrounds') {
+        if (req.method === 'GET') {
+          sendJson(res, 200, {
+            backgrounds: listBackgrounds(),
+            limits: { maxBytes: CUSTOM_BG_MAX_BYTES }
+          })
+          return
+        }
+        if (req.method === 'POST') {
+          let buf
+          try {
+            buf = await readBinary(req, CUSTOM_BG_MAX_BYTES)
+          } catch (error) {
+            if (error?.code === 'TOO_LARGE') {
+              sendJson(res, 413, { error: 'too-large', maxBytes: CUSTOM_BG_MAX_BYTES })
+            } else {
+              sendJson(res, 400, { error: 'read-failed' })
+            }
+            return
+          }
+          if (buf.length === 0) {
+            sendJson(res, 400, { error: 'empty' })
+            return
+          }
+          const saved = saveBackground(buf)
+          if (saved.error !== undefined) {
+            sendJson(res, saved.error === 'io' ? 500 : 400, { error: saved.error })
+            return
+          }
+          // 上传成功后**不自动切换**壁纸（与「推荐壁纸只提示、不自动切换」同一原则）：
+          // 返回新条目，由用户在 UI 上点选。
+          sendJson(res, 200, { background: saved.entry, backgrounds: listBackgrounds() })
+          return
+        }
+        sendJson(res, 405, { error: 'method not allowed' })
+        return
+      }
+
+      if (route.startsWith('/backgrounds/')) {
+        const file = decodeURIComponent(route.slice('/backgrounds/'.length))
+        if (req.method === 'GET') {
+          if (!serveBackground(res, file)) {
+            res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' })
+            res.end('not found')
+          }
+          return
+        }
+        if (req.method === 'DELETE') {
+          if (!deleteBackground(file)) {
+            sendJson(res, 404, { error: 'not found' })
+            return
+          }
+          sendJson(res, 200, { ok: true, backgrounds: listBackgrounds(), settings: settings.get() })
+          return
+        }
+        sendJson(res, 405, { error: 'method not allowed' })
         return
       }
 

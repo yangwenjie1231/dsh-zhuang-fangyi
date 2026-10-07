@@ -100,6 +100,6 @@
 ```powershell
 node tools/check-manifest.mjs    # 发行清单与仓库事实一致性（38 项）
 node src/contrast.js             # 392 对比度 + 672 色相扫描
-node tools/test-client.mjs       # 1032 无头测试（无 Edge 的环境 967 项）
+node tools/test-client.mjs       # 1091 无头测试（无 Edge 的环境 1026 项）
 .\tools\package.ps1              # 打 ZIP（含 SHA256SUMS + 构建标记）
 ```
