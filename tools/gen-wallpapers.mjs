@@ -116,7 +116,14 @@ jsLines.push('    ]')
 jsLines.push('')
 jsLines.push('    /** 壁纸 id → 分组 id。 */')
 jsLines.push('    const BG_GROUP_OF = {')
-jsLines.push("      none: 'texture',")
+// ⚠️ **`none` 刻意不在这里**（0.9.0）：它不是某张壁纸，而是「关掉壁纸」。
+// 原先被归进 `texture` 组，于是排在「纹理与极简」段末尾 —— 要滚过 58 张图
+// 才能找到「不设背景」，语义上它也和等高线纹理不是一类。
+// 现在两处（设置页与观测栏）都把它作为**独立的第一格**渲染，不进组。
+//
+// 这一条是生成器与手改冲突的现场：0.9.0 手工删掉过 `none`，生成器第一版
+// 又把它加了回来（把已提交的改进覆盖了）。所以规则记在这里 —— 生成器是
+// 唯一写块的人，块内的每个决定都必须落在生成器里，不能只在产物里手改。
 for (const w of WALLPAPERS) jsLines.push(`      ${w.id}: '${w.group}',`)
 jsLines.push('    }')
 const jsBlock = jsLines.join('\n')
@@ -166,7 +173,13 @@ function splice(file, begin, end, block) {
   const j = src.indexOf(end)
   if (i < 0 || j < 0) return null
   const next = src.slice(0, i) + begin + '\n' + block + '\n' + src.slice(j)
-  return { src, next, changed: next !== src }
+  // ⚠️ 只比较**标记内部**那段，不能比整个文件。
+  // 第一版写成 `next !== src`，于是任何标记之外的改动（UI、DICT、注释）
+  // 都会让 `--check` 报「与目录不一致」—— 假警报会训练人忽略这个检查，
+  // 比不检查更糟。标记之外的内容本就不由生成器负责。
+  const currentBlock = src.slice(i + begin.length, j)
+  const changed = currentBlock !== '\n' + block + '\n'
+  return { src, next, changed }
 }
 
 const targets = [

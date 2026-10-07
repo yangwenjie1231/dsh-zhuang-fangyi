@@ -319,7 +319,9 @@ export const PRESET_SPECS = {
     surfaceShift: 1.4, surfaceShiftDark: -0.6,
     textSoft: false,
     borderAlpha: 0.72,
-    defaultBackground: 'sakura',
+    // 0.9.0：推荐壁纸从 0.8.0 扩充后的 58 张里重新配对（原先只在老 8 张里选）。
+    // 只改「推荐」，不改用户当前设置 —— 推荐不自动应用的原则不变。
+    defaultBackground: 'off05',
     // C14 一键推荐组合：明亮轻盈 → 无衬线、薄纱、标准宽度
     combo: { fontFamily: 'sans', backgroundOpacity: 10, contentWidth: 'auto' },
     accent: '#F2E957',
@@ -337,7 +339,8 @@ export const PRESET_SPECS = {
     surfaceShift: -1.0, surfaceShiftDark: -1.8,
     textSoft: true,
     borderAlpha: 0.9,
-    defaultBackground: 'dark',
+    // 厚重深沉 → 霓虹星空（天然暗调 + 星光粒子，与墨青金的主题色同一冷调）
+    defaultBackground: 'sce01',
     // C14：厚重深沉 → 衬线、更实的纱（压住壁纸细节）、紧凑列宽（专注）
     combo: { fontFamily: 'serif', backgroundOpacity: 22, contentWidth: 'compact' },
     accent: '#C4D579',
@@ -352,7 +355,8 @@ export const PRESET_SPECS = {
     surfaceShift: 0.6, surfaceShiftDark: 0.8,
     textSoft: false,
     borderAlpha: 0.6,
-    defaultBackground: 'pool',
+    // 清爽中性 → 荷塘古树（青绿大留白，官方 2844×1600）
+    defaultBackground: 'off02',
     // C14：清爽中性 → 圆体、最薄的纱、标准宽度
     combo: { fontFamily: 'rounded', backgroundOpacity: 12, contentWidth: 'auto' },
     accent: '#75DCD9',
@@ -367,7 +371,8 @@ export const PRESET_SPECS = {
     surfaceShift: -0.4, surfaceShiftDark: 1.6,
     textSoft: true,
     borderAlpha: 0.8,
-    defaultBackground: 'promo',
+    // 浓郁暖调 → 暖木长廊（暖黄灯光室内；原推荐 promo 是绿发双人，与酒红主题完全脱节）
+    defaultBackground: 'sce17',
     // C14：浓郁暖调 → 衬线、偏实的纱、宽松列宽（长文阅读）
     combo: { fontFamily: 'serif', backgroundOpacity: 26, contentWidth: 'wide' },
     accent: '#E08B87',

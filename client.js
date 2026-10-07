@@ -52,6 +52,22 @@ window.__ModuleLoader__.load({
      * `null` 不能直接当 `<option value>`，所以用这个字符串做界面值。
      */
     const FOLLOW = '__follow__'
+    /**
+     * 轮播列表下拉的两个哨兵值（v8）。
+     *
+     * 与 `FOLLOW` 同一个理由：`null` 不能当 `<option value>`，所以用字符串。
+     * `settings.rotateActive` 本身仍是 `null | '<列表 id>'`（`null` = 全部内置），
+     * 哨兵只活在界面层。
+     */
+    const ALL_LISTS = '__all__'
+    const NEW_LIST = '__new__'
+    /**
+     * 轮播列表数量上限的**客户端副本**。
+     *
+     * 权威值在 `src/settings.js` 的 `ROTATE_LISTS_MAX`（归一化时强制），
+     * 这里只用于提前禁用「新建」；两侧一致性有断言盯着。
+     */
+    const ROTATE_LISTS_MAX = 20
     const SCHEMES = ['system', 'light', 'dark']
     // `BACKGROUNDS` / `BG_LABELS` / `BG_GROUPS` / `BG_GROUP_OF` 在下方
     // 「generated: wallpapers」块里（0.8.0 起由 `src/wallpaperCatalog.js` 生成，
@@ -184,6 +200,19 @@ window.__ModuleLoader__.load({
         rotateOrder: '轮播顺序',
         rotateSequential: '顺序',
         rotateRandom: '随机',
+        // v8：轮播自定义列表
+        rotateList: '轮播列表',
+        rotateListAll: '全部内置',
+        rotateListNew: '新建列表',
+        rotateListDefaultName: '列表',
+        rotateListEdit: '编辑',
+        rotateListDone: '完成',
+        rotateListDelete: '删除列表',
+        rotateListDeleteArm: '确认删除？',
+        rotateListName: '列表名称',
+        rotateListEditingHint: '正在编辑：点上方缩略图添加 / 移除（「无」与自定义图不参与轮播）',
+        rotateListEmptyHint: '空列表按「全部内置」轮播；至少加 2 张才有轮换效果',
+        rotateListSaveName: '保存名称',
         fontScale: '字号',
         fontScaleHint: '正文与行高的整体缩放（±5%，幅度小是刻意的：再大就会撑破固定高度的行）',
         accentHue: '强调色色相',
@@ -332,6 +361,18 @@ window.__ModuleLoader__.load({
         rotateOrder: 'Rotation order',
         rotateSequential: 'In order',
         rotateRandom: 'Random',
+        rotateList: 'Rotate list',
+        rotateListAll: 'All built-in',
+        rotateListNew: 'New list',
+        rotateListDefaultName: 'List',
+        rotateListEdit: 'Edit',
+        rotateListDone: 'Done',
+        rotateListDelete: 'Delete list',
+        rotateListDeleteArm: 'Confirm delete?',
+        rotateListName: 'List name',
+        rotateListEditingHint: 'Editing: click thumbnails above to add or remove ("none" and custom uploads never rotate)',
+        rotateListEmptyHint: 'An empty list falls back to all built-in; add at least 2 for actual rotation',
+        rotateListSaveName: 'Save name',
         fontScale: 'Text size',
         fontScaleHint: 'Overall scale of body text and line height (±5% — deliberately small, larger breaks fixed-height rows)',
         accentHue: 'Accent hue',
@@ -470,18 +511,7 @@ window.__ModuleLoader__.load({
       { id: 'texture', zh: '纹理与极简', en: 'Texture' },
     ]
 
-    /**
-     * 壁纸 id → 分组 id。
-     *
-     * ⚠️ **`none` 刻意不在表里**（0.9.0）：「无」不是某张壁纸，是「关掉壁纸」。
-     * 它原先被归进 `texture` 组，于是排在「纹理与极简」那一段的末尾 ——
-     * 要滚过 58 张图才能找到「不设背景」，而且语义上它和等高线纹理
-     * 根本不是一类东西。现在设置页把它作为**独立的第一格**排在所有组之前，
-     * 观测栏同理。
-     *
-     * 删掉这一项而不是换个组：它在两处都是单独渲染的，进组只会让它
-     * 混在一堆真壁纸中间。
-     */
+    /** 壁纸 id → 分组 id。 */
     const BG_GROUP_OF = {
       sakura: 'scene',
       promo: 'scene',
@@ -2892,25 +2922,43 @@ window.__ModuleLoader__.load({
        */
       const ROTATE_MS = { '60s': 60000, '5m': 300000, '30m': 1800000 }
 
-      /** 可轮播的壁纸（排除 `none`）。 */
+      /** 可轮播的壁纸（排除 `none`）—— 未启用自定义列表时的全量池。 */
       const ROTATE_POOL = BACKGROUNDS.filter(b => b !== 'none')
+
+      /**
+       * 当前设置下的轮播池（v8）。
+       *
+       * `rotateActive` 指向某个自定义列表 → 用它的成员（逐个核对仍在内置
+       * 清单里）；否则全量池。与 `src/settings.js` 的 `rotatePoolOf` 同规则 ——
+       * 客户端不能 import src/，这里是本地副本（测试核对两侧一致）。
+       */
+      function rotatePoolOf (s) {
+        if (s === null || s === undefined || typeof s.rotateActive !== 'string') return ROTATE_POOL
+        const list = (Array.isArray(s.rotateLists) ? s.rotateLists : [])
+          .find(l => l.id === s.rotateActive)
+        if (!list) return ROTATE_POOL
+        const pool = (Array.isArray(list.ids) ? list.ids : [])
+          .filter(id => BACKGROUNDS.includes(id) && id !== 'none')
+        return pool.length >= 1 ? pool : ROTATE_POOL
+      }
 
       /**
        * 挑下一张。
        *
        * `sequential` 按当前在池中的位置 +1；`random` 随机但**排除当前那张**——
        * 否则有 1/8 概率原地不动，看起来像「轮播坏了」。
+       * `pool` 缺省用全量池；v8 起轮播走 `rotatePoolOf(settings)` 传列表池进来。
        */
-      function nextWallpaper (current, order) {
-        const idx = ROTATE_POOL.indexOf(current)
+      function nextWallpaper (current, order, pool = ROTATE_POOL) {
+        const idx = pool.indexOf(current)
         if (order === 'random') {
-          const candidates = ROTATE_POOL.filter(b => b !== current)
+          const candidates = pool.filter(b => b !== current)
           if (candidates.length === 0) return current
           return candidates[Math.floor(Math.random() * candidates.length)]
         }
-        // 当前不在池里（比如是 `none` 或未知值）→ 从第一张开始
-        if (idx < 0) return ROTATE_POOL[0]
-        return ROTATE_POOL[(idx + 1) % ROTATE_POOL.length]
+        // 当前不在池里（比如是 `none`、自定义图、或不属于当前列表）→ 从第一张开始
+        if (idx < 0) return pool[0]
+        return pool[(idx + 1) % pool.length]
       }
 
       /**
@@ -2950,7 +2998,8 @@ window.__ModuleLoader__.load({
           const cur = state.settings
           if (cur === null || cur.enabled !== true) return
           if (typeof document.hidden === 'boolean' && document.hidden) return
-          const next = nextWallpaper(cur.background, cur.backgroundRotateOrder)
+          // 每轮都重新取池子：列表在设置里被改掉后，下一个 tick 就该用新池
+          const next = nextWallpaper(cur.background, cur.backgroundRotateOrder, rotatePoolOf(cur))
           if (next === cur.background) return
           state.settings = { ...cur, background: next }
           applySettings()
@@ -3083,10 +3132,14 @@ window.__ModuleLoader__.load({
           id: 'background',
           label: 'tabBackground',
           hint: 'tabBackgroundHint',
-          max: 6,
+          // 0.9.0：轮播自定义列表加了 3 行（列表选择 / 改名 / 提示）。
+          // 上限从 6 提到 9 —— 这条断言的意义是「别让某页塞不下一屏」，
+          // 不是「永远 6 行」；改动时同步说明原因即可。
+          max: 9,
           keys: [
             'background', 'backgroundOpacity', 'backgroundBlur', 'backgroundPosition',
-            'backgroundRotate', 'backgroundRotateOrder', 'customBackground'
+            'backgroundRotate', 'backgroundRotateOrder', 'customBackground',
+            'rotateLists', 'rotateActive'
           ]
         },
         {
@@ -3551,6 +3604,89 @@ window.__ModuleLoader__.load({
         const recommendedOf = id =>
           isRecommendedArt(state.presetStyles, presetForScheme(settings, currentScheme(theme)), id)
 
+        /* ── v8：轮播自定义列表 ────────────────────────────────────────────
+         *
+         * 列表编辑是**面板局部 UI 状态**，放共享 `state` 而不是组件内 `useState`：
+         * 保存会触发全量重渲染，`useState` 会归零（与 `confirmReset` /
+         * `activeTab` 同一个原因 —— 见上方那段注释）。
+         *
+         * 编辑态复用上方那片壁纸缩略图：点一下加入/移出列表，**不改当前壁纸**。
+         * 这样不必再做一套独立的选图界面，用户面对的始终是同一个网格。
+         */
+        const rotateListsOf = () => (Array.isArray(settings.rotateLists) ? settings.rotateLists : [])
+        const rotateEditingOf = () =>
+          (typeof state.rotateEditing === 'string' ? state.rotateEditing : null)
+
+        const setRotateEditing = id => {
+          state.rotateEditing = id
+          state.rotateDraftName = id === null
+            ? ''
+            : (rotateListsOf().find(l => l.id === id)?.name ?? '')
+          emit()
+        }
+        const setRotateDraftName = v => { state.rotateDraftName = v; emit() }
+
+        /** 两段式删除确认：3s 后自动复原（与「恢复默认」同一套交互）。 */
+        const setRotateDeleteArm = next => {
+          state.rotateDeleteArm = next
+          if (state.rotateDeleteTimer !== null) clearTimeout(state.rotateDeleteTimer)
+          state.rotateDeleteTimer = null
+          if (next) {
+            state.rotateDeleteTimer = setTimeout(() => {
+              state.rotateDeleteArm = false
+              state.rotateDeleteTimer = null
+              emit()
+            }, 3000)
+          }
+          emit()
+        }
+
+        /** 新建列表：自动命名并立刻进入编辑态（空列表按全部内置轮播，不会坏）。 */
+        const createRotateList = () => {
+          const lists = rotateListsOf()
+          if (lists.length >= ROTATE_LISTS_MAX) return
+          const id = 'r-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
+          const name = `${t('rotateListDefaultName')} ${lists.length + 1}`
+          set({ rotateLists: [...lists, { id, name, ids: [] }], rotateActive: id })
+          setRotateEditing(id)
+        }
+
+        /** 删除当前激活列表（两段式确认通过后才会走到这里）。 */
+        const deleteRotateList = () => {
+          const id = settings.rotateActive
+          if (typeof id !== 'string') return
+          setRotateDeleteArm(false)
+          setRotateEditing(null)
+          set({ rotateLists: rotateListsOf().filter(l => l.id !== id), rotateActive: null })
+        }
+
+        /** 重命名当前激活列表（空名不提交 —— 归一化层也会丢，但别让用户白点）。 */
+        const renameRotateList = () => {
+          const id = settings.rotateActive
+          const name = String(state.rotateDraftName ?? '').trim().slice(0, 24)
+          if (typeof id !== 'string' || name.length === 0) return
+          set({ rotateLists: rotateListsOf().map(l => (l.id === id ? { ...l, name } : l)) })
+        }
+
+        /** 编辑态点缩略图：加入 / 移出列表（**不动** `settings.background`）。 */
+        const toggleRotateMember = (listId, wallpaperId) => {
+          set({
+            rotateLists: rotateListsOf().map(l => (l.id === listId
+              ? {
+                  ...l,
+                  ids: l.ids.includes(wallpaperId)
+                    ? l.ids.filter(x => x !== wallpaperId)
+                    : [...l.ids, wallpaperId]
+                }
+              : l))
+          })
+        }
+
+        const editingList = rotateEditingOf()
+        /** 编辑态下某张内置图是否已是列表成员。 */
+        const isMember = id =>
+          editingList !== null && (rotateListsOf().find(l => l.id === editingList)?.ids ?? []).includes(id)
+
         /** 当前壁纸：收起态那一格预览。 */
         const current = (() => {
           if (settings.background === CUSTOM_BACKGROUND) {
@@ -3568,24 +3704,37 @@ window.__ModuleLoader__.load({
           }
         })()
 
-        /** 网格里的一格内置壁纸。 */
+        /** 网格里的一格内置壁纸。编辑轮播列表时它变成「成员开关」。 */
         const tile = id => {
-          const pressed = settings.background === id
+          const member = isMember(id)
+          const pressed = editingList === null && settings.background === id
           const recommended = recommendedOf(id)
           const label = bgLabel(id)
+          // 编辑态：点击只切换成员，不换壁纸；边框显示成员身份（与「当前壁纸」区分开，
+          // 否则用户会以为自己在切壁纸）。
+          const onClick = editingList !== null
+            ? () => toggleRotateMember(editingList, id)
+            : () => set({ background: id })
+          const border = editingList !== null
+            ? (member ? '2px solid var(--dsw-alias-brand-primary)' : artTileStyle.border)
+            : (pressed ? '2px solid var(--dsw-alias-brand-primary)' : artTileStyle.border)
           return h('button', {
             key: id, type: 'button',
-            className: recommended ? 'zf-art-recommended' : undefined,
-            'data-zf-recommended': recommended ? 'true' : undefined,
-            title: recommended ? `${label}${t('presetRecommend')}` : label,
-            'aria-label': recommended ? `${label}${t('presetRecommend')}` : label,
+            className: recommended && editingList === null ? 'zf-art-recommended' : undefined,
+            'data-zf-recommended': recommended && editingList === null ? 'true' : undefined,
+            'data-zf-member': editingList !== null ? (member ? 'true' : 'false') : undefined,
+            title: editingList !== null
+              ? `${member ? '−' : '+'} ${label}`
+              : (recommended ? `${label}${t('presetRecommend')}` : label),
+            'aria-label': editingList !== null
+              ? `${member ? '−' : '+'} ${label}`
+              : (recommended ? `${label}${t('presetRecommend')}` : label),
             'aria-pressed': pressed ? 'true' : 'false',
-            onClick: () => set({ background: id }),
+            onClick,
             style: {
               ...artTileStyle,
-              border: pressed
-                ? '2px solid var(--dsw-alias-brand-primary)'
-                : artTileStyle.border
+              border,
+              opacity: editingList !== null && !member ? 0.55 : 1
             }
           }, h('img', {
             src: `${ROUTE}/art/thumbs/wallpaper-${id}.webp`,
@@ -3777,7 +3926,73 @@ window.__ModuleLoader__.load({
                 { value: 'random', label: t('rotateRandom') }
               ],
               onChange: v => set({ backgroundRotateOrder: v })
-            }))
+            })),
+          // ── v8：轮播自定义列表 ────────────────────────────────────────────
+          //
+          // 下拉选「全部内置」或某个列表；选「新建列表」当场建一个并进入编辑。
+          // 编辑态下**上方的壁纸缩略图变成成员开关**（点一下加入/移出，不改当前壁纸），
+          // 这样不用再做一套独立的选图界面。
+          settings.backgroundRotate !== 'off' && h(Row, { label: t('rotateList') },
+            h('div', {
+              style: {
+                display: 'flex', gap: 6, alignItems: 'center',
+                flexWrap: 'wrap', justifyContent: 'flex-end', maxWidth: 300
+              }
+            },
+            h(Select, {
+              value: typeof settings.rotateActive === 'string' ? settings.rotateActive : ALL_LISTS,
+              options: [
+                { value: ALL_LISTS, label: `${t('rotateListAll')}（${ROTATE_POOL.length}）` },
+                ...rotateListsOf().map(l => ({ value: l.id, label: `${l.name}（${l.ids.length}）` })),
+                { value: NEW_LIST, label: `＋ ${t('rotateListNew')}` }
+              ],
+              onChange: v => {
+                if (v === NEW_LIST) { createRotateList(); return }
+                if (v === ALL_LISTS) { setRotateEditing(null); set({ rotateActive: null }); return }
+                setRotateEditing(null)
+                set({ rotateActive: v })
+              }
+            }),
+            typeof settings.rotateActive === 'string' && h('button', {
+              type: 'button',
+              onClick: () => {
+                if (rotateEditingOf() === settings.rotateActive) { renameRotateList(); setRotateEditing(null) } else { setRotateEditing(settings.rotateActive) }
+              },
+              style: buttonStyle(false, 'quiet')
+            }, rotateEditingOf() === settings.rotateActive ? t('rotateListDone') : t('rotateListEdit')),
+            typeof settings.rotateActive === 'string' && h('button', {
+              type: 'button',
+              onClick: () => { if (state.rotateDeleteArm === true) { deleteRotateList() } else { setRotateDeleteArm(true) } },
+              style: buttonStyle(false, 'danger')
+            }, state.rotateDeleteArm === true ? t('rotateListDeleteArm') : t('rotateListDelete')))),
+          // 编辑态：改名输入 + 操作提示（放两行，避免挤在一个 Row 里）
+          rotateEditingOf() !== null && h(Row, { label: t('rotateListName') },
+            h('div', { style: { display: 'flex', gap: 6, alignItems: 'center', justifyContent: 'flex-end' } },
+              h('input', {
+                type: 'text',
+                value: state.rotateDraftName ?? '',
+                maxLength: 24,
+                onChange: e => setRotateDraftName(e.target.value),
+                onKeyDown: e => { if (e.key === 'Enter') { renameRotateList(); setRotateEditing(null) } },
+                style: {
+                  width: 150, padding: '3px 7px', fontSize: 12, boxSizing: 'border-box',
+                  borderRadius: 6, border: '1px solid var(--dsw-alias-border-l2)',
+                  background: 'var(--dsw-alias-bg-layer-1)',
+                  color: 'var(--dsw-alias-label-primary)'
+                }
+              }),
+              h('button', {
+                type: 'button',
+                onClick: () => { renameRotateList(); setRotateEditing(null) },
+                style: buttonStyle(false)
+              }, t('rotateListSaveName')))),
+          settings.backgroundRotate !== 'off' && h(Row, { label: '' },
+            h('div', {
+              style: {
+                fontSize: 11, lineHeight: '15px', maxWidth: 300, textAlign: 'right',
+                color: 'var(--dsw-alias-label-tertiary)'
+              }
+            }, rotateEditingOf() !== null ? t('rotateListEditingHint') : t('rotateListEmptyHint')))
         ].filter(Boolean)
       }
 
@@ -3906,8 +4121,7 @@ window.__ModuleLoader__.load({
           emit()
         }
 
-        /** C13：分档下拉的选项 = 「跟随主预设」+ 四个预设（带风格名）。 */
-        const presetOptions = () => [
+        /** C13：分档下拉的选项 = 「跟随主预设」+ 四个预设（带风格名）。 */        const presetOptions = () => [
           { value: FOLLOW, label: t('presetFollow') },
           ...PRESETS.map(p => {
             const style = state.presetStyles?.[p]?.style
@@ -4849,7 +5063,7 @@ window.__ModuleLoader__.load({
         // C14 一键推荐组合（用例 81）
         // （组合数据由宿主下发，客户端只负责套用；纯函数在 src/palette.js）
         // C15 壁纸轮播（用例 82）
-        nextWallpaper, syncRotation, stopRotation, ROTATE_MS, ROTATE_POOL,
+        nextWallpaper, syncRotation, stopRotation, ROTATE_MS, ROTATE_POOL, rotatePoolOf,
         // 设置页结构（用例 83）：分组常量 + 平台判据
         SETTINGS_TABS, UNASSIGNED_KEYS, TAB_BODIES, ART_PANEL_ID, tabDefaultsPatch,
         hasWindowsTitlebar,

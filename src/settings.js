@@ -76,8 +76,9 @@ export const BG_OPACITY_MAX = 90
  *   v5 → v6：加入明暗分档预设（`presetLight` / `presetDark`）
  *            与壁纸轮播（`backgroundRotate` / `backgroundRotateOrder`）
  *   v6 → v7：加入自定义背景（`customBackground`）
+ *   v7 → v8：加入轮播自定义列表（`rotateLists` / `rotateActive`）
  */
-export const SETTINGS_VERSION = 7
+export const SETTINGS_VERSION = 8
 
 /**
  * 动效模式取值。
@@ -164,6 +165,11 @@ export function defaultSettings () {
     backgroundRotateOrder: 'sequential',
     // v7 新增：自定义背景（上传的图，存在 $DSH_HOME/zhuang-fangyi/backgrounds/）
     customBackground: null,
+    // v8 新增：轮播自定义列表。多个命名列表并存，`rotateActive` 指向生效的那一个
+    //（null = 全部内置）。列表成员只能是内置壁纸 id —— 自定义上传图会被删除，
+    // 进列表会产生悬空引用（0.7.0 起上传图本就不在轮播池里，边界保持一致）。
+    rotateLists: [],
+    rotateActive: null,
     // v2 新增：皮肤层（顶栏已移除，字段不再使用）
     rail: true,
     railWidth: RAIL_WIDTH.default,
@@ -176,6 +182,63 @@ function clamp (value, min, max, fallback) {
   const n = typeof value === 'number' ? value : Number(value)
   if (!Number.isFinite(n)) return fallback
   return Math.min(max, Math.max(min, n))
+}
+
+/** 轮播自定义列表的数量上限（设置文件是整份持久化的 JSON，防膨胀）。 */
+export const ROTATE_LISTS_MAX = 20
+
+/**
+ * 归一化轮播自定义列表（v8）。
+ *
+ * 规则（全部**静默丢弃**而不是抛错 —— 设置归一化的惯例是「尽量救、救不了
+ * 就丢」，宿主不能因为一份坏设置拒绝启动）：
+ *   · 只收数组，最多 `ROTATE_LISTS_MAX` 个；
+ *   · 每项 `{id, name, ids}`：id 必须 `r-<小写字母数字>`（客户端生成）；
+ *     name 去首尾空白后 1–24 个字；ids 只认内置壁纸 id（排除 `none` 与
+ *     `custom` —— 上传图会被删除，进列表会产生悬空引用），去重，最多 58；
+ *   · 形状不对的项整个丢弃；id 重复保留第一个。
+ */
+export function normalizeRotateLists (input) {
+  if (!Array.isArray(input)) return []
+  const seen = new Set()
+  const out = []
+  for (const raw of input) {
+    if (out.length >= ROTATE_LISTS_MAX) break
+    if (raw === null || typeof raw !== 'object') continue
+    const id = typeof raw.id === 'string' ? raw.id : ''
+    const name = typeof raw.name === 'string' ? raw.name.trim() : ''
+    if (!/^r-[0-9a-z]+$/.test(id) || seen.has(id)) continue
+    if (name.length < 1 || name.length > 24) continue
+    const ids = Array.isArray(raw.ids)
+      ? [...new Set(raw.ids.filter(v =>
+          typeof v === 'string' && v !== BACKGROUND_NONE &&
+          v !== CUSTOM_BACKGROUND && v in BACKGROUNDS))]
+      : []
+    seen.add(id)
+    out.push({ id, name, ids })
+  }
+  return out
+}
+
+/**
+ * 轮播候选池（v8）。
+ *
+ *   · 未激活列表 / 指向的列表不存在 → 全部内置（旧行为，58 张）；
+ *   · 激活列表 → 它的成员（逐个核对仍存在，防将来 id 退役）；
+ *   · 成员为空 → 回落全部内置。空池子会让 `nextWallpaper` 返回 `undefined`
+ *     并把 `settings.background` 写坏，宁可退回旧行为；
+ *   · 成员只有 1 个 → 原样返回（轮播每 tick 都选中同一张，无害；
+ *     UI 会提示用户去加图）。
+ */
+export function rotatePoolOf (settings) {
+  const all = Object.keys(BACKGROUNDS).filter(k => k !== BACKGROUND_NONE)
+  if (settings === null || settings === undefined) return all
+  if (typeof settings.rotateActive !== 'string') return all
+  const list = (Array.isArray(settings.rotateLists) ? settings.rotateLists : [])
+    .find(l => l.id === settings.rotateActive)
+  if (!list) return all
+  const pool = (Array.isArray(list.ids) ? list.ids : []).filter(id => id in BACKGROUNDS)
+  return pool.length >= 1 ? pool : all
 }
 
 /**
@@ -264,6 +327,14 @@ export function normalizeSettings (input) {
   if (ROTATE_ORDERS.includes(input.backgroundRotateOrder)) {
     out.backgroundRotateOrder = input.backgroundRotateOrder
   }
+  // v8：轮播自定义列表
+  out.rotateLists = normalizeRotateLists(input.rotateLists)
+  // rotateActive 必须指向现存列表，否则回落 null（= 全部内置）——
+  // 与 presetLight/presetDark 同一原则：非法值不能回落成另一个具体选择。
+  out.rotateActive = typeof input.rotateActive === 'string' &&
+    out.rotateLists.some(l => l.id === input.rotateActive)
+    ? input.rotateActive
+    : null
   out.railWidth = clamp(input.railWidth, RAIL_WIDTH.min, RAIL_WIDTH.max, base.railWidth)
   out.version = SETTINGS_VERSION
   return out

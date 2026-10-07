@@ -4581,8 +4581,8 @@ function shellDom (opts = {}) {
   const ssrc = fs.readFileSync(path.join(ROOT, 'src/settings.js'), 'utf8')
 
   // 1) 设置契约
-  ok('设置结构版本升到 7（v6 加明暗分档与轮播，v7 加自定义背景）',
-    set.SETTINGS_VERSION === 7, String(set.SETTINGS_VERSION))
+  ok('设置结构版本升到 8（v6 明暗分档+轮播，v7 自定义背景，v8 轮播列表）',
+    set.SETTINGS_VERSION === 8, String(set.SETTINGS_VERSION))
   ok('三档白名单', set.CONTENT_WIDTH_MODES.join(',') === 'auto,compact,wide',
     set.CONTENT_WIDTH_MODES.join(','))
   ok('默认交还外壳（auto）', set.normalizeSettings({}).contentWidth === 'auto')
@@ -5487,6 +5487,107 @@ function shellDom (opts = {}) {
   ok('未知预设返回 null', pal.recommendCombo('nope') === null)
 }
 
+// 用例 81b：0.9.0 轮播自定义列表（v8）
+{
+  console.log('\n--- 0.9.0：轮播自定义列表 ---')
+  const T = SHARED_MOD.__test
+  const set = await import('../src/settings.js')
+  const csrc = fs.readFileSync(path.join(ROOT, 'client.js'), 'utf8')
+
+  // ── 1) 归一化：合法项保留、非法项静默丢弃 ────────────────────────────
+  const good = [{ id: 'r-a1', name: '  暗色系  ', ids: ['cha02', 'sce01', 'cha02', 'none', 'custom', 'nope'] }]
+  const n1 = set.normalizeRotateLists(good)
+  ok('合法列表保留 + name 去空白', n1.length === 1 && n1[0].name === '暗色系', JSON.stringify(n1))
+  ok('ids 剔除 none/custom/未知 + 去重',
+    JSON.stringify(n1[0].ids) === JSON.stringify(['cha02', 'sce01']), JSON.stringify(n1[0].ids))
+  ok('非数组 → 空数组', set.normalizeRotateLists('x').length === 0 &&
+    set.normalizeRotateLists(null).length === 0)
+  ok('id 格式非法 → 整项丢弃',
+    set.normalizeRotateLists([{ id: 'bad', name: 'x', ids: [] }]).length === 0)
+  ok('name 空 / 超 24 字 → 整项丢弃',
+    set.normalizeRotateLists([{ id: 'r-a', name: '   ', ids: [] }]).length === 0 &&
+    set.normalizeRotateLists([{ id: 'r-b', name: 'x'.repeat(25), ids: [] }]).length === 0)
+  ok('id 重复保留第一个',
+    set.normalizeRotateLists([
+      { id: 'r-dup', name: 'A', ids: ['sce01'] },
+      { id: 'r-dup', name: 'B', ids: ['sce02'] }
+    ])[0].name === 'A')
+  ok(`列表数量上限 ${set.ROTATE_LISTS_MAX}`,
+    set.normalizeRotateLists(Array.from({ length: 30 }, (_, i) =>
+      ({ id: `r-${i}`, name: `L${i}`, ids: [] }))).length === set.ROTATE_LISTS_MAX)
+  ok('客户端 ROTATE_LISTS_MAX 与宿主同值',
+    csrc.includes(`const ROTATE_LISTS_MAX = ${set.ROTATE_LISTS_MAX}`),
+    `客户端应写 ${set.ROTATE_LISTS_MAX}`)
+
+  // ── 2) rotateActive 必须指向现存列表，否则回落 null ──────────────────
+  const lists = [{ id: 'r-x', name: 'X', ids: ['sce01', 'sce02'] }]
+  ok('rotateActive 指向存在列表 → 保留',
+    set.normalizeSettings({ rotateLists: lists, rotateActive: 'r-x' }).rotateActive === 'r-x')
+  ok('rotateActive 指向不存在的列表 → 回落 null',
+    set.normalizeSettings({ rotateLists: lists, rotateActive: 'r-zzz' }).rotateActive === null)
+  ok('rotateActive 类型不对 → 回落 null',
+    set.normalizeSettings({ rotateLists: lists, rotateActive: 42 }).rotateActive === null)
+
+  // ── 3) 轮播池派生（宿主）────────────────────────────────────────────
+  const all = set.rotatePoolOf(set.defaultSettings())
+  ok('未激活列表 → 全部内置（58 张）', all.length === 58, String(all.length))
+  const withList = set.normalizeSettings({ rotateLists: lists, rotateActive: 'r-x' })
+  ok('激活列表 → 只含成员',
+    JSON.stringify(set.rotatePoolOf(withList)) === JSON.stringify(['sce01', 'sce02']),
+    JSON.stringify(set.rotatePoolOf(withList)))
+  ok('列表成员为空 → 回落全部内置',
+    set.rotatePoolOf(set.normalizeSettings({
+      rotateLists: [{ id: 'r-e', name: 'E', ids: [] }], rotateActive: 'r-e'
+    })).length === 58)
+  ok('成员只剩 1 张 → 原样返回（不回落）',
+    set.rotatePoolOf(set.normalizeSettings({
+      rotateLists: [{ id: 'r-o', name: 'O', ids: ['sce01'] }], rotateActive: 'r-o'
+    })).length === 1)
+
+  // ── 4) 轮播池派生（客户端副本与宿主同规则）──────────────────────────
+  const cliPool = T.rotatePoolOf(withList)
+  ok('客户端 rotatePoolOf 与宿主同结果',
+    JSON.stringify(cliPool) === JSON.stringify(set.rotatePoolOf(withList)),
+    JSON.stringify(cliPool))
+  ok('客户端：未激活 → 58 张', T.rotatePoolOf(set.defaultSettings()).length === 58)
+
+  // ── 5) nextWallpaper 尊重传入的池 ────────────────────────────────────
+  const pool = ['sce01', 'sce02', 'sce03']
+  ok('顺序：池内 +1', T.nextWallpaper('sce01', 'sequential', pool) === 'sce02')
+  ok('顺序：池内末位回到首位', T.nextWallpaper('sce03', 'sequential', pool) === 'sce01')
+  ok('顺序：当前不在池内 → 池首', T.nextWallpaper('sakura', 'sequential', pool) === 'sce01')
+  ok('随机：只在池内挑且不选自己', (() => {
+    for (let i = 0; i < 200; i++) {
+      const n = T.nextWallpaper('sce01', 'random', pool)
+      if (n === 'sce01' || !pool.includes(n)) return false
+    }
+    return true
+  })())
+  ok('池只有 1 张且就是当前 → 返回自己（不崩）',
+    T.nextWallpaper('sce01', 'sequential', ['sce01']) === 'sce01')
+
+  // ── 6) 迁移：v7 老文件补齐新键且不丢旧值 ─────────────────────────────
+  const v7 = set.normalizeSettings({
+    version: 7, background: 'cha02', preset: 'wine', customBackground: { file: 'custom-a.webp' },
+    backgroundRotate: '5m', backgroundRotateOrder: 'random'
+  })
+  ok('v7 → v8：旧值全保留',
+    v7.background === 'cha02' && v7.preset === 'wine' &&
+    v7.customBackground?.file === 'custom-a.webp' &&
+    v7.backgroundRotate === '5m' && v7.backgroundRotateOrder === 'random')
+  ok('v7 → v8：新键补默认值',
+    Array.isArray(v7.rotateLists) && v7.rotateLists.length === 0 && v7.rotateActive === null)
+
+  // ── 7) UI：源码层面确认关键接线（渲染细节由无头 DOM 用例覆盖）────────
+  ok('UI 有轮播列表下拉', csrc.includes("t('rotateList')") && csrc.includes('ALL_LISTS'))
+  ok('UI 有「新建列表」哨兵', csrc.includes('NEW_LIST') && csrc.includes('createRotateList'))
+  ok('编辑态点击切换成员（不换壁纸）',
+    /editingList !== null\s*\n?\s*\?\s*\(\) => toggleRotateMember/.test(csrc))
+  ok('删除是两段式确认', csrc.includes('rotateDeleteArm') && csrc.includes('setRotateDeleteArm'))
+  ok('改名走 input + 保存', csrc.includes('rotateDraftName') && csrc.includes("t('rotateListSaveName')"))
+  ok('编辑态有提示文案', csrc.includes("t('rotateListEditingHint')") && csrc.includes("t('rotateListEmptyHint')"))
+}
+
 // 用例 82：C15 壁纸轮播
 {
   console.log('\n--- C15：壁纸轮播 ---')
@@ -5586,10 +5687,11 @@ function shellDom (opts = {}) {
       typeof g.hint === 'string' && typeof g.max === 'number' &&
       Array.isArray(g.keys) && g.keys.length > 0))
   ok('页签 id 不重复', new Set(tabs.map(g => g.id)).size === tabs.length)
-  // 行数上限**合计必须还是 24**：页签化是重新分层，不是增删设置项。
-  // 少了说明有行被弄丢（用户再也找不到那个开关），多了说明多算了。
-  ok('各页行数上限合计仍是 24',
-    tabs.reduce((n, g) => n + g.max, 0) === 24,
+  // 行数上限合计 = 各页 `max` 之和。0.9.0 轮播列表给「背景」页 +3 → 27。
+  // 这条防的是「某页 max 被悄悄改大/改小」：改小会让那一页塞不下，
+  // 改大则可能是在偷偷往页里塞行。变动必须与 `rowCounts` 的断言同步。
+  ok('各页行数上限合计 27（0.9.0 轮播列表 +3）',
+    tabs.reduce((n, g) => n + g.max, 0) === 27,
     String(tabs.reduce((n, g) => n + g.max, 0)))
 
   // 2) 页签标签/说明都必须在 DICT 里（否则界面显示键名）
@@ -5644,9 +5746,11 @@ function shellDom (opts = {}) {
   // 行数**下限**也要对：0 行说明那一页被清空了，用户点进去看到一片空白
   const empty = tabs.filter(g => (rowCounts[g.id] ?? 0) === 0).map(g => g.id)
   ok('没有空页', empty.length === 0, empty.join(', '))
-  // 总行数必须仍是 24（页签化是重新分层，不增不减）
+  // 总行数：页签化是重新分层（24 行不变），0.9.0 轮播列表 +3 行 → 27。
+  // 这条断言防的是「偷偷删/加行而不更新契约」，所以数字变动必须连同
+  // 上面的 `max` 一起改并说明原因。
   const totalRows = Object.values(rowCounts).reduce((a, b) => a + b, 0)
-  ok('设置项总数仍是 24 行', totalRows === 24, String(totalRows))
+  ok('设置项总数 27 行（0.9.0 轮播列表 +3）', totalRows === 27, String(totalRows))
   // 而且「细节」页不能把排版与动效吞回来 —— 它曾经有 10 行
   ok('「细节」页不吞排版与动效（≤ 5 行）', (rowCounts.details ?? 0) <= 5, String(rowCounts.details))
 
@@ -5983,8 +6087,10 @@ function shellDom (opts = {}) {
   // v6 老文件行为不变
   {
     const old = set.normalizeSettings({ version: 6, background: 'sakura', preset: 'wine' })
-    ok('v6 老文件：background 保留 + customBackground = null',
-      old.background === 'sakura' && old.customBackground === null && old.version === 7)
+    ok('v6 老文件：background 保留 + customBackground = null + 轮播列表默认空',
+      old.background === 'sakura' && old.customBackground === null &&
+      old.version === 8 && Array.isArray(old.rotateLists) && old.rotateLists.length === 0 &&
+      old.rotateActive === null)
   }
 
   // ── 5) 宿主侧的边界（静态核对 + 存在性）─────────────────────────────
