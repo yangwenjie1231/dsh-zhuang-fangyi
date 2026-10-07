@@ -4468,17 +4468,18 @@ function shellDom (opts = {}) {
   const ssrc = fs.readFileSync(path.join(ROOT, 'src/settings.js'), 'utf8')
 
   // 1) 设置契约
-  ok('设置结构版本升到 5', set.SETTINGS_VERSION === 5, String(set.SETTINGS_VERSION))
+  ok('设置结构版本升到 6（v5 加阅读宽度，v6 加明暗分档与轮播）',
+    set.SETTINGS_VERSION === 6, String(set.SETTINGS_VERSION))
   ok('三档白名单', set.CONTENT_WIDTH_MODES.join(',') === 'auto,compact,wide',
     set.CONTENT_WIDTH_MODES.join(','))
   ok('默认交还外壳（auto）', set.normalizeSettings({}).contentWidth === 'auto')
   ok('非法值回落 auto', set.normalizeSettings({ contentWidth: 'huge' }).contentWidth === 'auto')
   ok('合法值保留', set.normalizeSettings({ contentWidth: 'wide' }).contentWidth === 'wide')
-  // v4 → v5 无损迁移：老文件没有这个键，其它字段必须原样保留
+  // v4 → v5 → v6 无损迁移：老文件没有新键，其它字段必须原样保留
   const migrated = set.normalizeSettings({ version: 4, preset: 'wine', contentWidth: undefined, fontScale: 1.05 })
-  ok('v4 老文件 → v5：新键补默认值', migrated.contentWidth === 'auto', migrated.contentWidth)
-  ok('v4 老文件 → v5：已有字段全部保留',
-    migrated.preset === 'wine' && migrated.fontScale === 1.05 && migrated.version === 5,
+  ok('v4 老文件 → 当前版本：新键补默认值', migrated.contentWidth === 'auto', migrated.contentWidth)
+  ok('v4 老文件 → 当前版本：已有字段全部保留',
+    migrated.preset === 'wine' && migrated.fontScale === 1.05 && migrated.version === set.SETTINGS_VERSION,
     JSON.stringify({ preset: migrated.preset, fontScale: migrated.fontScale, v: migrated.version }))
 
   // 2) 客户端与宿主两份常量必须一致（手写 bundle 不能 import）
@@ -5095,6 +5096,339 @@ function shellDom (opts = {}) {
         r.del === 'rgb(242, 242, 240)', r.del)
     }
   }
+}
+
+
+// 用例 79：C12 设置导入 / 导出
+//
+// 导入的**安全边界**只有一处：宿主 `normalizeSettings`（白名单 + 夹取）。
+// 所以这里要钉的是「坏输入不会写进坏值」，而不是「客户端又校验了一遍」
+// （客户端再写一遍校验必然与宿主那份漂移）。
+{
+  console.log('\n--- C12：设置导入 / 导出 ---')
+  const T = SHARED_MOD.__test
+  const set = await import('../src/settings.js')
+  const pal = await import('../src/palette.js')
+
+  // 1) 契约
+  ok('导出上限与宿主 readBody 的 64 KB 一致', T.IMPORT_MAX_BYTES === 64 * 1024, String(T.IMPORT_MAX_BYTES))
+  ok('导出的文件名固定（便于用户辨认）',
+    fs.readFileSync(path.join(ROOT, 'client.js'), 'utf8')
+      .includes("'dsh-zhuang-fangyi-settings.json'"))
+  ok('导出带 _meta（来源与版本）',
+    fs.readFileSync(path.join(ROOT, 'client.js'), 'utf8').includes("plugin: 'dsh-zhuang-fangyi'"))
+  ok('导出的 Blob URL 会回收（不 revoke 会一直占内存）',
+    fs.readFileSync(path.join(ROOT, 'client.js'), 'utf8').includes('revokeObjectURL'))
+
+  // 2) 坏输入 → 宿主归一化后必须仍是**合法设置**（不是抛错、不是坏值）
+  const junk = [
+    { preset: 42 },
+    { backgroundOpacity: 99999 },
+    { fontFamily: 'comic-sans-nope' },
+    { presetLight: 'NOT_A_PRESET' },
+    { backgroundRotate: '99s' },
+    { railWidth: -5 },
+    { scheme: 'rainbow' },
+    { accentHue: 'purple' }
+  ]
+  let allLegal = true
+  for (const input of junk) {
+    const n = set.normalizeSettings(input)
+    if (!pal.PRESET_IDS.includes(n.preset)) allLegal = false
+    if (!(n.backgroundOpacity >= 0 && n.backgroundOpacity <= set.BG_OPACITY_MAX)) allLegal = false
+    if (n.railWidth < set.RAIL_WIDTH.min || n.railWidth > set.RAIL_WIDTH.max) allLegal = false
+    if (!set.SCHEMES.includes(n.scheme)) allLegal = false
+  }
+  ok('8 种坏输入归一化后都是合法设置（导入不可能写进坏值）', allLegal)
+
+  // 3) 一个可识别的键都没有 → 得到默认值（UI 会明确提示，不静默）
+  const empty = set.normalizeSettings({ _meta: { version: 6 }, nope: 1 })
+  const dflt = set.defaultSettings()
+  ok('无有效字段 → 逐项等于默认值',
+    empty.preset === dflt.preset && empty.background === dflt.background &&
+    empty.fontFamily === dflt.fontFamily)
+  ok('_meta 不是设置字段，会被白名单丢弃',
+    !('_meta' in empty) && !('nope' in empty))
+
+  // 4) 往返：导出 → 导入 → 逐字段相同
+  const original = set.normalizeSettings({
+    preset: 'wine', background: 'promo', backgroundOpacity: 31,
+    fontFamily: 'serif', contentWidth: 'wide', presetLight: 'cyan', presetDark: 'burst',
+    backgroundRotate: '5m', accentHue: 210, railWidth: 333
+  })
+  const roundTrip = set.normalizeSettings(JSON.parse(JSON.stringify({ settings: original })).settings)
+  ok('导出→导入 往返逐字段一致',
+    JSON.stringify(roundTrip) === JSON.stringify(original),
+    JSON.stringify(roundTrip) === JSON.stringify(original) ? '' : `${JSON.stringify(roundTrip)} vs ${JSON.stringify(original)}`)
+
+  // 5) 反例：宿主层不会因为 `settings` 不是对象而崩
+  ok('settings 是数组时回落默认（不抛错）',
+    set.normalizeSettings([]).preset === dflt.preset)
+  ok('settings 是 null 时回落默认', set.normalizeSettings(null).preset === dflt.preset)
+}
+
+// 用例 80：C13 明暗分档预设
+//
+// 核心不变量：**未分档时行为与 v5 一字不差**（老设置文件升级后观感不变）。
+// 另外客户端不能 import src/，所以 `presetForScheme` 有两份实现 —— 这里
+// 拿同一组输入跑两边，断言结果相等（防两份漂移）。
+{
+  console.log('\n--- C13：明暗分档预设 ---')
+  const T = SHARED_MOD.__test
+  const set = await import('../src/settings.js')
+  const csrc = fs.readFileSync(path.join(ROOT, 'client.js'), 'utf8')
+
+  // 1) 默认值必须是 null（不能是某个具体预设，否则升级即改变观感）
+  ok('默认 presetLight/presetDark 都是 null',
+    set.defaultSettings().presetLight === null && set.defaultSettings().presetDark === null)
+  ok('客户端 FOLLOW 常量与宿主的 null 哨兵语义一致',
+    T.FOLLOW === '__follow__', T.FOLLOW)
+
+  // 2) 未分档 → 恒等于主预设（v5 行为不变）
+  const plain = set.normalizeSettings({ preset: 'wine' })
+  ok('未分档：light 用主预设', set.presetForScheme(plain, 'light') === 'wine')
+  ok('未分档：dark 用主预设', set.presetForScheme(plain, 'dark') === 'wine')
+  ok('未分档：hasSchemePresets = false', set.hasSchemePresets(plain) === false)
+
+  // 3) 分档
+  const split = set.normalizeSettings({ preset: 'wine', presetLight: 'cyan', presetDark: 'burst' })
+  ok('分档：light 用 presetLight', set.presetForScheme(split, 'light') === 'cyan')
+  ok('分档：dark 用 presetDark', set.presetForScheme(split, 'dark') === 'burst')
+  ok('分档：hasSchemePresets = true', set.hasSchemePresets(split) === true)
+
+  // 4) 只设一边：另一边仍跟随主预设
+  const half = set.normalizeSettings({ preset: 'wine', presetLight: 'cyan' })
+  ok('只设 light：dark 仍跟随主预设',
+    set.presetForScheme(half, 'light') === 'cyan' && set.presetForScheme(half, 'dark') === 'wine')
+
+  // 5) 非法值回落「跟随」而不是变成具体预设
+  const bad = set.normalizeSettings({ preset: 'cyan', presetLight: 'NOPE', presetDark: 42 })
+  ok('非法分档回落 null（不是某个预设）',
+    bad.presetLight === null && bad.presetDark === null)
+  ok('非法分档 → 仍用主预设', set.presetForScheme(bad, 'light') === 'cyan')
+
+  // 6) 客户端与宿主两份实现必须同结果（手写 bundle 不能 import src/）
+  const cases = [
+    { preset: 'zhuang' },
+    { preset: 'wine', presetLight: 'cyan' },
+    { preset: 'wine', presetLight: 'cyan', presetDark: 'burst' },
+    { preset: 'burst', presetDark: 'wine' },
+    { preset: 'nope', presetLight: 'NOPE' }
+  ]
+  let same = true
+  for (const c of cases) {
+    for (const scheme of ['light', 'dark']) {
+      if (T.presetForScheme(c, scheme) !== set.presetForScheme(c, scheme)) same = false
+    }
+  }
+  ok('客户端 presetForScheme 与宿主同结果（10 组）', same)
+  ok('客户端 hasSchemePresets 与宿主同结果',
+    cases.every(c => T.hasSchemePresets(c) === set.hasSchemePresets(c)))
+
+  // 7) 拼表：浅色取 A.light、深色取 B.dark
+  const table = {
+    cyan: { '--t': { light: 'CYAN-L', dark: 'CYAN-D' } },
+    burst: { '--t': { light: 'BURST-L', dark: 'BURST-D' } }
+  }
+  const composed = T.composeSchemeOverrides({ preset: 'cyan', presetLight: 'cyan', presetDark: 'burst' }, table)
+  ok('拼表：light 取浅色预设', composed['--t'].light === 'CYAN-L', composed['--t'].light)
+  ok('拼表：dark 取深色预设', composed['--t'].dark === 'BURST-D', composed['--t'].dark)
+  // 不分档时**不复制**（返回原表，保持既有路径零变化）
+  const sameRef = T.composeSchemeOverrides({ preset: 'cyan', presetLight: null, presetDark: null }, table)
+  ok('不分档：直接返回原表（不复制）', sameRef === table.cyan)
+
+  // 8) 重入闸门：applySettings 会在 setTheme 时被 theme/change 重入
+  ok('applySettings 有重入闸门（否则 setTheme → theme/change 无限递归）',
+    csrc.includes('state.applying') && /if \(state\.applying\) return/.test(csrc))
+  ok('闸门在调用**之前**置位（写在事件回调里挡不住）',
+    /state\.applying = true\s*\n\s*try \{\s*\n\s*applySettingsInner/.test(csrc))
+
+  // 9) 明暗切换要走完整 applySettings（只调 wallpaper 会「壁纸变了配色没变」）
+  ok('theme/change 在分档时走 applySettings',
+    /hasSchemePresets\(state\.settings\)\) applySettings\(\)/.test(csrc))
+  ok('不分档时仍只走 syncSchemeWallpaper（保持旧路径）',
+    /else syncSchemeWallpaper\(state\.settings/.test(csrc))
+
+  // 10) 所有**渲染/应用**预设的地方都走 presetForScheme（漏一处就半生效）
+  //
+  // 但要排除三类**合法的** `settings.preset` 读取，它们读的就是「主预设」本身：
+  //   ① `presetForScheme` / `hasSchemePresets` 自己的函数体（回落分支）；
+  //   ② 编辑主预设的控件（设置页下拉、观测栏色板）—— 它们写的是 `preset`；
+  //   ③ 诊断快照（原样上报设置）。
+  // 白名单写成**精确片段**并断言条数，这样新增一处漏用会立刻失败，
+  // 而不是被一个宽松的正则悄悄放过去。
+  const LEGIT_MAIN_PRESET_READS = [
+    // ① 两个 helper 的回落分支
+    /^\s*return PRESETS\.includes\(settings\.preset\)/,
+    // ② 编辑主预设的控件（设置页 value / 观测栏 aria-pressed 与 ✓）
+    /^\s*value: settings\.preset,$/,
+    /^\s*'aria-pressed': settings\.preset === p \?/,
+    /^\s*settings\.preset === p \? h\('span', null, '✓'\)/,
+    // ③ 诊断快照
+    /^\s*preset: state\.settings\.preset,$/,
+    // ④ C14 按钮：套用「当前主预设」的组合
+    /^\s*onClick: \(\) => applyCombo\(settings\.preset\),$/
+  ]
+  const leaks = []
+  const lines = csrc.split('\n')
+  // 记录 presetForScheme / hasSchemePresets 的函数体行范围
+  const helperRanges = []
+  for (let i = 0; i < lines.length; i++) {
+    if (!/function (presetForScheme|hasSchemePresets) \(/.test(lines[i])) continue
+    let depth = 0
+    let started = false
+    for (let j = i; j < lines.length; j++) {
+      for (const ch of lines[j]) {
+        if (ch === '{') { depth++; started = true } else if (ch === '}') depth--
+      }
+      if (started && depth <= 0) { helperRanges.push([i, j]); break }
+    }
+  }
+  const inHelper = n => helperRanges.some(([a, b]) => n >= a && n <= b)
+  for (let i = 0; i < lines.length; i++) {
+    const L = lines[i]
+    if (!/settings\.preset\b/.test(L)) continue
+    if (inHelper(i)) continue
+    if (LEGIT_MAIN_PRESET_READS.some(re => re.test(L))) continue
+    leaks.push(`${i + 1}: ${L.trim()}`)
+  }
+  ok('没有漏用 settings.preset 的地方（漏一处就半生效）', leaks.length === 0, leaks.join(' | '))
+  ok('主预设读取白名单恰好 6 条（新增漏用会失败而不是被放宽）',
+    LEGIT_MAIN_PRESET_READS.length === 6, String(LEGIT_MAIN_PRESET_READS.length))
+  // 反向保证：确实有足够多的地方**走了** presetForScheme
+  const helperUses = (csrc.match(/presetForScheme\(/g) ?? []).length
+  ok('presetForScheme 被实际使用（≥ 6 处调用）', helperUses >= 6, String(helperUses))
+}
+
+// 用例 81：C14 一键推荐组合
+{
+  console.log('\n--- C14：一键推荐组合 ---')
+  const pal = await import('../src/palette.js')
+  const set = await import('../src/settings.js')
+  const csrc = fs.readFileSync(path.join(ROOT, 'client.js'), 'utf8')
+  const isrc = fs.readFileSync(path.join(ROOT, 'index.js'), 'utf8')
+
+  // 1) 每套预设都有组合
+  ok('四套预设都有推荐组合',
+    Object.keys(pal.PRESET_COMBOS).length === 4 &&
+    pal.PRESET_IDS.every(id => pal.PRESET_COMBOS[id] !== null))
+  // 2) 组合值必须能被宿主归一化**原样接受** —— 否则点了按钮会被静默改掉
+  let exact = true
+  for (const id of pal.PRESET_IDS) {
+    const c = pal.PRESET_COMBOS[id]
+    const n = set.normalizeSettings(c)
+    if (n.preset !== c.preset || n.background !== c.background ||
+        n.backgroundOpacity !== c.backgroundOpacity || n.fontFamily !== c.fontFamily ||
+        n.contentWidth !== c.contentWidth) exact = false
+  }
+  ok('组合值经 normalizeSettings 后逐项不变（不会被静默夹取）', exact)
+
+  // 3) 不越权：不碰开关 / 明暗偏好 / 皮肤层 / 动效（无障碍相关）
+  const forbidden = ['enabled', 'scheme', 'rail', 'motion', 'accentHue', 'railWidth']
+  const overreach = []
+  for (const id of pal.PRESET_IDS) {
+    for (const k of forbidden) if (k in pal.PRESET_COMBOS[id]) overreach.push(`${id}.${k}`)
+  }
+  ok('组合不覆盖开关/明暗/皮肤/动效（尤其 motion 是无障碍偏好）',
+    overreach.length === 0, overreach.join(', '))
+
+  // 4) 组合里的壁纸必须与该预设的推荐壁纸一致（同一份事实，不能两处不一致）
+  let bgMatch = true
+  for (const id of pal.PRESET_IDS) {
+    if (pal.PRESET_COMBOS[id].background !== pal.PRESET_STYLES[id].background) bgMatch = false
+  }
+  ok('组合的壁纸 = presetStyles 的推荐壁纸（单一事实来源）', bgMatch)
+
+  // 5) 组合数据由宿主下发（客户端不重复定义，否则又是一份会漂移的副本）
+  ok('宿主 /themes 下发 presetCombos', isrc.includes('presetCombos: PRESET_COMBOS'))
+  ok('客户端从宿主取，不写死映射',
+    csrc.includes('themePayload.presetCombos') && csrc.includes('payload.presetCombos'))
+  ok('客户端没有硬编码组合表（不应出现 defaultBackground 之类）',
+    !csrc.includes('defaultBackground'))
+
+  // 6) 未知预设 → null（不是抛错）
+  ok('未知预设返回 null', pal.recommendCombo('nope') === null)
+}
+
+// 用例 82：C15 壁纸轮播
+{
+  console.log('\n--- C15：壁纸轮播 ---')
+  const T = SHARED_MOD.__test
+  const set = await import('../src/settings.js')
+  const csrc = fs.readFileSync(path.join(ROOT, 'client.js'), 'utf8')
+
+  // 1) 契约
+  ok('默认关闭', set.defaultSettings().backgroundRotate === 'off')
+  ok('默认顺序轮播', set.defaultSettings().backgroundRotateOrder === 'sequential')
+  ok('四档白名单', set.ROTATE_MODES.join(',') === 'off,60s,5m,30m', set.ROTATE_MODES.join(','))
+  ok('非法间隔回落 off', set.normalizeSettings({ backgroundRotate: '99s' }).backgroundRotate === 'off')
+  ok('非法顺序回落 sequential',
+    set.normalizeSettings({ backgroundRotateOrder: 'x' }).backgroundRotateOrder === 'sequential')
+  ok('客户端 ROTATE_MS 与宿主同值',
+    JSON.stringify(T.ROTATE_MS) === JSON.stringify(set.ROTATE_MS),
+    `${JSON.stringify(T.ROTATE_MS)} vs ${JSON.stringify(set.ROTATE_MS)}`)
+
+  // 2) 候选池排除 none
+  ok('候选池不含 none', !T.ROTATE_POOL.includes('none'), T.ROTATE_POOL.join(','))
+  ok('候选池含全部 8 张', T.ROTATE_POOL.length === 8, String(T.ROTATE_POOL.length))
+
+  // 3) 顺序轮播
+  ok('顺序：sakura → promo', T.nextWallpaper('sakura', 'sequential') === 'promo',
+    T.nextWallpaper('sakura', 'sequential'))
+  ok('顺序：末位回到首位', T.nextWallpaper(T.ROTATE_POOL[7], 'sequential') === T.ROTATE_POOL[0])
+  ok('顺序：当前不在池里（none）→ 从第一张开始',
+    T.nextWallpaper('none', 'sequential') === T.ROTATE_POOL[0])
+
+  // 4) 随机：**绝不原地不动**（否则 1/8 概率看起来像坏了）
+  let selfPick = 0
+  for (let i = 0; i < 300; i++) {
+    if (T.nextWallpaper('sakura', 'random') === 'sakura') selfPick++
+  }
+  ok('随机：300 次都不选当前那张', selfPick === 0, `自选 ${selfPick} 次`)
+  // 且确实在变（不是恒定返回同一个）
+  const seen = new Set()
+  for (let i = 0; i < 300; i++) seen.add(T.nextWallpaper('sakura', 'random'))
+  ok('随机：结果有分布（不是恒定值）', seen.size > 3, `不同结果 ${seen.size} 个`)
+
+  // 5) 必须复用 applySettings（直接写 --zf-art-src 会绕过交叉淡入与暗版分流）
+  ok('轮播走 applySettings（保留交叉淡入 B6 与暗版分流 B9）',
+    /state\.settings = \{ \.\.\.cur, background: next \}\s*\n\s*applySettings\(\)/.test(csrc))
+  ok('轮播不直接写 --zf-art-src', !/nextWallpaper[\s\S]{0,400}setProperty\('--zf-art-src'/.test(csrc))
+
+  // 6) 不写盘（只改内存并重新应用）
+  ok('轮播不调用 save（不写盘，否则重启就换图且污染导出）',
+    !/nextWallpaper[\s\S]{0,300}void save\(/.test(csrc))
+
+  // 7) 三处清理：设置变化、页面不可见跳过、卸载
+  ok('页面不可见时跳过一轮', csrc.includes('document.hidden'))
+  ok('卸载时停掉定时器（否则停用后仍在写 DOM）',
+    /ctx\.effect\(\(\) => \(\) => \{[\s\S]*?stopRotation\(\)/.test(csrc))
+  ok('stopRotation 幂等（定时器置 null）',
+    /if \(state\.rotateTimer !== null\) \{\s*\n\s*clearInterval\(state\.rotateTimer\)\s*\n\s*state\.rotateTimer = null/.test(csrc))
+  ok('每次应用设置都重排轮播', csrc.includes('state.rotationSync?.()'))
+
+  // 8) 行为：start → 定时器建立；关掉 → 清掉
+  const dom = makeDom()
+  globalThis.document = dom.document
+  globalThis.window = dom.window ?? globalThis.window
+  T.state.settings = set.normalizeSettings({ enabled: true, background: 'sakura', backgroundRotate: '60s' })
+  T.stopRotation()
+  ok('初始无定时器', T.state.rotateTimer === null)
+  T.syncRotation()
+  ok('开启后建立定时器', T.state.rotateTimer !== null)
+  T.state.settings = set.normalizeSettings({ enabled: true, background: 'sakura', backgroundRotate: 'off' })
+  T.syncRotation()
+  ok('关掉后定时器被清掉', T.state.rotateTimer === null)
+  // background = none 也不该轮播
+  T.state.settings = set.normalizeSettings({ enabled: true, background: 'none', backgroundRotate: '5m' })
+  T.syncRotation()
+  ok('壁纸为 none 时不轮播', T.state.rotateTimer === null)
+  // 插件关闭也不轮播
+  T.state.settings = set.normalizeSettings({ enabled: false, background: 'sakura', backgroundRotate: '5m' })
+  T.syncRotation()
+  ok('插件关闭时不轮播', T.state.rotateTimer === null)
+  T.stopRotation()
+  T.state.settings = null
 }
 
 

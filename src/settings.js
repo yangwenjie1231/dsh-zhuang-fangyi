@@ -56,8 +56,10 @@ export const BG_OPACITY_MAX = 90
  *   v2 → v3：加入强调色色相覆盖（`accentHue`）与动效模式（`motion`）
  *   v3 → v4：加入排版（`fontFamily` / `fontScale`）
  *   v4 → v5：加入阅读宽度（`contentWidth`）
+ *   v5 → v6：加入明暗分档预设（`presetLight` / `presetDark`）
+ *            与壁纸轮播（`backgroundRotate` / `backgroundRotateOrder`）
  */
-export const SETTINGS_VERSION = 5
+export const SETTINGS_VERSION = 6
 
 /**
  * 动效模式取值。
@@ -88,6 +90,30 @@ export const RAIL_WIDTH = { min: 240, max: 380, default: 288 }
 export const CONTENT_WIDTH_MODES = ['auto', 'compact', 'wide']
 export const CONTENT_WIDTH_PX = { compact: '760px', wide: '1080px' }
 
+/**
+ * 壁纸轮播间隔（C15）。
+ *
+ * `off` = 不轮播（默认）。三档固定值，不做自由输入 —— 轮播是「偶尔换个心情」，
+ * 不需要精确控制；档位制也让 UI 与断言都简单。
+ */
+export const ROTATE_MODES = ['off', '60s', '5m', '30m']
+
+/** 间隔档位 → 毫秒（`off` 不在表里）。 */
+export const ROTATE_MS = { '60s': 60_000, '5m': 300_000, '30m': 1_800_000 }
+
+/** 轮播顺序：顺序 / 随机。 */
+export const ROTATE_ORDERS = ['sequential', 'random']
+
+/**
+ * 「跟随主预设」的哨兵值。
+ *
+ * `presetLight` / `presetDark` 用 `null` 表示「不分档，沿用 `preset`」——
+ * **默认必须是 null**：老设置文件里没有这两个键，若默认成某个具体预设，
+ * 升级后所有用户的明暗分档会被静默打开（表现为「切明暗时配色突然变了」）。
+ * 默认 null 才能保证 v5 → v6 的行为**一字不变**。
+ */
+export const PRESET_FOLLOW = null
+
 /** 默认设置。 */
 export function defaultSettings () {
   return {
@@ -113,6 +139,11 @@ export function defaultSettings () {
     fontScale: 1,
     // v5 新增：阅读宽度（正文列宽三档）
     contentWidth: 'auto',
+    // v6 新增：明暗分档预设（null = 沿用 preset，行为与 v5 一致）+ 壁纸轮播
+    presetLight: PRESET_FOLLOW,
+    presetDark: PRESET_FOLLOW,
+    backgroundRotate: 'off',
+    backgroundRotateOrder: 'sequential',
     // v2 新增：皮肤层（顶栏已移除，字段不再使用）
     rail: true,
     railWidth: RAIL_WIDTH.default,
@@ -162,6 +193,15 @@ export function normalizeSettings (input) {
   out.fontScale = normalizeFontScale(input.fontScale)
   // v5：阅读宽度（白名单三档，非法回落 auto = 交还外壳）
   if (CONTENT_WIDTH_MODES.includes(input.contentWidth)) out.contentWidth = input.contentWidth
+  // v6：明暗分档预设。`null` / 缺失 / 非法值一律回落「跟随主预设」——
+  // 注意**不能**回落成某个具体预设，否则升级会静默改变用户的观感。
+  out.presetLight = PRESET_IDS.includes(input.presetLight) ? input.presetLight : PRESET_FOLLOW
+  out.presetDark = PRESET_IDS.includes(input.presetDark) ? input.presetDark : PRESET_FOLLOW
+  // v6：壁纸轮播
+  if (ROTATE_MODES.includes(input.backgroundRotate)) out.backgroundRotate = input.backgroundRotate
+  if (ROTATE_ORDERS.includes(input.backgroundRotateOrder)) {
+    out.backgroundRotateOrder = input.backgroundRotateOrder
+  }
   out.railWidth = clamp(input.railWidth, RAIL_WIDTH.min, RAIL_WIDTH.max, base.railWidth)
   out.version = SETTINGS_VERSION
   return out
@@ -174,4 +214,37 @@ export function normalizeSettings (input) {
 export function backgroundArtId (settings) {
   if (settings.background === 'none') return null
   return settings.background
+}
+
+/**
+ * 某个明暗档位**实际生效**的预设（C13）。
+ *
+ * 明暗分档是「可选叠加」：没设分档就沿用主预设 `preset`，所以：
+ *   · 老设置文件（无这两个键）→ 恒等于 `preset`，行为与 v5 完全一致；
+ *   · 只在用户显式选了分档后才分叉。
+ *
+ * ⚠️ **所有读预设的地方都必须走这个函数**，不要直接读 `settings.preset` ——
+ * 漏掉一处就会出现「配色换了但材质 / 代码高亮 / 壁纸推荐没换」这种半生效状态。
+ *
+ * @param {object} settings 归一化后的设置
+ * @param {'light'|'dark'} scheme
+ * @returns {string} 预设 id
+ */
+export function presetForScheme (settings, scheme) {
+  if (settings === null || settings === undefined) return DEFAULT_PRESET
+  const specific = scheme === 'dark' ? settings.presetDark : settings.presetLight
+  if (PRESET_IDS.includes(specific)) return specific
+  return PRESET_IDS.includes(settings.preset) ? settings.preset : DEFAULT_PRESET
+}
+
+/**
+ * 是否启用了明暗分档（两者都没设 = 没启用）。
+ *
+ * 用途：跟随系统（`scheme: 'system'`）时外壳的明暗由系统决定，此时必须用
+ * `overridesForPair` 把两个档位的 token 打包成一个 `{light, dark}` 对 ——
+ * 单一预设的 `overridesFor` 表达不了「浅色 A / 深色 B」。
+ */
+export function hasSchemePresets (settings) {
+  if (settings === null || settings === undefined) return false
+  return PRESET_IDS.includes(settings.presetLight) || PRESET_IDS.includes(settings.presetDark)
 }

@@ -287,6 +287,7 @@ const TEXT_L = {
  *   textSoft             文字对比倾向：true = 柔和（正文稍淡），false = 锐利
  *   borderAlpha          边框不透明度基调（0..1）
  *   defaultBackground    这套预设配套的默认壁纸（预设联动）
+ *   combo                一键推荐组合的其余几项（C14，见 `recommendCombo`）
  *   accent               深色模式的强调色（官方本色）
  *   accentLight          浅色模式的强调色（压深到可读）
  *   label                显示名
@@ -319,6 +320,8 @@ export const PRESET_SPECS = {
     textSoft: false,
     borderAlpha: 0.72,
     defaultBackground: 'sakura',
+    // C14 一键推荐组合：明亮轻盈 → 无衬线、薄纱、标准宽度
+    combo: { fontFamily: 'sans', backgroundOpacity: 10, contentWidth: 'auto' },
     accent: '#F2E957',
     // 浅色强调色要压得够深：它同时当链接（压在最亮的 surfaceAlt 上达 4.5:1）
     // 与焦点环（压在 surfaceSunken 上达 3:1）。黄绿色相本身亮度高，
@@ -335,6 +338,8 @@ export const PRESET_SPECS = {
     textSoft: true,
     borderAlpha: 0.9,
     defaultBackground: 'dark',
+    // C14：厚重深沉 → 衬线、更实的纱（压住壁纸细节）、紧凑列宽（专注）
+    combo: { fontFamily: 'serif', backgroundOpacity: 22, contentWidth: 'compact' },
     accent: '#C4D579',
     accentLight: '#17513E'
   },
@@ -348,6 +353,8 @@ export const PRESET_SPECS = {
     textSoft: false,
     borderAlpha: 0.6,
     defaultBackground: 'pool',
+    // C14：清爽中性 → 圆体、最薄的纱、标准宽度
+    combo: { fontFamily: 'rounded', backgroundOpacity: 12, contentWidth: 'auto' },
     accent: '#75DCD9',
     accentLight: '#0A5B5E'
   },
@@ -361,6 +368,8 @@ export const PRESET_SPECS = {
     textSoft: true,
     borderAlpha: 0.8,
     defaultBackground: 'promo',
+    // C14：浓郁暖调 → 衬线、偏实的纱、宽松列宽（长文阅读）
+    combo: { fontFamily: 'serif', backgroundOpacity: 26, contentWidth: 'wide' },
     accent: '#E08B87',
     accentLight: '#8A2F2B'
   }
@@ -374,6 +383,52 @@ export const PRESET_STYLES = Object.fromEntries(
     background: spec.defaultBackground ?? null,
     borderAlpha: spec.borderAlpha ?? 0.8
   }])
+)
+
+/**
+ * 一键推荐组合（C14）。
+ *
+ * 「切预设只改了配色」的下一步：预设既然是**一整套视觉性格**，那用户还得
+ * 自己去壁纸条里找配套图、去排版里挑字体、去滑杆调不透明度 —— 选择成本高，
+ * 而且大多数人调不出「对味」的组合。这个函数把这几项**一次配好**。
+ *
+ * ── 为什么是纯函数、且由宿主算 ────────────────────────────────────────
+ *
+ * 客户端半边是自包含 bundle（`window.__ModuleLoader__`，**不能 import src/**），
+ * 所以组合定义只能跟 `presetStyles` 一样由宿主下发 —— 否则「哪套预设配哪种
+ * 字体」会变成客户端里一份手抄的副本，两份一定会漂移（这个项目刚因为手抄
+ * 发布清单漏掉 LICENSE 栽过一次）。
+ *
+ * 纯函数还带来一个好处：可以直接在 `contrast.js` 与无头测试里断言，
+ * 不需要 DOM。
+ *
+ * ── 覆盖范围刻意收窄 ──────────────────────────────────────────────────
+ *
+ * 只覆盖「观感组合」四项：预设 / 壁纸 / 不透明度 / 排版。
+ * **不碰** `enabled`（开关）、`scheme`（明暗偏好）、`rail`（皮肤层）、
+ * `motion`（无障碍相关）—— 那些是功能与可访问性设置，不该被一个「换个风格」
+ * 的按钮改掉。尤其是 `motion`：用户的「减少动态效果」是系统级偏好，
+ * 被主题按钮覆盖属于越权。
+ *
+ * @param {string} presetId
+ * @returns {{preset:string, background:string, backgroundOpacity:number, fontFamily:string, contentWidth:string}|null}
+ */
+export function recommendCombo (presetId) {
+  const spec = PRESET_SPECS[presetId]
+  if (spec === undefined) return null
+  const combo = spec.combo ?? {}
+  return {
+    preset: presetId,
+    background: spec.defaultBackground ?? 'none',
+    backgroundOpacity: combo.backgroundOpacity ?? 14,
+    fontFamily: combo.fontFamily ?? 'default',
+    contentWidth: combo.contentWidth ?? 'auto'
+  }
+}
+
+/** 全部预设的推荐组合（随 `/themes` 一起下发，客户端不重复定义）。 */
+export const PRESET_COMBOS = Object.fromEntries(
+  Object.keys(PRESET_SPECS).map(id => [id, recommendCombo(id)])
 )
 
 /**

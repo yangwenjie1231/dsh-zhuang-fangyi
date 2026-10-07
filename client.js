@@ -43,6 +43,15 @@ window.__ModuleLoader__.load({
     const LAYER = 'dsh-zhuang-fangyi'
     const ROUTE = '/api/zhuang-fangyi'
     const PRESETS = ['zhuang', 'burst', 'cyan', 'wine']
+    /**
+     * C13：明暗分档下拉里「跟随主预设」的哨兵值。
+     *
+     * 必须与 `src/settings.js` 的 `PRESET_FOLLOW`（`null`）**语义一致** ——
+     * 客户端不能 import src/，所以这里是它的本地副本；两侧都有断言盯着
+     * （设置层断言默认值是 null，客户端断言这个常量是 null）。
+     * `null` 不能直接当 `<option value>`，所以用这个字符串做界面值。
+     */
+    const FOLLOW = '__follow__'
     const SCHEMES = ['system', 'light', 'dark']
     const BACKGROUNDS = [
       'none', 'sakura', 'promo', 'pool', 'ultrawide', 'dark',
@@ -102,6 +111,38 @@ window.__ModuleLoader__.load({
         contentWidth_auto: '标准',
         contentWidth_compact: '紧凑',
         contentWidth_wide: '宽松',
+        // C14 一键推荐组合
+        applyCombo: '一键推荐组合',
+        applyComboHint: '按当前预设一次配好壁纸 / 不透明度 / 字体 / 阅读宽度（不改明暗偏好与动效）',
+        applyComboDone: '已套用推荐组合',
+        applyComboUnavailable: '宿主未提供组合数据（插件版本不匹配？）',
+        // C12 导入 / 导出
+        exportSettings: '导出设置',
+        importSettings: '导入设置',
+        exportHint: '下载当前设置为 JSON 文件，可分享或在另一台机器导入',
+        importHint: '从 JSON 文件导入设置（整体替换当前设置）',
+        importDone: '设置已导入',
+        importBadJson: '文件不是合法的 JSON',
+        importNotObject: '文件内容不是设置对象',
+        importTooBig: '文件过大（上限 64 KB）',
+        importNewer: '来自更新版本的设置，未知字段会被忽略',
+        importAllDefault: '文件里没有可识别的设置项，已按默认值导入',
+        // C13 明暗分档预设
+        schemePresets: '明暗分别指定预设',
+        presetLight: '浅色预设',
+        presetDark: '深色预设',
+        presetFollow: '跟随主预设',
+        schemePresetsHint: '留「跟随主预设」时与上面那个预设一致；设了之后切明暗会连配色与材质一起换',
+        // C15 壁纸轮播
+        rotate: '壁纸轮播',
+        rotateHint: '按间隔自动换壁纸（只在插件开着、页面可见时走；不写入设置文件）',
+        rotateOff: '关闭',
+        rotate60s: '1 分钟',
+        rotate5m: '5 分钟',
+        rotate30m: '30 分钟',
+        rotateOrder: '轮播顺序',
+        rotateSequential: '顺序',
+        rotateRandom: '随机',
         fontScale: '字号',
         fontScaleHint: '正文与行高的整体缩放（±5%，幅度小是刻意的：再大就会撑破固定高度的行）',
         accentHue: '强调色色相',
@@ -196,6 +237,38 @@ window.__ModuleLoader__.load({
         contentWidth_auto: 'Normal',
         contentWidth_compact: 'Compact',
         contentWidth_wide: 'Wide',
+        // C14 one-click recommended combo
+        applyCombo: 'Recommended combo',
+        applyComboHint: 'Set wallpaper / opacity / typeface / reading width for this preset at once (leaves light-dark preference and motion alone)',
+        applyComboDone: 'Recommended combo applied',
+        applyComboUnavailable: 'The host did not provide combo data (plugin version mismatch?)',
+        // C12 import / export
+        exportSettings: 'Export settings',
+        importSettings: 'Import settings',
+        exportHint: 'Download the current settings as JSON — share it or import it on another machine',
+        importHint: 'Import settings from a JSON file (replaces the current settings)',
+        importDone: 'Settings imported',
+        importBadJson: 'The file is not valid JSON',
+        importNotObject: 'The file does not contain a settings object',
+        importTooBig: 'File too large (64 KB limit)',
+        importNewer: 'These settings come from a newer version; unknown fields will be ignored',
+        importAllDefault: 'No recognisable settings found — imported as defaults',
+        // C13 per-scheme presets
+        schemePresets: 'Preset per light/dark',
+        presetLight: 'Light preset',
+        presetDark: 'Dark preset',
+        presetFollow: 'Follow main preset',
+        schemePresetsHint: 'While set to "Follow main preset" this matches the preset above; once set, switching light/dark swaps colours and materials together',
+        // C15 wallpaper rotation
+        rotate: 'Wallpaper rotation',
+        rotateHint: 'Change the wallpaper on an interval (only while the plugin is on and the page is visible; never written to the settings file)',
+        rotateOff: 'Off',
+        rotate60s: '1 minute',
+        rotate5m: '5 minutes',
+        rotate30m: '30 minutes',
+        rotateOrder: 'Rotation order',
+        rotateSequential: 'In order',
+        rotateRandom: 'Random',
         fontScale: 'Text size',
         fontScaleHint: 'Overall scale of body text and line height (±5% — deliberately small, larger breaks fixed-height rows)',
         accentHue: 'Accent hue',
@@ -294,6 +367,62 @@ window.__ModuleLoader__.load({
         if (scheme === 'light' || scheme === 'dark') return scheme
       } catch { /* 服务不可用 */ }
       return 'light'
+    }
+
+    /**
+     * C13：某个明暗档位**实际生效**的预设。
+     *
+     * 与 `src/settings.js` 的 `presetForScheme` 是同一套规则 —— 客户端是自包含
+     * bundle（不能 import src/），所以这里是一份**本地副本**。为了不让它漂移，
+     * 无头测试里有一条断言：拿同一组输入分别跑宿主版与客户端版，结果必须相等。
+     *
+     * 未分档（`presetLight` / `presetDark` 均为 null）时恒等于 `preset`，
+     * 所以 v5 老设置的行为一字不变。
+     */
+    function presetForScheme (settings, scheme) {
+      if (settings === null || settings === undefined) return 'zhuang'
+      const specific = scheme === 'dark' ? settings.presetDark : settings.presetLight
+      if (PRESETS.includes(specific)) return specific
+      return PRESETS.includes(settings.preset) ? settings.preset : 'zhuang'
+    }
+
+    /** C13：是否启用了明暗分档（与 `src/settings.js` 的 `hasSchemePresets` 同规则）。 */
+    function hasSchemePresets (settings) {
+      if (settings === null || settings === undefined) return false
+      return PRESETS.includes(settings.presetLight) || PRESETS.includes(settings.presetDark)
+    }
+
+    /**
+     * C13：把「浅色预设的 light 值 + 深色预设的 dark 值」拼成一份 token 对。
+     *
+     * 为什么需要拼：`state.overrides[preset]` 是**单预设**的 `{token:{light,dark}}`，
+     * 而外壳的 `overrideTokens` 只接受这一种形态 —— 它没有「按明暗选不同来源」的
+     * 概念。所以要表达「浅色用青、深色用墨青金」，只能在**值**这一层拼：
+     * 每个 token 取浅色预设的 light 与深色预设的 dark。
+     *
+     * 不分档（两个预设相同）时直接返回原表，不复制 —— 保持既有路径零变化。
+     *
+     * @param {object} settings
+     * @param {object} table `state.overrides`（宿主下发的预设 token 表）
+     * @returns {object|undefined}
+     */
+    function composeSchemeOverrides (settings, table) {
+      const lightPreset = presetForScheme(settings, 'light')
+      const darkPreset = presetForScheme(settings, 'dark')
+      if (lightPreset === darkPreset) return table?.[lightPreset]
+      const lightOv = table?.[lightPreset]
+      const darkOv = table?.[darkPreset]
+      if (lightOv === undefined || darkOv === undefined) return table?.[lightPreset]
+      const out = {}
+      for (const name of Object.keys(lightOv)) {
+        const l = lightOv[name]
+        const d = darkOv[name]
+        // 某个 token 只在一边有 → 跳过（宁可少一个 token，也不要写出半截值
+        // 让外壳的成对校验抛错）
+        if (l === undefined || d === undefined) continue
+        out[name] = { light: l.light, dark: d.dark }
+      }
+      return out
     }
 
     /**
@@ -721,7 +850,7 @@ window.__ModuleLoader__.load({
       body.setAttribute('data-zf-theme', '')
 
       // B9：代码高亮 token 色（随预设 + 明暗；与壁纸无关，所以放在壁纸分支之外）
-      applyCodeTokens(body, roles?.[settings.preset]?.[currentScheme(theme)]?.shiki)
+      applyCodeTokens(body, roles?.[presetForScheme(settings, currentScheme(theme))]?.[currentScheme(theme)]?.shiki)
       // B7：阅读宽度（同样与壁纸无关；那个元素可能还没渲染出来 —— refresh 里还会再试）
       applyContentWidth(document, settings.contentWidth)
 
@@ -749,7 +878,7 @@ window.__ModuleLoader__.load({
         // 纱的不透明度 = 1 - 壁纸强度。0% 壁纸 → 完全不透明（等同关闭）。
         const keep = 1 - alpha
         const scheme = currentScheme(theme)
-        const preset = roles?.[settings.preset]?.[scheme]
+        const preset = roles?.[presetForScheme(settings, scheme)]?.[scheme]
         if (preset !== undefined) {
           root.style.setProperty('--zf-veil', toRgba(preset.base, keep))
           root.style.setProperty('--zf-veil-sidebar', toRgba(preset.sidebar, keep))
@@ -815,7 +944,7 @@ window.__ModuleLoader__.load({
 
       // 材质深度：按预设写 `data-zf-depth`（CSS 侧覆盖 --dsw-elevation-*）
       // `soft` 档**不打标记** —— 那是官方默认值，不打省一次属性写入
-      const depth = presetDepth(settings.preset)
+      const depth = presetDepth(presetForScheme(settings, currentScheme(theme)))
       if (depth === 'soft') body.removeAttribute('data-zf-depth')
       else body.setAttribute('data-zf-depth', depth)
 
@@ -850,7 +979,7 @@ window.__ModuleLoader__.load({
       if (settings?.enabled !== true) return
       const scheme = currentScheme(theme)
       // B9：明暗切换时代码高亮也要跟着切（与壁纸无关）
-      applyCodeTokens(document.body, roles?.[settings.preset]?.[scheme]?.shiki)
+      applyCodeTokens(document.body, roles?.[presetForScheme(settings, scheme)]?.[scheme]?.shiki)
       if (settings.background !== 'none') {
         const artId = `${settings.background}${scheme === 'dark' ? '-dark' : ''}`
         const artFile = `wallpaper-${artId}.webp`
@@ -873,7 +1002,7 @@ window.__ModuleLoader__.load({
           !tiled && fit === 'contain' ? 'contain' : 'cover')
         if (fireArtFade !== null) fireArtFade()
       }
-      const preset = roles?.[settings.preset]?.[scheme]
+      const preset = roles?.[presetForScheme(settings, scheme)]?.[scheme]
       if (preset !== undefined && settings.background !== 'none') {
         // 同上：字面量必须与 BG_OPACITY_MAX 一致（有测试断言）
         const keep = 1 - Math.max(0, Math.min(90, settings.backgroundOpacity)) / 100
@@ -1460,6 +1589,24 @@ window.__ModuleLoader__.load({
          * 绝不写回 `settings.background`（用户要求：手动选）。
          */
         presetStyles: {},
+        // C14：一键推荐组合（宿主下发，客户端不重复定义这套映射）
+        presetCombos: {},
+        /** C14：套用组合后的行内提示文案（null = 不显示）。 */
+        comboNote: null,
+        /** C14：上面那条提示的消失定时器（重入时先清掉旧的）。 */
+        comboNoteTimer: null,
+        /**
+         * C13：`applySettings` 重入闸门。
+         *
+         * `applySettings` 在固定明暗下会调 `theme.setTheme(id)`，外壳的
+         * `setTheme` 会 emit `theme/change` → 我们又调 `applySettings` → 递归。
+         * 用这个标记挡住嵌套调用。
+         */
+        applying: false,
+        /** C15：壁纸轮播定时器（null = 未启动）。 */
+        rotateTimer: null,
+        /** C15：设置变化时重排轮播（由 `syncRotation` 赋值）。 */
+        rotationSync: null,
         /** 本次页面会话是否已经播过启动动效（避免每次 emit 都闪一次）。 */
         splashPlayed: false,
         /** 是否已让宿主首帧遮罩退役（幂等，见 Splash 的交接说明）。 */
@@ -1611,12 +1758,43 @@ window.__ModuleLoader__.load({
       }
 
       /**
+       * C13：当前设置对应的 token 覆盖表。
+       *
+       * 不分档 → 就是单预设那套（与改动前完全一致）；
+       * 分档 → 拼出「浅色取 A.light、深色取 B.dark」的对。
+       *
+       * 这是 `state.overrides` 的**唯一**消费入口，避免某处漏掉分档逻辑。
+       */
+      function overridesForSettings (s) {
+        if (!hasSchemePresets(s)) return state.overrides[s.preset]
+        return composeSchemeOverrides(s, state.overrides)
+      }
+
+      /**
        * 应用设置。先 teardown 再挂载，全程同步，不产生中间绘制帧。
        */
       function applySettings () {
         const s = state.settings
         if (s === null) return
+        // C13 重入闸门：固定明暗下会 `theme.setTheme(id)`，外壳的 setTheme 会
+        // 再 emit `theme/change`。闸门必须在**调用之前**就置位，否则递归挡不住
+        // （早先把置位写在了事件回调里 —— 那样只是「回调里再进不来」，
+        // 但 applySettings 本身还是被重入了）。
+        if (state.applying) return
+        state.applying = true
+        try {
+          applySettingsInner(s)
+        } finally {
+          state.applying = false
+        }
+      }
+
+      /** `applySettings` 的实际内容（闸门在外层，见上）。 */
+      function applySettingsInner (s) {
         teardown()
+        // C15：每次应用设置都重排轮播 —— 间隔/顺序/开关/壁纸任一变化都要生效。
+        // 放在 teardown 之后、其它挂载之前，且 `syncRotation` 自身幂等。
+        state.rotationSync?.()
         if (s.enabled !== true) {
           applyStyleVars(s, state.themeRoles, theme, state.wallpaperMeta)
           syncHeroMark()
@@ -1624,16 +1802,20 @@ window.__ModuleLoader__.load({
           return
         }
 
-        const overrides = state.overrides[s.preset]
+        const overrides = overridesForSettings(s)
         if (overrides === undefined) return
 
         let tookOver = false
         if (s.scheme === 'system') {
-          // token 层：不改 preference，保住 prefers-color-scheme 跟随
+          // token 层：不改 preference，保住 prefers-color-scheme 跟随。
+          //
+          // C13：走 token 层时**必须**用「浅色预设的 light + 深色预设的 dark」
+          // 拼出来的对（`overridesForSettings`），因为外壳的明暗由系统决定，
+          // 我们无法用单一预设的两套值表达「浅色 A / 深色 B」。
           state.layerDispose = theme.overrideTokens(LAYER, overrides)
           tookOver = true
         } else {
-          const id = `${s.preset}-${s.scheme}`
+          const id = `${presetForScheme(s, s.scheme)}-${s.scheme}`
           if (state.registered.has(id)) {
             theme.setTheme(id)
             tookOver = true
@@ -1925,6 +2107,7 @@ window.__ModuleLoader__.load({
           state.overrides = themePayload.overrides ?? {}
           state.themeRoles = themePayload.roles ?? {}
           state.presetStyles = themePayload.presetStyles ?? {}
+          state.presetCombos = themePayload.presetCombos ?? {}
           // 壁纸清单：竖图用 contain 的依据（宿主从 art/wallpapers.json 读）
           state.wallpaperMeta = themePayload.wallpaperMeta ?? {}
           state.lastError = null
@@ -2028,6 +2211,121 @@ window.__ModuleLoader__.load({
         emit()
       }
 
+      /* ---------------- C12：设置导入 / 导出 ---------------- */
+
+      /** 导入文件大小上限，与宿主 `readBody` 的 64 KB 保持一致。 */
+      const IMPORT_MAX_BYTES = 64 * 1024
+
+      /**
+       * 导出当前设置为 JSON 文件。
+       *
+       * 带 `_meta` 便于用户辨认文件来源，也便于导入时判断版本 —— 导入侧
+       * **忽略 `_meta`**（它不是设置字段，`normalizeSettings` 的白名单会丢弃）。
+       */
+      function exportSettings () {
+        const payload = {
+          _meta: {
+            plugin: 'dsh-zhuang-fangyi',
+            version: state.settings?.version ?? null,
+            exportedAt: new Date().toISOString()
+          },
+          settings: state.settings
+        }
+        const text = `${JSON.stringify(payload, null, 2)}\n`
+        try {
+          const blob = new Blob([text], { type: 'application/json' })
+          const url = URL.createObjectURL(blob)
+          const a = document.createElement('a')
+          a.href = url
+          a.download = 'dsh-zhuang-fangyi-settings.json'
+          document.body.appendChild(a)
+          a.click()
+          a.remove()
+          // 必须回收：不 revoke 的话这个 Blob 会一直占着内存（大对象尤甚）
+          setTimeout(() => { try { URL.revokeObjectURL(url) } catch { /* 已回收 */ } }, 0)
+        } catch (error) {
+          state.lastError = String(error?.message ?? error)
+          console.warn('[zhuang-fangyi] 导出失败：', state.lastError)
+        }
+        emit()
+      }
+
+      /**
+       * 导入设置文件。
+       *
+       * 安全边界有两层，**都复用既有设施**：
+       *   ① 客户端先挡大小（`file.size`），宿主 `readBody` 还有一道 64 KB；
+       *   ② 真正的内容校验交给宿主 `normalizeSettings`（白名单 + 夹取）——
+       *      未知键被丢弃、越界值被夹回、非法值回落默认。所以「导入恶意 JSON」
+       *      在结构上就不可能写进坏值。
+       *
+       * 因此这里**不需要**自己再写一遍字段校验（写两遍必然漂移）。
+       */
+      async function importSettings (file) {
+        if (file === null || file === undefined) return
+        if (typeof file.size === 'number' && file.size > IMPORT_MAX_BYTES) {
+          state.lastError = t('importTooBig')
+          emit()
+          return
+        }
+        let text
+        try {
+          text = await file.text()
+        } catch (error) {
+          state.lastError = String(error?.message ?? error)
+          emit()
+          return
+        }
+        let parsed
+        try {
+          parsed = JSON.parse(text)
+        } catch {
+          state.lastError = t('importBadJson')
+          emit()
+          return
+        }
+        if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+          state.lastError = t('importNotObject')
+          emit()
+          return
+        }
+        // 两种形态都收：`{_meta, settings}`（我们导出的）与裸设置对象（手写的）
+        const incoming = parsed.settings ?? parsed
+        if (incoming === null || typeof incoming !== 'object' || Array.isArray(incoming)) {
+          state.lastError = t('importNotObject')
+          emit()
+          return
+        }
+        // 版本比当前新 → 提示但仍导入（前向兼容：未知键由白名单丢弃）
+        const incomingVersion = typeof parsed._meta?.version === 'number'
+          ? parsed._meta.version
+          : (typeof incoming.version === 'number' ? incoming.version : null)
+        const newer = incomingVersion !== null && incomingVersion > (state.settings?.version ?? 0)
+        const prevAccent = state.settings?.accentHue
+        try {
+          const payload = await api('/settings', {
+            method: 'POST',
+            body: JSON.stringify({ settings: incoming })
+          })
+          if (payload?.settings !== undefined) state.settings = payload.settings
+          state.lastError = newer ? t('importNewer') : null
+          // 一个可识别的键都没有 → 宿主会返回默认值，明确告知而不是静默
+          if (!newer && payload?.settings !== undefined &&
+              incoming.preset === undefined && incoming.background === undefined) {
+            state.lastError = t('importAllDefault')
+          }
+        } catch (error) {
+          state.lastError = String(error?.message ?? error)
+          console.warn('[zhuang-fangyi] 导入失败：', state.lastError)
+          emit()
+          return
+        }
+        // 强调色可能变了 → 主题 token 表整体变，必须重取重注册（与 save 同一个坑）
+        if (state.settings?.accentHue !== prevAccent) await reloadThemes()
+        applySettings()
+        emit()
+      }
+
       /**
        * 重新从宿主取主题定义与 token 表，并**重注册**。
        *
@@ -2042,6 +2340,7 @@ window.__ModuleLoader__.load({
           state.overrides = payload.overrides ?? {}
           state.themeRoles = payload.roles ?? {}
           state.presetStyles = payload.presetStyles ?? {}
+          state.presetCombos = payload.presetCombos ?? {}
           state.wallpaperMeta = payload.wallpaperMeta ?? {}
           registerThemes()
           applySettings()
@@ -2072,9 +2371,98 @@ window.__ModuleLoader__.load({
 
       // 壁纸明暗两版由 CSS 分流；这里只在外壳切换后把变量指向对应的暗色图，
       // 保证不支持 :has() 的引擎也能跟随。
+      //
+      // C13：**明暗切换也是「换预设」**（分档启用时）—— 所以这里不能只
+      // `syncSchemeWallpaper`，必须走完整的 `applySettings()`：
+      // 配色 token 层、材质深度、代码高亮、壁纸推荐标记全都要跟着换。
+      // 只调 wallpaper 会出现「壁纸变了但配色没变」的半生效状态。
+      //
+      // 重入保护：`applySettings` 里可能调 `theme.setTheme()`，而外壳的
+      // setTheme 会再 emit 一次 `theme/change` → 无限递归。用 `applying`
+      // 闸门挡住（只跳过**嵌套**调用，正常的一次切换照常生效）。
       ctx.effect(() => ctx.on('theme/change', () => {
-        syncSchemeWallpaper(state.settings, state.themeRoles, theme, state.wallpaperMeta)
+        // `applySettings` 自带重入闸门（见其定义），这里不需要再包一层 ——
+        // 直接调即可，嵌套的那次会被闸门挡掉。
+        if (hasSchemePresets(state.settings)) applySettings()
+        else syncSchemeWallpaper(state.settings, state.themeRoles, theme, state.wallpaperMeta)
       }), 'zhuang-fangyi: theme sync')
+
+      /* ---------------- C15：壁纸轮播 / 随机 ---------------- */
+
+      /**
+       * 轮播间隔档位 → 毫秒（与 `src/settings.js` 的 `ROTATE_MS` 同值）。
+       *
+       * 客户端不能 import src/，所以这里是本地副本；两侧都有断言盯着。
+       */
+      const ROTATE_MS = { '60s': 60000, '5m': 300000, '30m': 1800000 }
+
+      /** 可轮播的壁纸（排除 `none`）。 */
+      const ROTATE_POOL = BACKGROUNDS.filter(b => b !== 'none')
+
+      /**
+       * 挑下一张。
+       *
+       * `sequential` 按当前在池中的位置 +1；`random` 随机但**排除当前那张**——
+       * 否则有 1/8 概率原地不动，看起来像「轮播坏了」。
+       */
+      function nextWallpaper (current, order) {
+        const idx = ROTATE_POOL.indexOf(current)
+        if (order === 'random') {
+          const candidates = ROTATE_POOL.filter(b => b !== current)
+          if (candidates.length === 0) return current
+          return candidates[Math.floor(Math.random() * candidates.length)]
+        }
+        // 当前不在池里（比如是 `none` 或未知值）→ 从第一张开始
+        if (idx < 0) return ROTATE_POOL[0]
+        return ROTATE_POOL[(idx + 1) % ROTATE_POOL.length]
+      }
+
+      /**
+       * 停掉轮播定时器（幂等）。
+       *
+       * 三处都要调：设置变化、页面不可见、插件卸载 —— 漏掉任何一处都会留下
+       * 一个仍在写 DOM 的定时器。
+       */
+      function stopRotation () {
+        if (state.rotateTimer !== null) {
+          clearInterval(state.rotateTimer)
+          state.rotateTimer = null
+        }
+      }
+
+      /**
+       * 按当前设置（重）启动轮播。
+       *
+       * 设计要点：
+       *   · **不写盘** —— 轮换只是会话内的展示状态。写盘会有两个坏结果：
+       *     每次重启都换一张（用户以为设置被改了），以及导出文件里混进一个
+       *     随机值。所以只改内存里的 `state.settings.background` 并重新应用。
+       *   · **复用 `applySettings`** —— 它内部走 `syncSchemeWallpaper`，
+       *     交叉淡入（B6）与暗版分流（B9）都在那里。直接写 `--zf-art-src`
+       *     会绕过这两个（都是修过的坑）。
+       *   · 页面不可见时**跳过一轮**（不换图）——省电，也避免切回来时
+       *     一次性闪好几张。
+       */
+      function syncRotation () {
+        stopRotation()
+        const s = state.settings
+        if (s === null || s.enabled !== true) return
+        if (s.background === 'none') return
+        const ms = ROTATE_MS[s.backgroundRotate]
+        if (ms === undefined) return
+        state.rotateTimer = setInterval(() => {
+          const cur = state.settings
+          if (cur === null || cur.enabled !== true) return
+          if (typeof document.hidden === 'boolean' && document.hidden) return
+          const next = nextWallpaper(cur.background, cur.backgroundRotateOrder)
+          if (next === cur.background) return
+          state.settings = { ...cur, background: next }
+          applySettings()
+        }, ms)
+      }
+
+      // 设置一变就重排轮播（间隔/顺序/开关/壁纸都可能变）
+      state.rotationSync = syncRotation
 
       /* ---------------- 空白页头像 ---------------- */
 
@@ -2312,6 +2700,9 @@ window.__ModuleLoader__.load({
       function Section () {
         const s = useStore()
         const settings = s.settings
+        // C14：套用组合后给一行轻提示（几秒后自己消失）。用 state 而不是
+        // 局部 useState —— 保存会触发全量重渲染，局部 state 会被重置。
+        const comboNote = s.comboNote
 
         if (settings === null) {
           return h('div', { style: { padding: '8px 0', fontSize: 13, color: 'var(--dsw-alias-label-secondary)' } },
@@ -2325,6 +2716,50 @@ window.__ModuleLoader__.load({
         }
 
         const set = patch => { void save(patch) }
+
+        /** C13：分档下拉的选项 = 「跟随主预设」+ 四个预设（带风格名）。 */
+        const presetOptions = () => [
+          { value: FOLLOW, label: t('presetFollow') },
+          ...PRESETS.map(p => {
+            const style = state.presetStyles?.[p]?.style
+            return {
+              value: p,
+              label: style ? `${PRESET_LABELS[p].zh} · ${style}` : PRESET_LABELS[p].zh
+            }
+          })
+        ]
+
+        /**
+         * C14：套用当前预设的推荐组合。
+         *
+         * 组合数据由宿主下发（`presetCombos`）—— 客户端**不重复定义**这套映射，
+         * 否则就是又一份会漂移的手抄副本。
+         */
+        const applyCombo = preset => {
+          const combo = state.presetCombos?.[preset]
+          if (combo === undefined || combo === null) {
+            state.comboNote = t('applyComboUnavailable')
+            emit()
+            return
+          }
+          // 只取「观感组合」四项：不碰 enabled / scheme / rail / motion
+          set({
+            preset: combo.preset,
+            background: combo.background,
+            backgroundOpacity: combo.backgroundOpacity,
+            fontFamily: combo.fontFamily,
+            contentWidth: combo.contentWidth
+          })
+          state.comboNote = t('applyComboDone')
+          emit()
+          // 提示自动消失：存 timer 以便重入时清掉上一个，避免旧 timer 提前清掉新提示
+          if (state.comboNoteTimer !== null) clearTimeout(state.comboNoteTimer)
+          state.comboNoteTimer = setTimeout(() => {
+            state.comboNote = null
+            state.comboNoteTimer = null
+            emit()
+          }, 2600)
+        }
 
         return h('div', { style: { padding: '4px 0 20px', maxWidth: 720 } },
           h('div', { style: { fontSize: 13, color: 'var(--dsw-alias-label-tertiary)' } }, t('subtitle')),
@@ -2347,6 +2782,21 @@ window.__ModuleLoader__.load({
               }),
               onChange: v => set({ preset: v })
             })),
+          // C14：一键推荐组合。放在预设行**紧下面** —— 它是「这套预设该怎么配」
+          // 的动作，离预设越近越好找。
+          //
+          // 不自动触发（与「推荐壁纸只提示、不自动切换」同一原则）：套用会改动
+          // 壁纸与排版，必须是用户显式点击。
+          h(Row, { label: t('applyCombo'), hint: t('applyComboHint') },
+            h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, justifyContent: 'flex-end' } },
+              comboNote !== null && h('span', {
+                style: { fontSize: 12, color: 'var(--dsw-alias-label-tertiary)' }
+              }, comboNote),
+              h('button', {
+                type: 'button',
+                onClick: () => applyCombo(settings.preset),
+                style: buttonStyle(false)
+              }, t('applyCombo')))),
           h(Row, { label: t('scheme'), hint: t('schemeHint') },
             h(Segmented, {
               value: settings.scheme,
@@ -2357,6 +2807,20 @@ window.__ModuleLoader__.load({
               ],
               onChange: v => set({ scheme: v })
             })),
+          // C13：明暗分档预设。默认两格都是「跟随主预设」——
+          // 不选就不分叉，老用户升级后行为完全不变。
+          h(Row, { label: t('schemePresets'), hint: t('schemePresetsHint') },
+            h('div', { style: { display: 'flex', gap: 8, justifyContent: 'flex-end' } },
+              h(Select, {
+                value: settings.presetLight ?? FOLLOW,
+                options: presetOptions(),
+                onChange: v => set({ presetLight: v === FOLLOW ? null : v })
+              }),
+              h(Select, {
+                value: settings.presetDark ?? FOLLOW,
+                options: presetOptions(),
+                onChange: v => set({ presetDark: v === FOLLOW ? null : v })
+              }))),
 
           h('div', { style: groupStyle }, t('groupWallpaper')),
           h(Row, { label: t('background') },
@@ -2371,7 +2835,10 @@ window.__ModuleLoader__.load({
                   : `wallpaper-${b}${isDarkActive(settings) ? '-dark' : ''}.webp`
                 // 本预设的推荐壁纸 —— **只标记，不自动应用**。
                 // 用户明确要求：配套壁纸仅作推荐，切换预设不改 settings.background。
-                const recommended = isRecommendedArt(state.presetStyles, settings.preset, b)
+                //
+                // C13：用**当前明暗档位实际生效**的预设，而不是主预设 ——
+                // 否则分档后浅色档的标记会指向深色档预设的配套图。
+                const recommended = isRecommendedArt(state.presetStyles, presetForScheme(settings, currentScheme(theme)), b)
                 const label = t(BG_LABELS[b])
                 return h('button', {
                   key: b, type: 'button',
@@ -2424,6 +2891,27 @@ window.__ModuleLoader__.load({
               value: settings.backgroundPosition,
               options: POSITIONS.map(p => ({ value: p, label: t(POS_LABELS[p]) })),
               onChange: v => set({ backgroundPosition: v })
+            })),
+          // C15：轮播。选「关闭」以外的档位才显示顺序选择 —— 关闭时它无意义。
+          h(Row, { label: t('rotate'), hint: t('rotateHint') },
+            h(Segmented, {
+              value: settings.backgroundRotate ?? 'off',
+              options: [
+                { value: 'off', label: t('rotateOff') },
+                { value: '60s', label: t('rotate60s') },
+                { value: '5m', label: t('rotate5m') },
+                { value: '30m', label: t('rotate30m') }
+              ],
+              onChange: v => set({ backgroundRotate: v })
+            })),
+          settings.backgroundRotate !== 'off' && h(Row, { label: t('rotateOrder') },
+            h(Segmented, {
+              value: settings.backgroundRotateOrder ?? 'sequential',
+              options: [
+                { value: 'sequential', label: t('rotateSequential') },
+                { value: 'random', label: t('rotateRandom') }
+              ],
+              onChange: v => set({ backgroundRotateOrder: v })
             })),
 
           h('div', { style: groupStyle }, t('groupDecor')),
@@ -2502,7 +2990,7 @@ window.__ModuleLoader__.load({
           h(Row, { label: t('avatarBubbles'), hint: t('avatarBubblesHint') },
             h(Toggle, { value: settings.avatarBubbles, onChange: v => set({ avatarBubbles: v }) })),
 
-          h('div', { style: { display: 'flex', gap: 8, marginTop: 18 } },
+          h('div', { style: { display: 'flex', gap: 8, marginTop: 18, flexWrap: 'wrap' } },
             h('button', {
               type: 'button',
               onClick: () => { void resetToDefaults() },
@@ -2512,7 +3000,30 @@ window.__ModuleLoader__.load({
               type: 'button',
               onClick: () => { void save({}) },
               style: buttonStyle(true)
-            }, t('retry'))
+            }, t('retry')),
+            // C12：导出 / 导入。用 `<label>` 包一个隐藏的 file input ——
+            // 直接点 `<input type=file>` 在不同浏览器里样式差异大。
+            h('button', {
+              type: 'button',
+              onClick: () => exportSettings(),
+              style: buttonStyle(false)
+            }, t('exportSettings')),
+            h('label', {
+              title: t('importHint'),
+              style: { ...buttonStyle(false), display: 'inline-flex', alignItems: 'center', cursor: 'pointer' }
+            },
+            t('importSettings'),
+            h('input', {
+              type: 'file',
+              accept: 'application/json,.json',
+              style: { display: 'none' },
+              onChange: event => {
+                const file = event.target.files?.[0] ?? null
+                void importSettings(file)
+                // 清空 input：否则连续导入同一个文件不会再触发 change
+                event.target.value = ''
+              }
+            }))
           ),
           s.lastError !== null && h('div', {
             style: { marginTop: 10, fontSize: 12, color: 'var(--dsw-alias-state-error-primary)' }
@@ -2685,7 +3196,8 @@ window.__ModuleLoader__.load({
                 const pressed = settings.background === b
                 // 明暗从 DOM 读（与壁纸同步同一判据，必然一致）
                 const file = `wallpaper-${b}${isDarkActive(settings) ? '-dark' : ''}.webp`
-                const recommended = isRecommendedArt(state.presetStyles, settings.preset, b)
+                // C13：同设置页 —— 用当前明暗档位实际生效的预设
+                const recommended = isRecommendedArt(state.presetStyles, presetForScheme(settings, currentScheme(theme)), b)
                 const label = t(BG_LABELS[b])
                 return h('button', {
                   key: b,
@@ -3239,6 +3751,16 @@ window.__ModuleLoader__.load({
         } catch { /* 已移除 */ }
         // C11：关掉读数推送，别给宿主留一条悬挂连接
         closeSessionStream('dispose')
+        // C15：停掉壁纸轮播 —— 不停的话停用插件后它仍会每 N 分钟写一次 DOM
+        // （对着已经拆掉的界面重渲染）。
+        stopRotation()
+        // C14：行内提示的消失定时器 —— 不清的话停用插件后它仍会触发一次
+        // `emit()`，对着已卸载的组件重渲染。
+        if (state.comboNoteTimer !== null) {
+          clearTimeout(state.comboNoteTimer)
+          state.comboNoteTimer = null
+        }
+        state.comboNote = null
         for (const key of [
           'heroDispose', 'brandMarkDispose', 'brandNameDispose',
           // 官方 tab 的两个 disposer 也必须释放，否则重新启用插件时
@@ -3284,6 +3806,14 @@ window.__ModuleLoader__.load({
         // 会话读数推送（C11，用例 77）
         formatTokens, formatStats, streamPayload, sessionIdOf, streamDiag,
         streamState, STREAM_FRESH_MS, syncSessionStream, closeSessionStream,
+        // C12 导入 / 导出（用例 79）
+        exportSettings, importSettings, IMPORT_MAX_BYTES,
+        // C13 明暗分档预设（用例 80）
+        presetForScheme, hasSchemePresets, composeSchemeOverrides, overridesForSettings, FOLLOW,
+        // C14 一键推荐组合（用例 81）
+        // （组合数据由宿主下发，客户端只负责套用；纯函数在 src/palette.js）
+        // C15 壁纸轮播（用例 82）
+        nextWallpaper, syncRotation, stopRotation, ROTATE_MS, ROTATE_POOL,
         // 让测试能模拟「宿主设置被外部改动」：stub fetch 下一次 /settings 的返回
         setNextSettings (next) {
           globalThis.__zfNextSettings = next

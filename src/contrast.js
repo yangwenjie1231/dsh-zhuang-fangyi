@@ -15,6 +15,9 @@
 
 import { PRESETS, PRESET_IDS, buildTokens, buildRoles, tokenName } from './palette.js'
 import { contrast, codeTokens, CODE_TOKEN_MIN_RATIO, SHIKI_TOKEN_KEYS } from './palette.js'
+// C14：一键推荐组合的合法性（值必须原样通过归一化，且不越权）
+import { PRESET_COMBOS, PRESET_STYLES, PRESET_SPECS } from './palette.js'
+import { normalizeSettings } from './settings.js'
 
 /**
  * 外壳真实存在的 token 名（从 `app.asar` 里 `@deepseek-ai/dsh-client-ui-theme`
@@ -429,8 +432,71 @@ if (codeFailed === 0) {
 }
 console.log('')
 
-console.log(`合计 ${total} 项对比度检查 + ${codeChecked} 项代码 token 检查 + ${PRESET_IDS.length} 组结构检查 + diff 行检查，不达标 ${failed + structural + codeFailed + diffFailed} 项`)
-if (failed + structural + codeFailed + diffFailed > 0) {
+// ── C14 一键推荐组合：值必须合法 ──────────────────────────────────────
+//
+// 组合是「点一下就写进设置」的东西，所以每一项都必须能**原样通过**
+// `normalizeSettings` —— 否则用户点了按钮，界面显示的和实际生效的会不一致
+// （被静默夹取）。同时保证不越权（不碰动效等无障碍偏好）。
+console.log('━━━ 一键推荐组合（C14）━━━')
+let comboFailed = 0
+{
+  const combos = PRESET_COMBOS
+  const allowedKeys = ['preset', 'background', 'backgroundOpacity', 'fontFamily', 'contentWidth']
+  const forbiddenKeys = ['enabled', 'scheme', 'rail', 'motion', 'accentHue', 'railWidth']
+  for (const id of PRESET_IDS) {
+    const combo = combos[id]
+    if (combo === null || combo === undefined) {
+      console.log(`  FAIL ${id}: 没有推荐组合`)
+      comboFailed += 1
+      continue
+    }
+    // ① 键集合：**输出**必须恰好是这 5 个键
+    //
+    // ⚠️ 这条不能只查「有没有越权键」—— `recommendCombo` 是**显式挑键**
+    // 构造返回值的（不是 spread），所以往 `PRESET_SPECS[id].combo` 里加
+    // `motion` 会被静默丢掉，越权检查永远通过 = 空转断言。
+    // 实测确认过：加了 motion 之后这条仍报 OK。
+    //
+    // 真正要钉的是两件事：输出键集合恰好正确，以及**源规格里也不许出现**
+    // 越权键（否则将来谁把实现改成 spread 就会立刻越权）。
+    const keys = Object.keys(combo).sort()
+    if (keys.join(',') !== [...allowedKeys].sort().join(',')) {
+      console.log(`  FAIL ${id}: 组合的键集合应为 ${[...allowedKeys].sort().join(',')}，实际 ${keys.join(',')}`)
+      comboFailed += 1
+    }
+    const specCombo = PRESET_SPECS[id]?.combo ?? {}
+    const specOverreach = forbiddenKeys.filter(k => k in specCombo)
+    if (specOverreach.length > 0) {
+      console.log(`  FAIL ${id}: 预设规格的 combo 里写了越权键 ${specOverreach.join(', ')}（现在被静默丢掉，但改成 spread 就会真越权）`)
+      comboFailed += 1
+    }
+    const specExtra = Object.keys(specCombo).filter(k => !['backgroundOpacity', 'fontFamily', 'contentWidth'].includes(k))
+    if (specExtra.length > 0) {
+      console.log(`  FAIL ${id}: 预设规格的 combo 里有无法识别的键 ${specExtra.join(', ')}（会被静默丢弃）`)
+      comboFailed += 1
+    }
+    // ② 值经归一化后必须**逐项不变**（不会被夹取/回落）
+    const n = normalizeSettings(combo)
+    for (const k of allowedKeys) {
+      if (n[k] !== combo[k]) {
+        console.log(`  FAIL ${id}: 组合的 ${k} 经归一化被改动（${JSON.stringify(combo[k])} → ${JSON.stringify(n[k])}）`)
+        comboFailed += 1
+      }
+    }
+    // ③ 组合里的壁纸必须与「推荐壁纸」一致（同一份事实不能两处不一致）
+    if (combo.background !== PRESET_STYLES[id]?.background) {
+      console.log(`  FAIL ${id}: 组合壁纸 ${combo.background} 与推荐壁纸 ${PRESET_STYLES[id]?.background} 不一致`)
+      comboFailed += 1
+    }
+  }
+  if (comboFailed === 0) {
+    console.log(`  全部通过（${PRESET_IDS.length} 套组合：值合法、不越权、与推荐壁纸一致）`)
+  }
+}
+console.log('')
+
+console.log(`合计 ${total} 项对比度检查 + ${codeChecked} 项代码 token 检查 + ${PRESET_IDS.length} 组结构检查 + diff 行检查 + 组合检查，不达标 ${failed + structural + codeFailed + diffFailed + comboFailed} 项`)
+if (failed + structural + codeFailed + diffFailed + comboFailed > 0) {
   console.log(`\n失败项：\n  ${failures.join('\n  ')}`)
   process.exit(1)
 }

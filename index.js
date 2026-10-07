@@ -22,7 +22,7 @@ import path from 'node:path'
 import os from 'node:os'
 import { fileURLToPath } from 'node:url'
 
-import { PRESET_IDS, PRESETS, PRESET_STYLES, buildTokens, codeTokens, overridesFor, themeDefinitions } from './src/palette.js'
+import { PRESET_IDS, PRESETS, PRESET_STYLES, PRESET_COMBOS, buildTokens, codeTokens, overridesFor, themeDefinitions } from './src/palette.js'
 // C11：会话读数的权威来源 —— 纯 reducer（不碰 DOM/网络，可被测试直接 import）
 import { buildPayload, contextUsedOf, deriveState, emptyFold, foldEvent, foldEvents, rateOf } from './src/sessionState.js'
 import { fontCss } from './src/fonts.js'
@@ -1794,6 +1794,9 @@ export function apply (ctx, config) {
           // 客户端用它：① 预设下拉显示「本体黄绿 · 明亮轻盈」；
           // ② 在壁纸选择器上给当前预设的推荐壁纸打标记（**只提示，不自动切换**）。
           presetStyles: PRESET_STYLES,
+          // C14 一键推荐组合：客户端**不重复定义**这套映射（它是自包含 bundle，
+          // 不能 import src/），否则会出现两份会漂移的副本。
+          presetCombos: PRESET_COMBOS,
           overrides: Object.fromEntries(PRESET_IDS.map(id => [id, overridesFor(id, accentHue)])),
           roles: rolesPayload(accentHue),
           // 每张壁纸的尺寸与「该 cover 还是 contain」（由 prepare-art.py 产出）。
