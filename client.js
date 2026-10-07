@@ -63,11 +63,20 @@ window.__ModuleLoader__.load({
     const DICT = {
       zh: {
         nav: '庄方宜',
-        title: '庄方宜主题',
         subtitle: '官方素材取色 · 浅色与深色各自适配',
         groupTheme: '主题',
+        groupOverview: '总览',
+        groupOverviewHint: '整体开关、风格预设，以及一次配好整套观感',
+        groupScheme: '明暗',
+        groupSchemeHint: '浅色与深色可以各自指定预设 —— 留「跟随主预设」就与上面一致',
         groupWallpaper: '背景',
-        groupDecor: '装饰',
+        groupWallpaperHint: '壁纸、纱的厚薄与轮播',
+        groupType: '排版',
+        groupTypeHint: '字体、字号与正文列宽',
+        groupDetail: '细节',
+        groupDetailHint: '强调色与几处装饰性开关',
+        groupMotion: '动效',
+        groupMotionHint: '「跟随系统」会尊重系统的「减少动态效果」',
         enabled: '启用主题',
         enabledHint: '关闭后界面立即回到 DSH 默认配色',
         preset: '配色预设',
@@ -160,13 +169,13 @@ window.__ModuleLoader__.load({
         titlebarFollow: '标题栏跟随',
         titlebarFollowHint: '桌面版：让 Windows 原生标题栏按钮区跟随主题色',
         reset: '恢复默认',
+        resetConfirm: '确认恢复默认？',
+        resave: '重新保存',
         retry: '重试',
         loading: '正在读取设置…',
         loadFailed: '无法连接插件后端，暂用默认设置',
         saveFailed: '保存失败，设置可能未落盘',
         sidebarToggle: '庄方宜主题',
-        px: 'px',
-        percent: '%',
         // v2 皮肤层
         brandName: '庄方宜',
         rail: '观测栏',
@@ -179,9 +188,8 @@ window.__ModuleLoader__.load({
         tokenTotal: 'token 总量',
         cache: '缓存命中',
         contextPct: '上下文',
-        on: '已开启',
-        off: '已关闭',
         groupSkin: '皮肤',
+        groupSkinHint: '观测栏与头像气泡重绘',
         railHint: '右栏展开时作为官方标签页显示，收起时为右侧浮层；原生面板展开时让位；窄于 1180px 隐藏',
         railWidth: '观测栏宽度',
         avatarBubbles: '头像与气泡重绘',
@@ -189,11 +197,20 @@ window.__ModuleLoader__.load({
       },
       en: {
         nav: 'Zhuang Fangyi',
-        title: 'Zhuang Fangyi Theme',
         subtitle: 'Colors sampled from official art · light and dark tuned separately',
         groupTheme: 'Theme',
+        groupOverview: 'Overview',
+        groupOverviewHint: 'Master switch, style preset, and a one-click full look',
+        groupScheme: 'Light / dark',
+        groupSchemeHint: 'Light and dark can each use their own preset — leave it on "Follow main preset" to match the one above',
         groupWallpaper: 'Background',
-        groupDecor: 'Decorations',
+        groupWallpaperHint: 'Wallpaper, veil thickness and rotation',
+        groupType: 'Typography',
+        groupTypeHint: 'Typeface, text size and reading width',
+        groupDetail: 'Details',
+        groupDetailHint: 'Accent colour and a few decorative switches',
+        groupMotion: 'Motion',
+        groupMotionHint: '"Follow system" respects the OS "reduce motion" setting',
         enabled: 'Enable theme',
         enabledHint: 'Turning this off restores the default DSH palette immediately',
         preset: 'Palette preset',
@@ -286,13 +303,13 @@ window.__ModuleLoader__.load({
         titlebarFollow: 'Follow in title bar',
         titlebarFollowHint: 'Desktop: let the native Windows caption follow the theme',
         reset: 'Restore defaults',
+        resetConfirm: 'Confirm restore?',
+        resave: 'Save again',
         retry: 'Retry',
         loading: 'Loading settings…',
         loadFailed: 'Cannot reach the plugin host; using defaults',
         saveFailed: 'Save failed; settings may not be persisted',
         sidebarToggle: 'Zhuang Fangyi theme',
-        px: 'px',
-        percent: '%',
         // v2 skin layer
         brandName: 'Zhuang Fangyi',
         rail: 'Observation rail',
@@ -305,9 +322,8 @@ window.__ModuleLoader__.load({
         tokenTotal: 'Tokens',
         cache: 'Cache hit',
         contextPct: 'Context',
-        on: 'On',
-        off: 'Off',
         groupSkin: 'Skin',
+        groupSkinHint: 'Observation rail and avatar / bubble repaint',
         railHint: 'Official tab when the right panel is open, side overlay when collapsed; yields to native panels; hidden below 1180px',
         railWidth: 'Rail width',
         avatarBubbles: 'Avatar and bubble restyle',
@@ -1356,6 +1372,21 @@ window.__ModuleLoader__.load({
 
 
     /**
+     * 是否运行在「有原生 Windows 标题栏」的载体上。
+     *
+     * 这个 `data-*` 由桌面壳的 preload 注入，只有 Windows 桌面端才有。
+     * 用途有两处，必须用**同一个判据**（否则会出现「诊断说没有、界面却显示」
+     * 这种自相矛盾的状态）：
+     *   ① `/diag` 的 `hasWindowsTitlebar`；
+     *   ② 设置页是否渲染「标题栏跟随」那一行 —— 它只对 Windows 桌面生效，
+     *      在 macOS / 网页端是一个**没有任何作用的开关**（实测确认）。
+     */
+    function hasWindowsTitlebar (doc) {
+      const root = doc?.documentElement ?? document?.documentElement
+      return root?.hasAttribute?.('data-windows-titlebar') === true
+    }
+
+    /**
      * 原生右栏是否展开。
      *
      * 桌面壳用 `data-rightbar-collapsed`，Web 壳用 `data-details-collapsed`；
@@ -1600,10 +1631,31 @@ window.__ModuleLoader__.load({
         presetStyles: {},
         // C14：一键推荐组合（宿主下发，客户端不重复定义这套映射）
         presetCombos: {},
-        /** C14：套用组合后的行内提示文案（null = 不显示）。 */
-        comboNote: null,
-        /** C14：上面那条提示的消失定时器（重入时先清掉旧的）。 */
-        comboNoteTimer: null,
+        /**
+         * 行内提示（中性色，几秒后自动消失）。
+         *
+         * ── 为什么必须与 `lastError` 分开 ──────────────────────────────
+         *
+         * 原先只有 `lastError` 一个字段，C12 的导入把 `importDone`（**成功**）、
+         * `importNewer` / `importAllDefault`（**提示**）也写进了它 —— 而渲染处
+         * 写死 `${t('saveFailed')}（…）` + 错误红，于是「导入成功」会显示成
+         * **红色的「保存失败（设置已导入）」**。实测确认。
+         *
+         * 现在：`notice` 走中性色并自动消失，`lastError` 只放真正的错误。
+         */
+        notice: null,
+        /** 上面那条提示的消失定时器（重入时先清掉旧的）。 */
+        noticeTimer: null,
+        /**
+         * 「恢复默认」是否处于待确认状态。
+         *
+         * 一键抹掉全部设置，不该点一下就执行。放在 `state` 而不是组件内
+         * `useState` —— 保存会触发全量重渲染，局部 state 会被重置
+         * （与 notice 同一个原因）。
+         */
+        confirmReset: false,
+        /** 待确认状态的自动复原定时器。 */
+        confirmResetTimer: null,
         /**
          * C13：`applySettings` 重入闸门。
          *
@@ -1697,6 +1749,28 @@ window.__ModuleLoader__.load({
             console.warn('[zhuang-fangyi] 订阅回调异常', error)
           }
         }
+      }
+
+      /**
+       * 显示一条**中性色**行内提示，几秒后自动消失。
+       *
+       * 与 `state.lastError` 严格分工：提示走这里（不报错），错误走 `lastError`。
+       * 两处（C14 套用组合、C12 导入结果）共用这一个机制 —— 原先各写一套
+       * timer，而且 C12 那套还写错了字段（成功写进 lastError）。
+       *
+       * @param {string} text 文案（已是本地化后的字符串）
+       * @param {number} [ms] 停留时长
+       */
+      function setNotice (text, ms = 2600) {
+        state.notice = text
+        // 重入时先清掉上一个 timer，否则旧 timer 会提前清掉新提示
+        if (state.noticeTimer !== null) clearTimeout(state.noticeTimer)
+        state.noticeTimer = setTimeout(() => {
+          state.notice = null
+          state.noticeTimer = null
+          emit()
+        }, ms)
+        emit()
       }
 
       async function api (path, init) {
@@ -1926,7 +2000,7 @@ window.__ModuleLoader__.load({
             styleReady: state.styleReady,
             styleElInDom: state.styleEl !== null && state.styleEl.isConnected === true,
             hasShellOverlay: document.querySelector('[data-shell-overlay]') !== null,
-            hasWindowsTitlebar: document.documentElement.hasAttribute('data-windows-titlebar'),
+            hasWindowsTitlebar: hasWindowsTitlebar(),
             hasRailEl: document.querySelector('.zf-rail') !== null,
             // ── 渲染诊断：直接回答「组件跑了几次、为什么返回 null」──
             // 每次 `Rail()` 被调用都计数并记录返回类型，避免再靠推理猜时序。
@@ -2317,11 +2391,18 @@ window.__ModuleLoader__.load({
             body: JSON.stringify({ settings: incoming })
           })
           if (payload?.settings !== undefined) state.settings = payload.settings
-          state.lastError = newer ? t('importNewer') : null
-          // 一个可识别的键都没有 → 宿主会返回默认值，明确告知而不是静默
-          if (!newer && payload?.settings !== undefined &&
-              incoming.preset === undefined && incoming.background === undefined) {
-            state.lastError = t('importAllDefault')
+          // 成功 → **中性提示**（不是错误）。`lastError` 必须清掉，否则上一轮的
+          // 失败信息会挂在这一轮的成功结果旁边。
+          state.lastError = null
+          if (newer) {
+            // 来自更新版本：提示但已导入（未知键由宿主白名单丢弃）
+            setNotice(t('importNewer'), 4000)
+          } else if (payload?.settings !== undefined &&
+                     incoming.preset === undefined && incoming.background === undefined) {
+            // 一个可识别的键都没有 → 宿主返回默认值，明确告知而不是静默
+            setNotice(t('importAllDefault'), 4000)
+          } else {
+            setNotice(t('importDone'))
           }
         } catch (error) {
           state.lastError = String(error?.message ?? error)
@@ -2559,6 +2640,44 @@ window.__ModuleLoader__.load({
       /* ---------------- 设置页 ---------------- */
 
       /**
+       * 设置页的**分组定义**（顺序即渲染顺序）。
+       *
+       * ── 为什么写成显式常量，而不是散在 JSX 里 ─────────────────────────
+       *
+       * 原先分组只是渲染代码里的几行 `h('div', { style: groupStyle }, …)`，
+       * 于是「加一个设置项」很容易顺手塞进最近的那组 —— 实测结果：装饰组堆到
+       * **10 行**，把字号、阅读宽度、强调色、动效、启动动效、等高线、微光、
+       * 空白页头像、标题栏跟随全混在一起，语义完全不同。
+       *
+       * 抽成常量后，测试可以断言「每行恰好归属一个组」与「组内行数上限」，
+       * 以后加设置项忘了归组会**直接失败**，而不是默默堆进装饰组。
+       *
+       * 字段：
+       *   id     组 id（也是测试里的键）
+       *   label  DICT 键
+       *   hint   可选的组说明 DICT 键
+       *   max    组内行数上限（超过说明该拆组了）
+       */
+      const SETTINGS_GROUPS = [
+        { id: 'overview', label: 'groupOverview', hint: 'groupOverviewHint', max: 3 },
+        { id: 'scheme', label: 'groupScheme', hint: 'groupSchemeHint', max: 3 },
+        { id: 'wallpaper', label: 'groupWallpaper', hint: 'groupWallpaperHint', max: 6 },
+        { id: 'type', label: 'groupType', hint: 'groupTypeHint', max: 3 },
+        { id: 'detail', label: 'groupDetail', hint: 'groupDetailHint', max: 5 },
+        { id: 'motion', label: 'groupMotion', hint: 'groupMotionHint', max: 2 },
+        { id: 'skin', label: 'groupSkin', hint: 'groupSkinHint', max: 4 }
+      ]
+
+      /** 组标题（带上下分隔，让分组边界在视觉上成立）。 */
+      function Group ({ groupId }) {
+        const g = SETTINGS_GROUPS.find(x => x.id === groupId)
+        if (g === undefined) return null
+        return h('div', { style: groupStyle },
+          h('div', { style: groupTitleStyle }, t(g.label)),
+          g.hint !== undefined && h('div', { style: groupHintStyle }, t(g.hint)))
+      }
+
+      /**
        * 一行设置项。
        *
        * 用显式 grid 而不是 flex：`minmax(0, 1fr) auto` 保证左侧文字列可以
@@ -2577,22 +2696,54 @@ window.__ModuleLoader__.load({
         width: '100%'
       }
       const groupStyle = {
-        margin: '18px 0 0', fontSize: 12, fontWeight: 600, letterSpacing: '.04em',
-        color: 'var(--dsw-alias-label-tertiary)'
+        margin: '22px 0 0', paddingTop: 10,
+        borderTop: '1px solid var(--dsw-alias-border-l2)'
+      }
+      const groupTitleStyle = {
+        fontSize: 12, fontWeight: 600, letterSpacing: '.04em',
+        color: 'var(--dsw-alias-label-secondary)'
+      }
+      const groupHintStyle = {
+        fontSize: 11, marginTop: 3, color: 'var(--dsw-alias-label-tertiary)'
       }
       const labelStyle = { fontSize: 13, color: 'var(--dsw-alias-label-primary)', minWidth: 0 }
       const hintStyle = {
         fontSize: 12, marginTop: 2, color: 'var(--dsw-alias-label-tertiary)',
         minWidth: 0, overflowWrap: 'anywhere'
       }
+      /** 控件组里的一格（标签在上、控件在下）—— 用于并排多个下拉时各自带名。 */
+      const fieldStyle = { display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0 }
+      const fieldLabelStyle = { fontSize: 11, color: 'var(--dsw-alias-label-tertiary)' }
 
-      function buttonStyle (primary) {
+      function buttonStyle (primary, variant) {
+        if (variant === 'quiet') {
+          return {
+            fontSize: 12, cursor: 'pointer', borderRadius: 8, padding: '6px 10px',
+            border: 'none', background: 'transparent',
+            color: 'var(--dsw-alias-label-tertiary)'
+          }
+        }
+        if (variant === 'danger') {
+          return {
+            fontSize: 12, cursor: 'pointer', borderRadius: 8, padding: '6px 14px',
+            border: '1px solid var(--dsw-alias-state-error-primary)',
+            background: 'transparent',
+            color: 'var(--dsw-alias-state-error-primary)'
+          }
+        }
         return {
           fontSize: 12, cursor: 'pointer', borderRadius: 8, padding: '6px 14px',
           border: primary ? 'none' : '1px solid var(--dsw-alias-border-l2)',
           background: primary ? 'var(--dsw-alias-brand-primary)' : 'transparent',
           color: primary ? 'var(--dsw-alias-label-primary-foreground)' : 'var(--dsw-alias-label-primary)'
         }
+      }
+
+      /** 底部动作区：危险在左、主要在最右，中间留白把它们分开。 */
+      const footerStyle = {
+        display: 'flex', gap: 12, marginTop: 20, flexWrap: 'wrap',
+        alignItems: 'center', justifyContent: 'space-between',
+        paddingTop: 14, borderTop: '1px solid var(--dsw-alias-border-l2)'
       }
 
       function Row ({ label, hint, children }) {
@@ -2626,18 +2777,33 @@ window.__ModuleLoader__.load({
         }))
       }
 
-      function Segmented ({ value, options, onChange }) {
+      /**
+       * 分段选择器。
+       *
+       * 设置页与观测栏**共用这一个**（原先观测栏自己手写了一份：同样的配色、
+       * 边框、选中态，只是尺寸小一点 —— 两份实现必然漂移，正是「同一设置两处
+       * 风格不一致」的来源）。
+       *
+       * @param {boolean} [compact] 观测栏用：更小的字号与内边距
+       * @param {boolean} [grow]    等宽铺满容器（观测栏的窄栏里更好看）
+       */
+      function Segmented ({ value, options, onChange, compact, grow }) {
+        const pad = compact ? '4px 6px' : '5px 10px'
         return h('div', {
           style: {
-            display: 'inline-flex', border: '1px solid var(--dsw-alias-border-l2)',
-            borderRadius: 8, overflow: 'hidden'
+            display: grow === true ? 'flex' : 'inline-flex',
+            border: '1px solid var(--dsw-alias-border-l2)',
+            borderRadius: compact ? 7 : 8,
+            overflow: 'hidden',
+            width: grow === true ? '100%' : undefined
           }
         }, options.map(opt => h('button', {
           key: opt.value,
           type: 'button',
           onClick: () => onChange(opt.value),
           style: {
-            border: 'none', cursor: 'pointer', fontSize: 12, padding: '5px 10px',
+            border: 'none', cursor: 'pointer', fontSize: compact ? 11 : 12, padding: pad,
+            flex: grow === true ? '1 1 0' : undefined,
             background: value === opt.value ? 'var(--dsw-alias-brand-primary)' : 'transparent',
             color: value === opt.value ? 'var(--dsw-alias-label-primary-foreground)' : 'var(--dsw-alias-label-secondary)'
           }
@@ -2711,7 +2877,8 @@ window.__ModuleLoader__.load({
         const settings = s.settings
         // C14：套用组合后给一行轻提示（几秒后自己消失）。用 state 而不是
         // 局部 useState —— 保存会触发全量重渲染，局部 state 会被重置。
-        const comboNote = s.comboNote
+        const notice = s.notice
+        const confirmReset = s.confirmReset === true
 
         if (settings === null) {
           return h('div', { style: { padding: '8px 0', fontSize: 13, color: 'var(--dsw-alias-label-secondary)' } },
@@ -2725,6 +2892,26 @@ window.__ModuleLoader__.load({
         }
 
         const set = patch => { void save(patch) }
+
+        /**
+         * 切换「恢复默认」的待确认状态。
+         *
+         * 待确认时**启动一个 3s 定时器自动复原** —— 否则用户误点一次后，
+         * 那个按钮会一直显示「确认恢复默认？」，下次想点别的反而更危险。
+         */
+        const setConfirmReset = next => {
+          state.confirmReset = next
+          if (state.confirmResetTimer !== null) clearTimeout(state.confirmResetTimer)
+          state.confirmResetTimer = null
+          if (next) {
+            state.confirmResetTimer = setTimeout(() => {
+              state.confirmReset = false
+              state.confirmResetTimer = null
+              emit()
+            }, 3000)
+          }
+          emit()
+        }
 
         /** C13：分档下拉的选项 = 「跟随主预设」+ 四个预设（带风格名）。 */
         const presetOptions = () => [
@@ -2747,8 +2934,7 @@ window.__ModuleLoader__.load({
         const applyCombo = preset => {
           const combo = state.presetCombos?.[preset]
           if (combo === undefined || combo === null) {
-            state.comboNote = t('applyComboUnavailable')
-            emit()
+            setNotice(t('applyComboUnavailable'))
             return
           }
           // 只取「观感组合」四项：不碰 enabled / scheme / rail / motion
@@ -2759,21 +2945,13 @@ window.__ModuleLoader__.load({
             fontFamily: combo.fontFamily,
             contentWidth: combo.contentWidth
           })
-          state.comboNote = t('applyComboDone')
-          emit()
-          // 提示自动消失：存 timer 以便重入时清掉上一个，避免旧 timer 提前清掉新提示
-          if (state.comboNoteTimer !== null) clearTimeout(state.comboNoteTimer)
-          state.comboNoteTimer = setTimeout(() => {
-            state.comboNote = null
-            state.comboNoteTimer = null
-            emit()
-          }, 2600)
+          setNotice(t('applyComboDone'))
         }
 
         return h('div', { style: { padding: '4px 0 20px', maxWidth: 720 } },
           h('div', { style: { fontSize: 13, color: 'var(--dsw-alias-label-tertiary)' } }, t('subtitle')),
 
-          h('div', { style: groupStyle }, t('groupTheme')),
+          h(Group, { groupId: 'overview' }),
           h(Row, { label: t('enabled'), hint: t('enabledHint') },
             h(Toggle, { value: settings.enabled, onChange: v => set({ enabled: v }) })),
           h(Row, { label: t('preset') },
@@ -2798,14 +2976,12 @@ window.__ModuleLoader__.load({
           // 壁纸与排版，必须是用户显式点击。
           h(Row, { label: t('applyCombo'), hint: t('applyComboHint') },
             h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, justifyContent: 'flex-end' } },
-              comboNote !== null && h('span', {
-                style: { fontSize: 12, color: 'var(--dsw-alias-label-tertiary)' }
-              }, comboNote),
               h('button', {
                 type: 'button',
                 onClick: () => applyCombo(settings.preset),
                 style: buttonStyle(false)
               }, t('applyCombo')))),
+          h(Group, { groupId: 'scheme' }),
           h(Row, { label: t('scheme'), hint: t('schemeHint') },
             h(Segmented, {
               value: settings.scheme,
@@ -2818,20 +2994,28 @@ window.__ModuleLoader__.load({
             })),
           // C13：明暗分档预设。默认两格都是「跟随主预设」——
           // 不选就不分叉，老用户升级后行为完全不变。
+          //
+          // 两格各自带标签：并排两个下拉若都不标，看不出哪个管浅色。
+          // （原先就是这个问题：`presetLight` / `presetDark` 两个 DICT 键
+          // 定义了却从未渲染 —— 有断言盯着这一点。）
           h(Row, { label: t('schemePresets'), hint: t('schemePresetsHint') },
-            h('div', { style: { display: 'flex', gap: 8, justifyContent: 'flex-end' } },
-              h(Select, {
-                value: settings.presetLight ?? FOLLOW,
-                options: presetOptions(),
-                onChange: v => set({ presetLight: v === FOLLOW ? null : v })
-              }),
-              h(Select, {
-                value: settings.presetDark ?? FOLLOW,
-                options: presetOptions(),
-                onChange: v => set({ presetDark: v === FOLLOW ? null : v })
-              }))),
+            h('div', { style: { display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' } },
+              h('div', { style: fieldStyle },
+                h('span', { style: fieldLabelStyle }, t('presetLight')),
+                h(Select, {
+                  value: settings.presetLight ?? FOLLOW,
+                  options: presetOptions(),
+                  onChange: v => set({ presetLight: v === FOLLOW ? null : v })
+                })),
+              h('div', { style: fieldStyle },
+                h('span', { style: fieldLabelStyle }, t('presetDark')),
+                h(Select, {
+                  value: settings.presetDark ?? FOLLOW,
+                  options: presetOptions(),
+                  onChange: v => set({ presetDark: v === FOLLOW ? null : v })
+                })))),
 
-          h('div', { style: groupStyle }, t('groupWallpaper')),
+          h(Group, { groupId: 'wallpaper' }),
           h(Row, { label: t('background') },
             // 缩略图条（对标 Mornye 的所见即所得）：8 张 +「无」，点即选。
             // 文件名不另存映射 —— 壁纸命名是规则的 `wallpaper-<id>.webp`
@@ -2923,7 +3107,7 @@ window.__ModuleLoader__.load({
               onChange: v => set({ backgroundRotateOrder: v })
             })),
 
-          h('div', { style: groupStyle }, t('groupDecor')),
+          h(Group, { groupId: 'type' }),
           h(Row, { label: t('fontFamily'), hint: t('fontFamilyHint') },
             h(Select, {
               value: settings.fontFamily ?? 'default',
@@ -2947,6 +3131,7 @@ window.__ModuleLoader__.load({
               options: CONTENT_WIDTH_MODES.map(m => ({ value: m, label: t(`contentWidth_${m}`) })),
               onChange: v => set({ contentWidth: v })
             })),
+          h(Group, { groupId: 'detail' }),
           h(Row, { label: t('accentHue'), hint: t('accentHueHint') },
             h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', justifyContent: 'flex-end' } },
               h('button', {
@@ -2963,8 +3148,20 @@ window.__ModuleLoader__.load({
                 suffix: '°',
                 onChange: v => set({ accentHue: v })
               }))),
-          h(Row, { label: t('splash'), hint: t('splashHint') },
-            h(Toggle, { value: settings.splash !== false, onChange: v => set({ splash: v }) })),
+          h(Row, { label: t('contourBorder') },
+            h(Toggle, { value: settings.contourBorder, onChange: v => set({ contourBorder: v }) })),
+          h(Row, { label: t('accentGlow'), hint: t('accentGlowHint') },
+            h(Toggle, { value: settings.accentGlow, onChange: v => set({ accentGlow: v }) })),
+          h(Row, { label: t('heroAvatar') },
+            h(Toggle, { value: settings.heroAvatar, onChange: v => set({ heroAvatar: v }) })),
+          // A3：只在有原生 Windows 标题栏的载体上显示 —— 它在别处是空开关。
+          // **只隐藏 UI，不动设置值**：用户切到别的平台再切回来时值还在。
+          hasWindowsTitlebar(document) && h(Row, { label: t('titlebarFollow'), hint: t('titlebarFollowHint') },
+            h(Toggle, { value: settings.titlebarFollow, onChange: v => set({ titlebarFollow: v }) })),
+
+          // 动效单独成组：`motion` 含**无障碍**语义（「减少动态效果」是系统级偏好），
+          // 混在装饰里容易被当成纯装饰开关随手关掉。
+          h(Group, { groupId: 'motion' }),
           h(Row, { label: t('motion'), hint: t('motionHint') },
             h(Segmented, {
               value: settings.motion,
@@ -2975,16 +3172,10 @@ window.__ModuleLoader__.load({
               ],
               onChange: v => set({ motion: v })
             })),
-          h(Row, { label: t('contourBorder') },
-            h(Toggle, { value: settings.contourBorder, onChange: v => set({ contourBorder: v }) })),
-          h(Row, { label: t('accentGlow'), hint: t('accentGlowHint') },
-            h(Toggle, { value: settings.accentGlow, onChange: v => set({ accentGlow: v }) })),
-          h(Row, { label: t('heroAvatar') },
-            h(Toggle, { value: settings.heroAvatar, onChange: v => set({ heroAvatar: v }) })),
-          h(Row, { label: t('titlebarFollow'), hint: t('titlebarFollowHint') },
-            h(Toggle, { value: settings.titlebarFollow, onChange: v => set({ titlebarFollow: v }) })),
+          h(Row, { label: t('splash'), hint: t('splashHint') },
+            h(Toggle, { value: settings.splash !== false, onChange: v => set({ splash: v }) })),
 
-          h('div', { style: groupStyle }, t('groupSkin')),
+          h(Group, { groupId: 'skin' }),
           h(Row, { label: t('rail'), hint: t('railHint') },
             h(Toggle, { value: settings.rail, onChange: v => set({ rail: v }) })),
           h(Row, { label: t('railWidth') },
@@ -2999,41 +3190,57 @@ window.__ModuleLoader__.load({
           h(Row, { label: t('avatarBubbles'), hint: t('avatarBubblesHint') },
             h(Toggle, { value: settings.avatarBubbles, onChange: v => set({ avatarBubbles: v }) })),
 
-          h('div', { style: { display: 'flex', gap: 8, marginTop: 18, flexWrap: 'wrap' } },
+          // 底部动作区分**危险 / 中性 / 主要**三档 —— 原先四个按钮同级同色，
+          // 主次不分，而「恢复默认」这种一键抹掉全部设置的动作与「重试」并排、
+          // 样式相同，很容易误点。
+          h('div', { style: footerStyle },
+            // 危险动作：弱化为文字按钮，且需要**二次确认**
             h('button', {
               type: 'button',
-              onClick: () => { void resetToDefaults() },
-              style: buttonStyle(false)
-            }, t('reset')),
+              onClick: () => {
+                if (confirmReset) { void resetToDefaults(); setConfirmReset(false); return }
+                setConfirmReset(true)
+              },
+              style: confirmReset ? buttonStyle(false, 'danger') : buttonStyle(false, 'quiet')
+            }, confirmReset ? t('resetConfirm') : t('reset')),
+            // 中性：导入导出
+            h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
+              h('button', {
+                type: 'button',
+                title: t('exportHint'),
+                onClick: () => exportSettings(),
+                style: buttonStyle(false)
+              }, t('exportSettings')),
+              // 用 `<label>` 包一个隐藏的 file input ——
+              // 直接点 `<input type=file>` 在不同浏览器里样式差异大。
+              h('label', {
+                title: t('importHint'),
+                style: { ...buttonStyle(false), display: 'inline-flex', alignItems: 'center', cursor: 'pointer' }
+              },
+              t('importSettings'),
+              h('input', {
+                type: 'file',
+                accept: 'application/json,.json',
+                style: { display: 'none' },
+                onChange: event => {
+                  const file = event.target.files?.[0] ?? null
+                  void importSettings(file)
+                  // 清空 input：否则连续导入同一个文件不会再触发 change
+                  event.target.value = ''
+                }
+              }))),
+            // 主要：重新保存（失败态下才叫「重试」）
             h('button', {
               type: 'button',
               onClick: () => { void save({}) },
               style: buttonStyle(true)
-            }, t('retry')),
-            // C12：导出 / 导入。用 `<label>` 包一个隐藏的 file input ——
-            // 直接点 `<input type=file>` 在不同浏览器里样式差异大。
-            h('button', {
-              type: 'button',
-              onClick: () => exportSettings(),
-              style: buttonStyle(false)
-            }, t('exportSettings')),
-            h('label', {
-              title: t('importHint'),
-              style: { ...buttonStyle(false), display: 'inline-flex', alignItems: 'center', cursor: 'pointer' }
-            },
-            t('importSettings'),
-            h('input', {
-              type: 'file',
-              accept: 'application/json,.json',
-              style: { display: 'none' },
-              onChange: event => {
-                const file = event.target.files?.[0] ?? null
-                void importSettings(file)
-                // 清空 input：否则连续导入同一个文件不会再触发 change
-                event.target.value = ''
-              }
-            }))
+            }, s.lastError === null ? t('resave') : t('retry'))
           ),
+          // 提示与错误**分开渲染**：提示是中性色（成功/信息），错误才用红。
+          // 合成一处会让「导入成功」显示成红色的「保存失败（设置已导入）」。
+          notice !== null && h('div', {
+            style: { marginTop: 10, fontSize: 12, color: 'var(--dsw-alias-label-tertiary)' }
+          }, notice),
           s.lastError !== null && h('div', {
             style: { marginTop: 10, fontSize: 12, color: 'var(--dsw-alias-state-error-primary)' }
           }, `${t('saveFailed')}（${s.lastError}）`)
@@ -3166,27 +3373,14 @@ window.__ModuleLoader__.load({
               settings.preset === p ? h('span', null, '✓') : null)))),
           h('div', { className: 'zf-rail__group' },
             h('div', { className: 'zf-rail__label' }, t('contentWidth')),
-            h('div', { className: 'zf-rail__row', style: { display: 'flex', gap: 6 } },
-              ...CONTENT_WIDTH_MODES.map(m => h('button', {
-                key: m,
-                type: 'button',
-                'aria-pressed': (settings.contentWidth ?? 'auto') === m ? 'true' : 'false',
-                onClick: () => set({ contentWidth: m }),
-                style: {
-                  flex: '1 1 0',
-                  cursor: 'pointer',
-                  fontSize: 11,
-                  padding: '5px 6px',
-                  borderRadius: 7,
-                  border: '1px solid var(--dsw-alias-border-l2)',
-                  background: (settings.contentWidth ?? 'auto') === m
-                    ? 'var(--dsw-alias-brand-primary)'
-                    : 'transparent',
-                  color: (settings.contentWidth ?? 'auto') === m
-                    ? 'var(--dsw-alias-label-primary-foreground)'
-                    : 'var(--dsw-alias-label-secondary)'
-                }
-              }, t(`contentWidth_${m}`))))),
+            // 复用设置页的 Segmented（compact + grow 适配窄栏），不再手写一份
+            h(Segmented, {
+              value: String(settings.contentWidth ?? 'auto'),
+              options: CONTENT_WIDTH_MODES.map(m => ({ value: m, label: t(`contentWidth_${m}`) })),
+              onChange: v => set({ contentWidth: v }),
+              compact: true,
+              grow: true
+            })),
           h('div', { className: 'zf-rail__group' },
             h('div', { className: 'zf-rail__label' }, t('groupWallpaper')),
             h('div', { className: 'zf-rail__row' },
@@ -3763,13 +3957,19 @@ window.__ModuleLoader__.load({
         // C15：停掉壁纸轮播 —— 不停的话停用插件后它仍会每 N 分钟写一次 DOM
         // （对着已经拆掉的界面重渲染）。
         stopRotation()
-        // C14：行内提示的消失定时器 —— 不清的话停用插件后它仍会触发一次
+        // 行内提示的消失定时器 —— 不清的话停用插件后它仍会触发一次
         // `emit()`，对着已卸载的组件重渲染。
-        if (state.comboNoteTimer !== null) {
-          clearTimeout(state.comboNoteTimer)
-          state.comboNoteTimer = null
+        if (state.noticeTimer !== null) {
+          clearTimeout(state.noticeTimer)
+          state.noticeTimer = null
         }
-        state.comboNote = null
+        state.notice = null
+        // 「恢复默认」的待确认定时器同理
+        if (state.confirmResetTimer !== null) {
+          clearTimeout(state.confirmResetTimer)
+          state.confirmResetTimer = null
+        }
+        state.confirmReset = false
         for (const key of [
           'heroDispose', 'brandMarkDispose', 'brandNameDispose',
           // 官方 tab 的两个 disposer 也必须释放，否则重新启用插件时
@@ -3823,6 +4023,8 @@ window.__ModuleLoader__.load({
         // （组合数据由宿主下发，客户端只负责套用；纯函数在 src/palette.js）
         // C15 壁纸轮播（用例 82）
         nextWallpaper, syncRotation, stopRotation, ROTATE_MS, ROTATE_POOL,
+        // 设置页结构（用例 83）：分组常量 + 平台判据
+        SETTINGS_GROUPS, hasWindowsTitlebar,
         // 让测试能模拟「宿主设置被外部改动」：stub fetch 下一次 /settings 的返回
         setNextSettings (next) {
           globalThis.__zfNextSettings = next

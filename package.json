@@ -1,6 +1,6 @@
 {
   "name": "dsh-zhuang-fangyi",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "庄方宜主题 for DeepSeek Harness —— 接入官方 ctx.theme 体系（4 套配色 × 浅色/深色完整适配），附皮肤层（观测台官方右栏标签页 + 浮层兜底 / 头像气泡重绘）、官方素材壁纸与强调色色相自选。官方素材量化取色，非官方同人作品。",
   "keywords": [
     "dsh",

@@ -3303,11 +3303,23 @@ function shellDom (opts = {}) {
   const zh = T.DICT.zh
 
   // 1) 所有 t('literal') 的键都必须存在
-  const used = new Set([...csrc.matchAll(/\bt\('([a-zA-Z_][a-zA-Z0-9_]*)'\)/g)].map(m => m[1]))
+  //
+  // ⚠️ 必须**先剥掉注释**再扫。原先直接在源码上正则匹配 `t('...')`，于是
+  // 注释里写一句示例（如 `… , t('groupX'))`）就会被当成真实调用，报一个
+  // 根本不存在的键 —— 实测踩过（这次重构时）。
+  // 「在注释上做断言」是这个项目反复出现的失败模式，所以这里从扫描侧根治。
+  const stripComments = s => s
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')   // 块注释
+    .replace(/(^|[^:])\/\/[^\n]*/g, '$1 ') // 行注释（避开 http:// 这类）
+  const codeOnly = stripComments(csrc)
+  const used = new Set([...codeOnly.matchAll(/\bt\('([a-zA-Z_][a-zA-Z0-9_]*)'\)/g)].map(m => m[1]))
   const missing = [...used].filter(k => zh[k] === undefined).sort()
   ok('所有 t(\'literal\') 的键都存在于 DICT',
     missing.length === 0,
     `缺失: ${missing.join(', ')}（t() 会原样显示键名）`)
+  // 反向自检：剥注释这一步本身要有效（否则上面的断言可能因注释而误报/漏报）
+  ok('注释剥除有效（注释里的 t(\'…\') 不再被当成调用）',
+    stripComments("/* t('ghostA') */ const x = 1 // t('ghostB')").includes('ghost') === false)
 
   // 2) BG_LABELS 的值必须是 DICT 键，且该键存在
   const bgBlock = /const BG_LABELS = \{([\s\S]*?)\n      \}/.exec(csrc)
@@ -5449,6 +5461,121 @@ function shellDom (opts = {}) {
   ok('插件关闭时不轮播', T.state.rotateTimer === null)
   T.stopRotation()
   T.state.settings = null
+}
+
+// 用例 83：设置页结构（分组 / 反馈语义 / 平台门控）
+//
+// 这一组的价值在于**把「加设置项忘了归组」变成会失败的测试**。
+// 原先分组只是渲染代码里的几行标题，装饰组因此堆到 10 行、语义混杂。
+{
+  console.log('\n--- 设置页结构 ---')
+  const csrc = fs.readFileSync(path.join(ROOT, 'client.js'), 'utf8')
+  const probe = await boot(baseSettings)
+  const T = probe.mod.__test
+
+  // 1) 分组常量存在且结构合法
+  const groups = T.SETTINGS_GROUPS
+  ok('SETTINGS_GROUPS 是显式常量', Array.isArray(groups) && groups.length >= 5, String(groups?.length))
+  ok('每个分组都有 id / label / max',
+    groups.every(g => typeof g.id === 'string' && typeof g.label === 'string' && typeof g.max === 'number'))
+  ok('分组 id 不重复', new Set(groups.map(g => g.id)).size === groups.length)
+
+  // 2) 分组标签都必须在 DICT 里（否则界面显示键名）
+  const missingGroupLabel = groups.filter(g => T.DICT.zh[g.label] === undefined).map(g => g.label)
+  ok('每个分组标签都是存在的 DICT 键', missingGroupLabel.length === 0, missingGroupLabel.join(', '))
+  const missingGroupHint = groups.filter(g => g.hint !== undefined && T.DICT.zh[g.hint] === undefined)
+  ok('分组说明（若有）也是存在的 DICT 键', missingGroupHint.length === 0,
+    missingGroupHint.map(g => g.hint).join(', '))
+
+  // 3) 渲染出来的分组顺序与常量一致（防止渲染里漏掉某个 Group）
+  const renderGroupIds = [...csrc.matchAll(/h\(Group, \{ groupId: '([a-z]+)' \}\)/g)].map(m => m[1])
+  ok('渲染的分组顺序与 SETTINGS_GROUPS 完全一致',
+    renderGroupIds.join(',') === groups.map(g => g.id).join(','),
+    `渲染 [${renderGroupIds.join(',')}] vs 常量 [${groups.map(g => g.id).join(',')}]`)
+
+  // 4) 每组行数不超过 max —— 超了就说明该拆组了
+  //
+  // 用「渲染里每个 Group 到下一个 Group 之间的 h(Row, 计数」来数。
+  const rowCounts = {}
+  {
+    const parts = csrc.split(/h\(Group, \{ groupId: '([a-z]+)' \}\)/)
+    // parts: [前置, id1, 片段1, id2, 片段2, …]
+    for (let i = 1; i < parts.length; i += 2) {
+      const id = parts[i]
+      const body = parts[i + 1] ?? ''
+      rowCounts[id] = (body.match(/h\(Row, /g) ?? []).length
+    }
+  }
+  const over = groups.filter(g => (rowCounts[g.id] ?? 0) > g.max)
+    .map(g => `${g.id}=${rowCounts[g.id]}>${g.max}`)
+  ok('每组行数不超过声明上限（超了说明该拆组）', over.length === 0, over.join(', '))
+  // 而且装饰组必须已经被拆开 —— 它曾经有 10 行
+  ok('「细节」组不再吞下排版与动效（≤ 5 行）', (rowCounts.detail ?? 0) <= 5, String(rowCounts.detail))
+
+  // 5) A2：分档两个下拉各自带标签（原先定义了键却从未渲染）
+  ok('浅色预设标签真的被渲染', csrc.includes("t('presetLight')"))
+  ok('深色预设标签真的被渲染', csrc.includes("t('presetDark')"))
+
+  // 6) A3：标题栏跟随按平台门控
+  ok('标题栏跟随行受 hasWindowsTitlebar 门控',
+    /hasWindowsTitlebar\(document\) && h\(Row, \{ label: t\('titlebarFollow'\)/.test(csrc))
+  ok('hasWindowsTitlebar 判据是共享函数（诊断与界面同一判据）',
+    csrc.includes('function hasWindowsTitlebar') && csrc.includes('hasWindowsTitlebar: hasWindowsTitlebar()'))
+
+  // 7) A1：提示与错误分离
+  ok('有独立的 notice 字段（成功/信息）', csrc.includes('notice: null'))
+  ok('notice 用中性色、lastError 才用错误色',
+    /notice !== null && h\('div'[\s\S]{0,200}label-tertiary/.test(csrc) &&
+    /lastError !== null && h\('div'[\s\S]{0,200}state-error-primary/.test(csrc))
+  ok('导入成功写 notice（不再写 lastError）',
+    csrc.includes("setNotice(t('importDone'))"))
+  ok('导入失败仍写 lastError',
+    /state\.lastError = t\('importBadJson'\)/.test(csrc))
+  ok('导入成功时会清掉上一轮的错误', /state\.lastError = null\n\s*if \(newer\)/.test(csrc))
+
+  // 8) D：恢复默认需要二次确认
+  ok('恢复默认有二次确认状态', csrc.includes('confirmReset: false'))
+  ok('二次确认会自动复原（3s）', /state\.confirmResetTimer = setTimeout/.test(csrc))
+  ok('待确认时的按钮文案是「确认恢复默认？」', csrc.includes("t('resetConfirm')"))
+
+  // 9) DICT 里没有死键（每个键都必须有 t('key') 调用）
+  //
+  // 这条正是发现那 6 个死键的手段（title / px / percent / on / off / exportHint）。
+  //
+  // 两类键不走字面量调用，必须排除，否则会误报：
+  //   ① **动态拼接**的键（`t(\`font_${f}\`)` 之类）—— 用前缀白名单；
+  //   ② **分组标签**（`t(g.label)` / `t(g.hint)`）—— 直接从 SETTINGS_GROUPS
+  //      推导，而不是手写一份（手写的白名单会与常量漂移）。
+  const stripComments2 = s => s
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/(^|[^:])\/\/[^\n]*/g, '$1 ')
+  const code2 = stripComments2(csrc)
+  const DYNAMIC_PREFIX = /^(font_|fontScale_|contentWidth_|bg|pos|preset)/
+  const groupKeys = new Set()
+  for (const g of groups) {
+    groupKeys.add(g.label)
+    if (g.hint !== undefined) groupKeys.add(g.hint)
+  }
+  const dead = Object.keys(T.DICT.zh).filter(k =>
+    !DYNAMIC_PREFIX.test(k) && !groupKeys.has(k) && !code2.includes(`t('${k}')`))
+  ok('DICT 没有死键（每个键都有真实调用）', dead.length === 0, dead.join(', '))
+  // 反向自检：白名单确实只放过了分组键，不是把整类都豁免了
+  ok('死键检测的白名单只含分组标签（未过度豁免）',
+    [...groupKeys].every(k => T.DICT.zh[k] !== undefined) && groupKeys.size === groups.length + 7,
+    `白名单 ${groupKeys.size} 项`)
+
+  // 10) 底部按钮主次：危险动作弱化 + 二次确认，主要动作在最右
+  ok('危险动作使用弱化样式（quiet）', csrc.includes("buttonStyle(false, 'quiet')"))
+  ok('待确认时用危险样式（danger）', csrc.includes("buttonStyle(false, 'danger')"))
+
+  // 11) C：观测栏复用设置页的分段控件，不再手写一份
+  //
+  // 原先观测栏自己写了一遍同样的配色/边框/选中态（只是尺寸小一点），
+  // 两份实现必然漂移 —— 那正是「同一设置两处风格不一致」的来源。
+  ok('观测栏复用 Segmented（compact + grow）',
+    /h\(Segmented, \{[\s\S]{0,400}?compact: true[\s\S]{0,200}?grow: true/.test(csrc))
+  ok('观测栏不再手写分段按钮的内联样式',
+    !csrc.includes("flex: '1 1 0',"))
 }
 
 
