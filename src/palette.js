@@ -377,6 +377,103 @@ export const PRESET_SPECS = {
     combo: { fontFamily: 'serif', backgroundOpacity: 26, contentWidth: 'wide' },
     accent: '#E08B87',
     accentLight: '#8A2F2B'
+  },
+  /**
+   * ── 0.11.0 新增：补色相空档 ───────────────────────────────────────────
+   *
+   * 原四套的色相是 2 / 58 / 156 / 178，**58→156 之间空了 98°** —— 而
+   * 官方配色里的橄榄绿 `#9EBD87` 正好落在这个空档（94°）。
+   *
+   * 色度刻意取 **5**（低于 wine 的 7、burst 的 8）：这是 0.6.0 的核心教训 ——
+   * 四套 `chroma` 全相同时「切预设≈只换强调色」。新套要与已有四套在
+   * **色度与明度基调**上也拉开，而不只是色相不同。
+   */
+  olive: {
+    label: '橄榄绿',
+    // 风格：自然、沉稳的绿意工作台（介于 zhuang 的明亮与 burst 的深沉之间）
+    style: '自然沉稳',
+    hue: 94, hueDark: 94,
+    chroma: 5, chromaDark: 9,
+    surfaceShift: 0.2, surfaceShiftDark: -0.4,
+    textSoft: false,
+    borderAlpha: 0.78,
+    // 自然沉稳 → 荷塘绿调（青绿大留白，与色相同调）
+    defaultBackground: 'sce10',
+    // C14：自然沉稳 → 圆体、中等的纱、标准宽度
+    combo: { fontFamily: 'rounded', backgroundOpacity: 16, contentWidth: 'auto' },
+    accent: '#9EBD87',
+    // 浅色强调色必须压深：橄榄绿本身亮度高，直接用会跌破 4.5:1（与 zhuang 同理）
+    accentLight: '#3F5A16'
+  },
+  /**
+   * 极简留白（0.11.0）。色相 5° 与 wine(2°) 接近 —— 但两者靠**色度与明度**
+   * 区分：`sand` 的色度只有 **2**（全场最低，现有最低是 zhuang 的 4），
+   * 表面基调偏亮（+1.1），观感是「几乎无色的暖白」；而 `wine` 色度 7、
+   * 基调微沉，是「浓郁的酒红」。这正是 0.6.0 那条教训的用法：
+   * **色相不是唯一的区分维度**，色度与明度基调同样决定观感。
+   */
+  sand: {
+    label: '米白暖',
+    // 风格：极简、留白的纸面感
+    style: '极简留白',
+    hue: 5, hueDark: 5,
+    chroma: 2, chromaDark: 4,
+    surfaceShift: 1.1, surfaceShiftDark: -0.2,
+    textSoft: false,
+    borderAlpha: 0.5,
+    // 极简留白 → 白底立绘（大面积留白，与「纸面感」一致）
+    defaultBackground: 'off07',
+    // C14：极简留白 → 无衬线、最薄的纱（露出纸面感）、宽松列宽
+    combo: { fontFamily: 'sans', backgroundOpacity: 8, contentWidth: 'wide' },
+    accent: '#E8D4D2',
+    // 米白本身极亮，强调色必须显著压深才能当链接
+    accentLight: '#7A4A44'
+  },
+  /**
+   * 冷冽通透（0.11.0）。色相 160° 与 burst(156°) 接近 —— 同样靠色度与
+   * 明度区分：`frost` 色度 **3**、表面基调**偏亮**（+1.0），是「冰白青的
+   * 通透感」；`burst` 色度 8、基调深沉（−1.0），是「深夜指挥室」。
+   * 两者在明暗两档上都是相反的极端，切过去一眼能看出不同。
+   */
+  frost: {
+    label: '冰白青',
+    // 风格：冷冽、通透的高调工作台
+    style: '冷冽通透',
+    hue: 160, hueDark: 160,
+    chroma: 3, chromaDark: 5,
+    surfaceShift: 1.0, surfaceShiftDark: 0.2,
+    textSoft: false,
+    borderAlpha: 0.55,
+    // 冷冽通透 → 宽幅雪景（灰白山峦，与冰白青同调）
+    defaultBackground: 'sce20',
+    // C14：冷冽通透 → 无衬线、薄纱、标准宽度
+    combo: { fontFamily: 'sans', backgroundOpacity: 12, contentWidth: 'auto' },
+    accent: '#D2E7E0',
+    // 冰白青极亮，浅色档必须压深到能当链接
+    accentLight: '#1F5A50'
+  },
+  /**
+   * 暖亮通用（0.11.0）。色相 71° 落在 zhuang(58°) 与 olive(94°) 之间 ——
+   * 三者靠**色度**区分：zhuang 4 / olive 5 / amber **7**（偏高），
+   * 且 amber 的明度基调最亮（+1.6），观感是「暖金的阳光工作台」。
+   * 香槟金 `#C4D579` 是官方大招形态的配色，此前只用作 burst 的强调色。
+   */
+  amber: {
+    label: '香槟金',
+    // 风格：暖亮、通透的日间工作台
+    style: '暖亮通用',
+    hue: 71, hueDark: 71,
+    chroma: 7, chromaDark: 9,
+    surfaceShift: 1.6, surfaceShiftDark: -0.8,
+    textSoft: false,
+    borderAlpha: 0.75,
+    // 暖亮通用 → 暖木长廊（暖黄灯光，与香槟金同调）
+    defaultBackground: 'sce17',
+    // C14：暖亮通用 → 衬线、中等的纱、标准宽度
+    combo: { fontFamily: 'serif', backgroundOpacity: 14, contentWidth: 'auto' },
+    accent: '#C4D579',
+    // 香槟金亮度高，浅色档压深到深橄榄才能当链接
+    accentLight: '#5A5A0A'
   }
 }
 

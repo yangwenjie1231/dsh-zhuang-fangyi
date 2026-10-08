@@ -42,7 +42,26 @@ window.__ModuleLoader__.load({
     const NS = 'settings.zhuangFangyi'
     const LAYER = 'dsh-zhuang-fangyi'
     const ROUTE = '/api/zhuang-fangyi'
-    const PRESETS = ['zhuang', 'burst', 'cyan', 'wine']
+    // >>> generated: presets (do not edit) >>>
+    // ⚠ 由 `tools/gen-wallpapers.mjs` 从 `src/palette.js` 的 PRESET_SPECS 生成。
+    //   客户端不能 import src/，所以这是副本；`--check` 保证两侧一致。
+    //   加一套预设只需改 `PRESET_SPECS`，这里会自动跟上。
+    const PRESETS = [
+      'zhuang', 'burst', 'cyan', 'wine', 'olive', 'sand', 'frost', 'amber'
+    ]
+
+    /** 预设 id → 中英显示名（下拉与 aria-label 用）。 */
+    const PRESET_LABELS = {
+      zhuang: { zh: '本体黄绿', en: 'Signature yellow-green' },
+      burst: { zh: '大招墨青金', en: 'Ultimate ink-gold' },
+      cyan: { zh: '青', en: 'Cyan' },
+      wine: { zh: '酒红', en: 'Wine red' },
+      olive: { zh: '橄榄绿', en: 'Olive' },
+      sand: { zh: '米白暖', en: 'Warm sand' },
+      frost: { zh: '冰白青', en: 'Frost' },
+      amber: { zh: '香槟金', en: 'Amber' },
+    }
+    // <<< generated: presets <<<
     /**
      * C13：明暗分档下拉里「跟随主预设」的哨兵值。
      *
@@ -460,12 +479,6 @@ window.__ModuleLoader__.load({
       }
     }
 
-    const PRESET_LABELS = {
-      zhuang: { zh: '本体黄绿', en: 'Signature yellow-green' },
-      burst: { zh: '大招墨青金', en: 'Ultimate ink-gold' },
-      cyan: { zh: '青', en: 'Cyan' },
-      wine: { zh: '酒红', en: 'Wine red' }
-    }
     // >>> generated: wallpapers (do not edit) >>>
     // ⚠ 以下三块由 `tools/gen-wallpapers.mjs` 从 `src/wallpaperCatalog.js` 自动生成。
     //   客户端不能 import src/，所以必须是副本；生成器保证两侧一致。

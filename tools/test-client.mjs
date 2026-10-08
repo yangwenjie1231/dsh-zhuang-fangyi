@@ -811,6 +811,15 @@ async function pngPixel (file, x, y) {
  * 断言
  * ------------------------------------------------------------------ */
 
+/**
+ * 期望注册的主题数 = 预设数 × 2（明暗各一）。
+ *
+ * 从 palette 派生而不是写死：加一套预设时写死的数字会让 6 条断言同时失败，
+ * 而它们的标签各不相同（「注册了 N 个主题」「降级：主题仍注册」…），
+ * 排查时得逐个看才发现是同一件事。
+ */
+const EXPECTED_THEMES = (await import('../src/palette.js')).PRESET_IDS.length * 2
+
 let pass = 0
 let fail = 0
 const failures = []
@@ -845,23 +854,31 @@ function ok (label, condition, detail) {
  * 测试数据
  * ------------------------------------------------------------------ */
 
-const themes = [
-  { id: 'zhuang-light', colorScheme: 'light', label: 'zhuang light', tokens: { '--dsw-alias-bg-base': '#FAFAF5', '--dsw-alias-label-primary': '#1A1D16' } },
-  { id: 'zhuang-dark', colorScheme: 'dark', label: 'zhuang dark', tokens: { '--dsw-alias-bg-base': '#171815', '--dsw-alias-label-primary': '#E9EBE3' } },
-  { id: 'burst-light', colorScheme: 'light', label: 'burst light', tokens: { '--dsw-alias-bg-base': '#F7FAF8', '--dsw-alias-label-primary': '#16201C' } },
-  { id: 'burst-dark', colorScheme: 'dark', label: 'burst dark', tokens: { '--dsw-alias-bg-base': '#141917', '--dsw-alias-label-primary': '#E4EDE8' } },
-  { id: 'cyan-light', colorScheme: 'light', label: 'cyan light', tokens: { '--dsw-alias-bg-base': '#F6FAFA', '--dsw-alias-label-primary': '#141F20' } },
-  { id: 'cyan-dark', colorScheme: 'dark', label: 'cyan dark', tokens: { '--dsw-alias-bg-base': '#141819', '--dsw-alias-label-primary': '#E3EDEE' } },
-  { id: 'wine-light', colorScheme: 'light', label: 'wine light', tokens: { '--dsw-alias-bg-base': '#FBF8F7', '--dsw-alias-label-primary': '#201A1A' } },
-  { id: 'wine-dark', colorScheme: 'dark', label: 'wine dark', tokens: { '--dsw-alias-bg-base': '#181516', '--dsw-alias-label-primary': '#EDE4E4' } }
-]
+/**
+ * `/themes` 的桩数据：**从 palette 派生**，而不是手写 8 条。
+ *
+ * 为什么必须派生：宿主（`index.js`）的 `themeDefinitions()` 就是按
+ * `PRESET_IDS × 2 明暗` 派生的，所以真实响应会随预设数增长。手写 8 条的桩
+ * 会在加预设时与真实宿主**分叉** —— 表现是「注册了 N 个主题 → 实际 8」
+ * 这类失败，而它指向的是桩而不是产品代码（实测踩过：加 olive 后 6 条失败）。
+ *
+ * 色值只是占位（桩不参与对比度计算），但**id 与 colorScheme 必须真实**，
+ * 因为断言会按它们匹配。
+ */
+const PAL = await import('../src/palette.js')
+const themes = PAL.PRESET_IDS.flatMap(id => ['light', 'dark'].map(scheme => ({
+  id: `${id}-${scheme}`,
+  colorScheme: scheme,
+  label: `${id} ${scheme}`,
+  tokens: scheme === 'dark'
+    ? { '--dsw-alias-bg-base': '#141414', '--dsw-alias-label-primary': '#E8E8E8' }
+    : { '--dsw-alias-bg-base': '#FAFAFA', '--dsw-alias-label-primary': '#1A1A1A' }
+})))
 
-const overrides = {
-  zhuang: { '--dsw-alias-bg-base': { light: '#FAFAF5', dark: '#171815' } },
-  burst: { '--dsw-alias-bg-base': { light: '#F7FAF8', dark: '#141917' } },
-  cyan: { '--dsw-alias-bg-base': { light: '#F6FAFA', dark: '#141819' } },
-  wine: { '--dsw-alias-bg-base': { light: '#FBF8F7', dark: '#181516' } }
-}
+/** 同上：`overrides` 也按预设派生（宿主下发的形状是 `{ preset: { token: {light,dark} } }`）。 */
+const overrides = Object.fromEntries(PAL.PRESET_IDS.map(id => [id, {
+  '--dsw-alias-bg-base': { light: '#FAFAFA', dark: '#141414' }
+}]))
 
 /** 角色表：壁纸的纱色由它算，测试需要真值。 */
 const roles = {
@@ -933,7 +950,7 @@ console.log('庄方宜主题 · 浏览器半边无头测试\n')
 {
   console.log('--- 跟随系统（默认）---')
   const { h } = await boot({ ...baseSettings, scheme: 'system' })
-  ok('注册了 8 个主题', h.registered.size === 8, `实际 ${h.registered.size}`)
+  ok(`注册了 ${EXPECTED_THEMES} 个主题`, h.registered.size === EXPECTED_THEMES, `实际 ${h.registered.size}`)
   ok('挂了 token 层且 source 正确', h.layers.has('dsh-zhuang-fangyi'))
   ok('未改动 preference（保持 system，保住跟随系统）', h.getPreference() === 'system', h.getPreference())
   ok('设置页已注册', h.slotRegistrations.some(r => r.meta.id === 'zhuang-fangyi'))
@@ -1048,7 +1065,7 @@ console.log('庄方宜主题 · 浏览器半边无头测试\n')
   const { module } = loadClientBundle()
   module.apply(h.ctx)
   await new Promise(r => setTimeout(r, 30))
-  ok('冲突的 7 个主题仍注册成功', h.registered.size === 8, `实际 ${h.registered.size}`)
+  ok('冲突的 7 个主题仍注册成功', h.registered.size === EXPECTED_THEMES, `实际 ${h.registered.size}`)
   ok('冲突的那一个未被覆盖', h.registered.get('zhuang-dark')?.label === undefined)
   ok('退回 token 层保证配色生效', h.layers.has('dsh-zhuang-fangyi'))
 }
@@ -1401,7 +1418,7 @@ function shellDom (opts = {}) {
   await new Promise(r => setTimeout(r, 40))
   // 样式拿不到只影响外观；配色必须仍然生效（token 层独立于样式表）
   ok('样式表失败不阻断启动：配色仍生效', h.layers.has('dsh-zhuang-fangyi'))
-  ok('样式表失败不阻断启动：主题仍注册', h.registered.size === 8, `实际 ${h.registered.size}`)
+  ok('样式表失败不阻断启动：主题仍注册', h.registered.size === EXPECTED_THEMES, `实际 ${h.registered.size}`)
   ok('样式表失败不阻断启动：壁纸属性仍设置', h.dom.body.hasAttribute('data-zf-wallpaper'))
   ok('样式表失败不阻断启动：设置页仍注册',
     h.slotRegistrations.some(r => r.meta.id === 'zhuang-fangyi'))
@@ -1596,7 +1613,7 @@ function shellDom (opts = {}) {
   ok('右栏仍注册', h.slotRegistrations.some(r => r.meta.id === 'zhuang-fangyi-rail'))
   ok('设置页仍注册', h.slotRegistrations.some(r => r.meta.id === 'zhuang-fangyi'))
   ok('侧栏开关仍注册', h.slotRegistrations.some(r => r.meta.id === 'zhuang-fangyi-toggle'))
-  ok('主题仍注册 8 个', h.registered.size === 8, `实际 ${h.registered.size}`)
+  ok(`主题仍注册 ${EXPECTED_THEMES} 个`, h.registered.size === EXPECTED_THEMES, `实际 ${h.registered.size}`)
   ok('配色仍生效（token 层）', h.layers.has('dsh-zhuang-fangyi'))
   ok('壁纸属性仍设置', h.dom.body.hasAttribute('data-zf-wallpaper'))
   ok('打标运行时仍建立', module.__test.state.skin !== null)
@@ -1625,7 +1642,7 @@ function shellDom (opts = {}) {
   ok('全部插槽注册失败时 apply() 仍不中断', threw === null, String(threw?.message ?? threw))
   ok('样式表仍注入（不依赖插槽）',
     h.dom.head.children.some(c => c.getAttribute('id') === 'zf-style'))
-  ok('主题仍注册（不依赖插槽）', h.registered.size === 8, `实际 ${h.registered.size}`)
+  ok('主题仍注册（不依赖插槽）', h.registered.size === EXPECTED_THEMES, `实际 ${h.registered.size}`)
 }
 // 用例 33：头像不得破坏外壳的折叠（用户截图「折叠后留空白」的回归）
 {
@@ -1816,7 +1833,7 @@ function shellDom (opts = {}) {
   ok('tab 注册抛错时 apply() 未中断', mod.__test.state.tabDiag.error !== null)
   ok('降级：浮层仍可用',
     h.slotRegistrations.some(r => r.meta.name === 'shell.overlay' && r.meta.id === 'zhuang-fangyi-rail'))
-  ok('降级：主题仍注册', h.registered.size === 8, `实际 ${h.registered.size}`)
+  ok('降级：主题仍注册', h.registered.size === EXPECTED_THEMES, `实际 ${h.registered.size}`)
   ok('降级：样式表仍注入', h.dom.head.children.some(c => c.getAttribute('id') === 'zf-style'))
 }
 
@@ -5582,9 +5599,14 @@ function shellDom (opts = {}) {
   const isrc = fs.readFileSync(path.join(ROOT, 'index.js'), 'utf8')
 
   // 1) 每套预设都有组合
-  ok('四套预设都有推荐组合',
-    Object.keys(pal.PRESET_COMBOS).length === 4 &&
-    pal.PRESET_IDS.every(id => pal.PRESET_COMBOS[id] !== null))
+  //
+  // ⚠️ 用 `PRESET_IDS.length` 而不是写死 4：写死的数字在加第 5 套预设时会失败，
+  // 而失败信息（「四套预设都有推荐组合」）指向的是**功能**而不是数量 ——
+  // 容易被误读成「组合生成坏了」。断言要表达的是「**每一套**都有」。
+  ok('每套预设都有推荐组合',
+    Object.keys(pal.PRESET_COMBOS).length === pal.PRESET_IDS.length &&
+    pal.PRESET_IDS.every(id => pal.PRESET_COMBOS[id] !== null),
+    `组合 ${Object.keys(pal.PRESET_COMBOS).length} / 预设 ${pal.PRESET_IDS.length}`)
   // 2) 组合值必须能被宿主归一化**原样接受** —— 否则点了按钮会被静默改掉
   let exact = true
   for (const id of pal.PRESET_IDS) {

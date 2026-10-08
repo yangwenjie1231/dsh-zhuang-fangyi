@@ -1,13 +1,17 @@
 #!/usr/bin/env node
 /**
- * 由 `src/wallpaperCatalog.js` 生成两份**派生产物**，并校验一致性。
+ * 由 `src/wallpaperCatalog.js` 与 `src/palette.js` 生成**派生产物**，并校验一致性。
  *
- * 解决的问题：加一张壁纸原先要同步改 5 个地方（`prepare-art.py` 的
- * `WALLPAPERS` 表、`src/settings.js` 的 `BACKGROUNDS`、`client.js` 的本地
- * `BACKGROUNDS` 副本、`BG_LABELS`、zh/en 两张 `DICT`）。9 张靠手抄还行，
- * 59 张必然漂移 —— 本仓库已经因同类问题栽过多次。
+ * 解决的问题：同一份事实在客户端有一份手抄副本（`client.js` 不能 `import src/`）。
+ * 加一张壁纸原先要同步改 5 个地方；加一套预设原先要改 3 个地方
+ * （`PRESET_SPECS` 权威 + `client.js` 的 `PRESETS` 与 `PRESET_LABELS` 两份副本）。
+ * 8 张壁纸 / 4 套预设靠手抄还行，58 张 / 8 套必然漂移 ——
+ * 本仓库已经因同类问题栽过多次（`BACKGROUNDS` / `PRESETS` / `FONTS` 都栽过）。
  *
- * 现在：目录是唯一手写的地方，其余由本脚本生成。
+ * 现在：**权威文件是唯一手写的地方**，其余由本脚本生成。
+ *
+ * ⚠️ 本脚本只管「生成 + 校验」，不校验业务语义（那是 `src/contrast.js`
+ * 与 `tools/test-client.mjs` 的职责）。
  *
  * 用法：
  *   node tools/gen-wallpapers.mjs            # 生成 + 校验
@@ -23,6 +27,7 @@ const CHECK = process.argv.includes('--check')
 
 const { WALLPAPERS, BACKGROUND_IDS, BACKGROUNDS, WALLPAPER_GROUPS, GROUP_LABELS } =
   await import(new URL('../src/wallpaperCatalog.js', import.meta.url))
+const { PRESET_IDS, PRESET_SPECS } = await import(new URL('../src/palette.js', import.meta.url))
 
 let failed = 0
 const problems = []
@@ -128,6 +133,57 @@ for (const w of WALLPAPERS) jsLines.push(`      ${w.id}: '${w.group}',`)
 jsLines.push('    }')
 const jsBlock = jsLines.join('\n')
 
+// ── 3b. 生成 client.js 的预设副本（PRESETS / PRESET_LABELS）────────────────
+//
+// 为什么也要生成：`client.js` 不能 `import src/`，所以它一直有两份手抄副本 ——
+// `PRESETS`（id 列表）与 `PRESET_LABELS`（中英显示名）。加一套预设时漏改
+// 任何一份都是静默故障：漏 `PRESETS` → 主题不注册；漏 `PRESET_LABELS`
+// → 下拉里显示原始 id（`amber`）而不是「琥珀」。
+//
+// 权威是 `src/palette.js` 的 `PRESET_SPECS`（`label` 字段即中文名）。
+// 英文名 `PRESET_SPECS` 里没有 —— 那是纯界面文案，留在生成器里维护
+// （与 `wallpaperCatalog` 把 zh/en 都放权威文件不同：预设的英文名只有
+// 界面用，不参与任何计算，放权威文件会污染配色数据）。
+const PRESET_EN = {
+  zhuang: 'Signature yellow-green',
+  burst: 'Ultimate ink-gold',
+  cyan: 'Cyan',
+  wine: 'Wine red',
+  olive: 'Olive',
+  sand: 'Warm sand',
+  frost: 'Frost',
+  amber: 'Amber'
+}
+
+const presetLines = []
+// ⚠️ 块内容里**不要**再写一遍 `>>> generated` 标记 —— `splice()` 会写
+// `begin + '\n' + block + '\n' + 原文件后半`，标记由它负责。第一版在这里
+// 又写了一遍，产物里就出现了两行重复标记（看着像生成器失控）。
+presetLines.push('    // ⚠ 由 `tools/gen-wallpapers.mjs` 从 `src/palette.js` 的 PRESET_SPECS 生成。')
+presetLines.push('    //   客户端不能 import src/，所以这是副本；`--check` 保证两侧一致。')
+presetLines.push('    //   加一套预设只需改 `PRESET_SPECS`，这里会自动跟上。')
+presetLines.push('    const PRESETS = [')
+presetLines.push('      ' + PRESET_IDS.map((id) => `'${id}'`).join(', '))
+presetLines.push('    ]')
+presetLines.push('')
+presetLines.push('    /** 预设 id → 中英显示名（下拉与 aria-label 用）。 */')
+presetLines.push('    const PRESET_LABELS = {')
+for (const id of PRESET_IDS) {
+  const zh = PRESET_SPECS[id]?.label
+  if (typeof zh !== 'string' || zh.length === 0) {
+    fail(`预设 ${id} 缺 label（PRESET_SPECS 里必须有中文名）`)
+    continue
+  }
+  const en = PRESET_EN[id]
+  if (typeof en !== 'string' || en.length === 0) {
+    fail(`预设 ${id} 在生成器的 PRESET_EN 里缺英文名（补一行即可）`)
+    continue
+  }
+  presetLines.push(`      ${id}: { zh: ${sq(zh)}, en: ${sq(en)} },`)
+}
+presetLines.push('    }')
+const presetBlock = presetLines.join('\n')
+
 // ── 4. 校验源素材存在（能连源库时）────────────────────────────────────────
 const LIB = process.env.ZF_LIB || path.join(path.dirname(ROOT), '庄方宜素材')
 const canCheckLib = existsSync(LIB)
@@ -166,6 +222,8 @@ const PY_BEGIN = '# >>> generated: wallpapers (do not edit) >>>'
 const PY_END = '# <<< generated: wallpapers <<<'
 const JS_BEGIN = '    // >>> generated: wallpapers (do not edit) >>>'
 const JS_END = '    // <<< generated: wallpapers <<<'
+const PRESET_BEGIN = '    // >>> generated: presets (do not edit) >>>'
+const PRESET_END = '    // <<< generated: presets <<<'
 
 function splice(file, begin, end, block) {
   const src = readFileSync(file, 'utf8')
@@ -185,8 +243,12 @@ function splice(file, begin, end, block) {
 const targets = [
   [path.join(ROOT, 'tools', 'prepare-art.py'), PY_BEGIN, PY_END, pyBlock],
   [path.join(ROOT, 'client.js'), JS_BEGIN, JS_END, jsBlock],
+  [path.join(ROOT, 'client.js'), PRESET_BEGIN, PRESET_END, presetBlock]
 ]
 
+// ⚠️ 同一个文件可以有多个块（`client.js` 就有两个）。`splice` 每次都重读文件，
+// 所以按顺序处理即可 —— **不要**改成缓存 `src`，否则第二个块会基于第一个块
+// 的旧内容计算，两次改动会互相覆盖。
 for (const [file, begin, end, block] of targets) {
   if (!existsSync(file)) { fail(`找不到 ${path.relative(ROOT, file)}`); continue }
   const r = splice(file, begin, end, block)
