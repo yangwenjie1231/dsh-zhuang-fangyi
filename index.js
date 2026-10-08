@@ -1075,6 +1075,159 @@ export function structureCss () {
     '.zf-rail__chip{ width:11px;height:11px;border-radius:3px;flex:0 0 auto; }',
 
     /* ══════════════════════════════════════════════════════════════════
+     * 设置页视觉体系（0.9.3）
+     *
+     * 参考同作者的桌宠插件 `dsh-zhuang-fangyi-pet` 的 `settings.section`：
+     * 两者是同一个外壳里的兄弟面板，外观必须一致，否则来回切像两个产品。
+     *
+     * 为什么从「行内样式」搬到「类名 + 一份 CSS」：
+     *   · 行内样式无法表达伪类（`:hover` / `:focus-visible`）与 `<details>`
+     *     的 `[open]` 状态 —— 之前折叠箭头、悬停反馈都做不了；
+     *   · 尺度（控件高、圆角、发丝线）散在 8 个常量里，改一处要翻全文，
+     *     实测已经出现「下拉 32px、输入框 28px」这种同一屏两套高度；
+     *   · 外壳的卡片底色/描边有官方变量（`--dsw-alias-settings-card-*`），
+     *     行内样式里写死颜色就没法跟随明暗与主题。
+     *
+     * 尺度只在 `.zf-set` 上定义一次，其余全部引用 —— 与桌宠同一做法。
+     * ══════════════════════════════════════════════════════════════════ */
+    '.zf-set{',
+    '  --zf-card-fill:var(--dsw-alias-settings-card-fill, var(--dsw-alias-bg-layer-2, rgba(0,0,0,.02)));',
+    '  --zf-card-stroke:var(--dsw-alias-settings-card-stroke, var(--dsw-alias-border-l2, rgba(0,0,0,.1)));',
+    '  --zf-hairline:var(--dsw-alias-border-l2, rgba(0,0,0,.1));',
+    '  --zf-ctl-h:32px;',
+    '  --zf-ctl-radius:8px;',
+    '  display:flex;flex-direction:column;gap:10px;',
+    '  max-width:760px;',
+    '  padding:4px 0 20px;box-sizing:border-box;',
+    '}',
+    '.zf-set__title{ margin:0;font-size:16px;line-height:24px;font-weight:500;color:var(--dsw-alias-label-primary); }',
+    '.zf-set__intro{ margin:0;font-size:14px;line-height:22px;color:var(--dsw-alias-label-tertiary); }',
+
+    /* ── 页签：pill 形，34px ────────────────────────────────────────────
+     * 外壳只提供一级导航（`settings.section`），这排是我们补的二级导航。
+     * 选中态用 `interactive-bg-active` 而不是自选颜色 —— 换主题时自动跟随。 */
+    '.zf-set-tabs{ display:flex;flex-wrap:wrap;gap:4px;margin:2px 0; }',
+    '.zf-set-tab{',
+    '  height:34px;padding:0 12px;border:none;cursor:pointer;',
+    '  border-radius:12px;',
+    '  background:transparent;color:var(--dsw-alias-label-secondary);',
+    '  font:inherit;font-size:14px;line-height:34px;',
+    '}',
+    '.zf-set-tab:hover{ background:var(--dsw-alias-interactive-bg-hover, rgba(0,0,0,.04)); }',
+    '.zf-set-tab[aria-selected="true"]{',
+    '  background:var(--dsw-alias-interactive-bg-active, rgba(0,0,0,.06));',
+    '  color:var(--dsw-alias-label-primary);font-weight:500;',
+    '}',
+    '.zf-set-tab:focus-visible{ outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px; }',
+    '.zf-set-panel{ display:flex;flex-direction:column;gap:12px; }',
+
+    /* ── 卡片：一个概念一张，可折叠 ──────────────────────────────────────
+     * 外观照抄外壳的 settings-models：fill + .5px stroke + radius-xl。
+     * 折叠用原生 `<details>`，不自己管开关状态。 */
+    '.zf-set-card{',
+    '  border:.5px solid var(--zf-card-stroke);',
+    '  background:var(--zf-card-fill);',
+    '  border-radius:20px;',
+    '  padding:0 14px;',
+    '}',
+    '.zf-set-card__sum{',
+    '  display:flex;align-items:center;gap:8px;height:40px;cursor:pointer;',
+    '  list-style:none;font-size:14px;line-height:22px;font-weight:500;',
+    '  color:var(--dsw-alias-label-primary);',
+    '}',
+    '.zf-set-card__sum::-webkit-details-marker{ display:none; }',
+    '.zf-set-card__sum::before{ content:"\\25BE";color:var(--dsw-alias-label-tertiary);font-size:12px; }',
+    '.zf-set-card:not([open]) > .zf-set-card__sum::before{ content:"\\25B8"; }',
+    '.zf-set-card__body{ display:flex;flex-direction:column; }',
+    '.zf-set-card__lead{ margin:0 0 2px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary); }',
+
+    /* ── 一行设置 ───────────────────────────────────────────────────────
+     * 左列：标题 14px + 说明 12px（说明**必须**在左列，与外壳一致）；
+     * 右列：定宽 208px 的控件列 —— 定宽是「右边缘对齐」的前提，
+     * 用 auto 时每个控件右边缘取决于自身宽度，扫下去是锯齿状。 */
+    '.zf-set-row{',
+    '  display:flex;align-items:center;justify-content:space-between;gap:24px;',
+    '  padding:12px 0;',
+    '  border-bottom:.5px solid var(--zf-hairline);',
+    '  font-size:14px;color:var(--dsw-alias-label-primary);',
+    '}',
+    '.zf-set-card__body > .zf-set-row:last-child{ border-bottom:none; }',
+    '.zf-set-row__main{ display:flex;flex-direction:column;gap:4px;min-width:0;flex:1 1 auto; }',
+    '.zf-set-row__label{ font-size:14px;line-height:20px; }',
+    '.zf-set-row__desc{ font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary); }',
+    '.zf-set-row__control{',
+    '  display:flex;align-items:center;justify-content:flex-end;gap:10px;',
+    '  flex:0 0 208px;min-width:0;flex-wrap:wrap;',
+    '}',
+
+    /* ── 控件：下拉 / 文本 / 数字走**同一套规则** ────────────────────────
+     * 历史上「同一屏两套高度」就是因为各组件各写一份行内样式。 */
+    '.zf-set-row__control select,',
+    '.zf-set-row__control input[type="text"],',
+    '.zf-set-row__control input[type="number"]{',
+    '  width:100%;height:var(--zf-ctl-h);box-sizing:border-box;',
+    '  padding:0 8px;border-radius:var(--zf-ctl-radius);',
+    '  border:1px solid var(--zf-hairline);',
+    '  background:var(--dsw-alias-bg-layer-1, #fff);',
+    '  color:inherit;font:inherit;font-size:14px;',
+    '}',
+    '.zf-set-row__control select:focus-visible,',
+    '.zf-set-row__control input:focus-visible{ outline:none;border-color:var(--dsw-alias-brand-primary); }',
+    // 滑杆与数值必须在**同一行**：range 写成 `width:100%` 时它的 flex 基准
+    // 宽度就是整列宽，会把定宽 44px 的数值挤到第二行 —— 真实引擎实测
+    // `sameLine:false`，数值的 left 甚至跑到滑杆 right 的左边。
+    // 修法：range 允许收缩（`min-width:0`），数值不许收缩。
+    '.zf-set-row__control input[type="range"]{',
+    '  flex:1 1 auto;min-width:0;width:auto;accent-color:var(--dsw-alias-brand-primary);',
+    '}',
+    '.zf-set-row__control input[type="checkbox"]{',
+    '  flex:0 0 auto;width:18px;height:18px;margin:0 0 0 auto;',
+    '  accent-color:var(--dsw-alias-brand-primary);',
+    '}',
+    '.zf-set-row__value{',
+    '  flex:0 0 auto;min-width:44px;text-align:right;',
+    '  font-family:Consolas,"Cascadia Mono",monospace;font-size:12px;',
+    '  color:var(--dsw-alias-brand-primary);',
+    '}',
+
+    /* ── 按钮：同一套尺度（高 32px / 圆角 8px / 14px 字）─────────────── */
+    '.zf-set-btn{',
+    '  margin:0;height:var(--zf-ctl-h);padding:0 12px;',
+    '  border-radius:var(--zf-ctl-radius);',
+    '  border:1px solid var(--zf-hairline);',
+    '  background:var(--dsw-alias-bg-layer-1, transparent);',
+    '  color:var(--dsw-alias-label-primary);font:inherit;font-size:14px;cursor:pointer;',
+    '}',
+    '.zf-set-btn:hover{ border-color:var(--dsw-alias-brand-primary); }',
+    '.zf-set-btn:disabled{ opacity:.5;cursor:default; }',
+    '.zf-set-btn--primary{',
+    '  border-color:transparent;background:var(--dsw-alias-brand-primary);',
+    '  color:var(--dsw-alias-label-primary-foreground);',
+    '}',
+    '.zf-set-btn--quiet{ border-color:transparent;background:transparent;color:var(--dsw-alias-label-secondary); }',
+    '.zf-set-btn--danger{ border-color:var(--dsw-alias-state-error-primary);color:var(--dsw-alias-state-error-primary);background:transparent; }',
+    '.zf-set-btns{ display:flex;gap:6px;flex-wrap:wrap;align-items:center; }',
+
+    /* 反馈与状态（保存结果 / 探测结果）—— 与「说明」分开：这些是刚才那一下怎么样了。 */
+    '.zf-set-note{ margin:4px 0 8px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary); }',
+    '.zf-set-note--error{ color:var(--dsw-alias-state-error-primary); }',
+    /* 诊断键值行：路径/命令行用等宽并允许断行。 */
+    '.zf-set-diag{',
+    '  display:grid;grid-template-columns:minmax(84px,auto) 1fr;gap:8px;',
+    '  padding:8px 0;font-size:12px;line-height:18px;',
+    '  color:var(--dsw-alias-label-primary);align-items:baseline;',
+    '}',
+    '.zf-set-diag__k{ color:var(--dsw-alias-label-secondary);white-space:nowrap; }',
+    '.zf-set-diag__v{ word-break:break-all; }',
+    '.zf-set-diag__v--mono{ font-family:Consolas,"Cascadia Mono",monospace; }',
+    /* 底部动作区：危险在左、主要在最右，中间留白分开。 */
+    '.zf-set-foot{',
+    '  display:flex;gap:12px;margin-top:20px;flex-wrap:wrap;',
+    '  align-items:center;justify-content:space-between;',
+    '  padding-top:14px;border-top:1px solid var(--zf-hairline);',
+    '}',
+
+    /* ══════════════════════════════════════════════════════════════════
      * 助手头像（气泡重绘在下面单独一段）
      *
      * 头像用 CSS `::before` 打在 `[data-chat-flow-kind="assistant-step"]` 上 ——

@@ -105,6 +105,23 @@ window.__ModuleLoader__.load({
       zh: {
         nav: '庄方宜',
         groupTheme: '主题',
+        // ── 设置面板标题 + 卡片标题（0.9.3）─────────────────────────────
+        // 对齐桌宠插件的设置面板：标题 + 一句副标题，然后按卡片分组。
+        panelTitle: '庄方宜主题',
+        panelSubtitle: '皮肤观感、壁纸与排版。改动即时生效并保存到本机。',
+        cardBasic: '总开关',
+        cardPreset: '配色预设',
+        cardPresetLead: '预设是**整套风格**（配色 + 材质 + 代码高亮），不只是颜色。',
+        cardScheme: '明暗',
+        cardType: '排版',
+        cardWallpaper: '壁纸',
+        cardAdjust: '壁纸调节',
+        cardRotate: '轮播',
+        cardAccent: '强调色',
+        cardDecor: '装饰',
+        cardMotion: '动效',
+        cardSkin: '皮肤',
+        cardRest: '其它',
         // ── 五个页签（0.9.0）──────────────────────────────────────────
         // 原先的 7 组说明（groupXxxHint）已被页说明取代。
         tabLook: '外观',
@@ -268,6 +285,22 @@ window.__ModuleLoader__.load({
       en: {
         nav: 'Zhuang Fangyi',
         groupTheme: 'Theme',
+        // ── panel title + card titles (0.9.3) ──────────────────────────
+        panelTitle: 'Zhuang Fangyi theme',
+        panelSubtitle: 'Look, wallpaper and typography. Changes apply instantly and save locally.',
+        cardBasic: 'Master switch',
+        cardPreset: 'Palette preset',
+        cardPresetLead: 'A preset is a whole style (palette, surfaces, code tokens), not just colours.',
+        cardScheme: 'Light / dark',
+        cardType: 'Typography',
+        cardWallpaper: 'Wallpaper',
+        cardAdjust: 'Wallpaper tuning',
+        cardRotate: 'Rotation',
+        cardAccent: 'Accent',
+        cardDecor: 'Decorations',
+        cardMotion: 'Motion',
+        cardSkin: 'Skin',
+        cardRest: 'More',
         // ── five tabs (0.9.0) ──────────────────────────────────────────
         tabLook: 'Look',
         tabLookHint: 'Master switch, palette preset, light/dark and typography',
@@ -3126,6 +3159,12 @@ window.__ModuleLoader__.load({
           keys: [
             'enabled', 'preset', 'scheme', 'presetLight', 'presetDark',
             'fontFamily', 'fontScale', 'contentWidth'
+          ],
+          cards: [
+            { title: 'cardBasic', from: 0, to: 1 },
+            { title: 'cardPreset', lead: 'cardPresetLead', from: 1, to: 3 },
+            { title: 'cardScheme', from: 3, to: 5 },
+            { title: 'cardType', from: 5, to: 8 }
           ]
         },
         {
@@ -3140,6 +3179,11 @@ window.__ModuleLoader__.load({
             'background', 'backgroundOpacity', 'backgroundBlur', 'backgroundPosition',
             'backgroundRotate', 'backgroundRotateOrder', 'customBackground',
             'rotateLists', 'rotateActive'
+          ],
+          cards: [
+            { title: 'cardWallpaper', from: 0, to: 1 },
+            { title: 'cardAdjust', from: 1, to: 4 },
+            { title: 'cardRotate', from: 4, to: 9 }
           ]
         },
         {
@@ -3147,10 +3191,28 @@ window.__ModuleLoader__.load({
           label: 'tabDetails',
           hint: 'tabDetailsHint',
           max: 5,
-          keys: ['accentHue', 'contourBorder', 'accentGlow', 'heroAvatar', 'titlebarFollow']
+          keys: ['accentHue', 'contourBorder', 'accentGlow', 'heroAvatar', 'titlebarFollow'],
+          cards: [
+            { title: 'cardAccent', from: 0, to: 1 },
+            { title: 'cardDecor', from: 1, to: 5 }
+          ]
         },
-        { id: 'motion', label: 'tabMotion', hint: 'tabMotionHint', max: 2, keys: ['motion', 'splash'] },
-        { id: 'skin', label: 'tabSkin', hint: 'tabSkinHint', max: 3, keys: ['rail', 'railWidth', 'avatarBubbles'] }
+        {
+          id: 'motion',
+          label: 'tabMotion',
+          hint: 'tabMotionHint',
+          max: 2,
+          keys: ['motion', 'splash'],
+          cards: [{ title: 'cardMotion', from: 0, to: 2 }]
+        },
+        {
+          id: 'skin',
+          label: 'tabSkin',
+          hint: 'tabSkinHint',
+          max: 3,
+          keys: ['rail', 'railWidth', 'avatarBubbles'],
+          cards: [{ title: 'cardSkin', from: 0, to: 3 }]
+        }
       ]
 
       /**
@@ -3196,6 +3258,60 @@ window.__ModuleLoader__.load({
           patch[key] = defaults[key]
         }
         return Object.keys(patch).length === 0 ? null : patch
+      }
+
+      /**
+       * 把一页的平铺行按 `cards` 分组进卡片（0.9.3）。
+       *
+       * ── 为什么分组表是数据、不是 JSX ──────────────────────────────────
+       *
+       * 页签函数（`TabXxx`）返回**扁平的 `h(Row, …)` 数组**，测试按
+       * `h(Row, ` 计数来守「每页一屏内」。如果把 Card 组件直接写进那些函数，
+       * 行数统计就与渲染结构耦合了 —— 加一层卡片要同时改统计逻辑。
+       * 分组表（`SETTINGS_TABS[].cards`）只引用**行下标**，两边互不干扰。
+       *
+       * ── 下标越界怎么办 ────────────────────────────────────────────────
+       *
+       * `from`/`to` 越界时**不静默丢行** —— 丢行意味着某个设置项在界面上
+       * 凭空消失，用户再也找不到。这里把越界部分**原样追加**到最后一组，
+       * 保证「渲染出来的行数 === 页签函数返回的行数」。测试另有一条
+       * 「卡片分组覆盖所有行」盯着分组表本身。
+       *
+       * @param {object} tab `SETTINGS_TABS` 的一项
+       * @param {Array} rows 该页的行（`h(Row, …)`）
+       * @returns {Array} 卡片节点
+       */
+      function renderCards (tab, rows) {
+        const cards = Array.isArray(tab.cards) ? tab.cards : []
+        if (cards.length === 0) return rows
+        const out = []
+        const covered = new Set()
+        for (const c of cards) {
+          const slice = rows.slice(c.from, c.to)
+          for (let i = c.from; i < c.to && i < rows.length; i++) covered.add(i)
+          if (slice.length === 0) continue
+          out.push(h(Card, {
+            key: c.title,
+            title: t(c.title),
+            lead: c.lead === undefined ? undefined : t(c.lead)
+          }, slice))
+        }
+        // 没被任何卡片覆盖到的行（分组表漏配或越界）→ 追加进最后一张卡，
+        // 绝不丢弃。
+        const leftover = rows.filter((_, i) => !covered.has(i))
+        if (leftover.length > 0) {
+          if (out.length > 0) {
+            const last = out[out.length - 1]
+            out[out.length - 1] = h(Card, {
+              key: last.props.title,
+              title: last.props.title,
+              lead: last.props.lead
+            }, [...(last.props.children ?? []), ...leftover])
+          } else {
+            out.push(h(Card, { key: 'cardRest', title: t('cardRest') }, leftover))
+          }
+        }
+        return out
       }
 
       /**
@@ -3291,28 +3407,28 @@ window.__ModuleLoader__.load({
       const fieldStyle = { display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0 }
       const fieldLabelStyle = { fontSize: 11, color: 'var(--dsw-alias-label-tertiary)' }
 
+      /**
+       * 按钮样式（0.9.3：改为**类名**，尺寸与配色落在宿主 CSS 里）。
+       *
+       * 保留函数与签名（测试与调用点都依赖 `buttonStyle(primary, variant)`），
+       * 但返回值从行内样式对象换成 `className` —— 行内样式表达不了 `:hover`
+       * / `:disabled`，而这两个态在设置页里很常见（「恢复本页」禁用态、
+       * 「删除列表」两段式确认）。四档：
+       *
+       *   `primary`          主要动作（保存/应用）
+       *   `variant:'quiet'`  弱化为文字按钮（危险动作的**未确认**态）
+       *   `variant:'danger'` 危险（确认删除 / 恢复默认的**已确认**态）
+       *   （无参）            中性次要动作
+       */
       function buttonStyle (primary, variant) {
-        if (variant === 'quiet') {
-          return {
-            fontSize: 12, cursor: 'pointer', borderRadius: 8, padding: '6px 10px',
-            border: 'none', background: 'transparent',
-            color: 'var(--dsw-alias-label-tertiary)'
-          }
-        }
-        if (variant === 'danger') {
-          return {
-            fontSize: 12, cursor: 'pointer', borderRadius: 8, padding: '6px 14px',
-            border: '1px solid var(--dsw-alias-state-error-primary)',
-            background: 'transparent',
-            color: 'var(--dsw-alias-state-error-primary)'
-          }
-        }
-        return {
-          fontSize: 12, cursor: 'pointer', borderRadius: 8, padding: '6px 14px',
-          border: primary ? 'none' : '1px solid var(--dsw-alias-border-l2)',
-          background: primary ? 'var(--dsw-alias-brand-primary)' : 'transparent',
-          color: primary ? 'var(--dsw-alias-label-primary-foreground)' : 'var(--dsw-alias-label-primary)'
-        }
+        const cls = variant === 'quiet'
+          ? 'zf-set-btn zf-set-btn--quiet'
+          : variant === 'danger'
+            ? 'zf-set-btn zf-set-btn--danger'
+            : primary === true
+              ? 'zf-set-btn zf-set-btn--primary'
+              : 'zf-set-btn'
+        return { className: cls }
       }
 
       /** 底部动作区：危险在左、主要在最右，中间留白把它们分开。 */
@@ -3322,13 +3438,56 @@ window.__ModuleLoader__.load({
         paddingTop: 14, borderTop: '1px solid var(--dsw-alias-border-l2)'
       }
 
+      /**
+       * 一行设置（0.9.3 改版：对齐桌宠插件的行结构）。
+       *
+       * 结构固定为「左列：标题 14px + 说明 12px / 右列：定宽 208px 控件列」。
+       *
+       * ⚠️ 说明文字（`hint`）**必须落在左列**，不许再挂到控件下面。
+       * 改版前说明的三种位置并存 —— 开关的在控件下方通栏、下拉的挤在标签与
+       * 控件之间、独立 note 又满行一段 —— 同一屏里说明文字跳三个位置，
+       * 「这一行在说什么」得靠找。桌宠插件为此专门写过一条注释，是同一个教训。
+       *
+       * 控件列**定宽**（`flex:0 0 208px`）是「右边缘对齐」的前提：用 auto 时
+       * 每个控件右边缘取决于自身宽度，一列扫下去是锯齿状。
+       *
+       * 样式全在宿主 `structureCss()` 的 `.zf-set-row*` 里（类名而非行内样式）：
+       * 行内样式表达不了 `:hover` / `:focus-visible`，也没法让同一屏的
+       * 下拉与输入框共用一套尺度。
+       */
       function Row ({ label, hint, children }) {
-        return h('div', { style: rowStyle },
-          h('div', { style: { minWidth: 0 } },
-            h('div', { style: labelStyle }, label),
-            hint !== undefined && h('div', { style: hintStyle }, hint)
+        return h('div', { className: 'zf-set-row' },
+          h('div', { className: 'zf-set-row__main' },
+            h('div', { className: 'zf-set-row__label' }, label),
+            hint !== undefined && hint !== null && hint !== ''
+              ? h('div', { className: 'zf-set-row__desc' }, hint)
+              : null
           ),
-          h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' } }, children)
+          h('div', { className: 'zf-set-row__control' }, children)
+        )
+      }
+
+      /**
+       * 一张可折叠卡片（0.9.3，对齐桌宠插件的 `Card`）。
+       *
+       * 一个概念一张卡：原先 27 行平铺，行与行之间只有一条发丝线，扫下来
+       * 分不清哪几行属于同一件事。卡片给出边界，且**整张可折叠**。
+       *
+       * 折叠用原生 `<details>`：`open` 是声明式属性（不读 DOM）—— 外壳的
+       * React 桩没有真实 DOM，读 `open` 会让测试与真机行为分叉（桌宠踩过）。
+       * 非受控：用户手动展开后不该被下一次重渲染合上。
+       */
+      function Card ({ title, lead, open, children }) {
+        const body = (Array.isArray(children) ? children : [children])
+          .filter(c => c !== null && c !== undefined)
+        return h('details', { className: 'zf-set-card', open: open === true },
+          h('summary', { className: 'zf-set-card__sum' }, title),
+          h('div', { className: 'zf-set-card__body' },
+            lead !== undefined && lead !== null
+              ? h('p', { className: 'zf-set-card__lead' }, lead)
+              : null,
+            ...body
+          )
         )
       }
 
@@ -3401,23 +3560,38 @@ window.__ModuleLoader__.load({
         return h('div', {
           role: isTabs ? 'tablist' : undefined,
           onKeyDown: isTabs ? onKeyDown : undefined,
-          style: {
-            display: grow === true ? 'flex' : 'inline-flex',
-            border: '1px solid var(--dsw-alias-border-l2)',
-            borderRadius: compact ? 7 : 8,
-            overflow: 'hidden',
-            width: grow === true ? '100%' : undefined
-          }
+          className: isTabs ? 'zf-set-tabs' : undefined,
+          style: isTabs
+            ? undefined
+            : {
+                display: grow === true ? 'flex' : 'inline-flex',
+                border: '1px solid var(--dsw-alias-border-l2)',
+                borderRadius: compact ? 7 : 8,
+                overflow: 'hidden',
+                width: grow === true ? '100%' : undefined
+              }
         }, options.map(opt => {
           const selected = value === opt.value
+          // 页签模式走 `.zf-set-tab`（pill 形 34px，选中态用外壳的
+          // `interactive-bg-active`）—— 与桌宠插件的页签完全一致。
+          // 段选模式保持原来的「连体按钮」外观：观测栏那两处在用，
+          // 行为与 0.8.0 一模一样（有断言守着）。
+          if (isTabs) {
+            return h('button', {
+              key: opt.value,
+              type: 'button',
+              role: 'tab',
+              id: idPrefix !== undefined ? `${idPrefix}-tab-${opt.value}` : undefined,
+              'aria-selected': selected ? 'true' : 'false',
+              'aria-controls': idPrefix !== undefined ? `${idPrefix}-panel-${opt.value}` : undefined,
+              tabIndex: selected ? 0 : -1,
+              onClick: () => onChange(opt.value),
+              className: 'zf-set-tab'
+            }, opt.label)
+          }
           return h('button', {
             key: opt.value,
             type: 'button',
-            role: isTabs ? 'tab' : undefined,
-            id: isTabs && idPrefix !== undefined ? `${idPrefix}-tab-${opt.value}` : undefined,
-            'aria-selected': isTabs ? (selected ? 'true' : 'false') : undefined,
-            'aria-controls': isTabs && idPrefix !== undefined ? `${idPrefix}-panel-${opt.value}` : undefined,
-            tabIndex: isTabs ? (selected ? 0 : -1) : undefined,
             onClick: () => onChange(opt.value),
             style: {
               border: 'none', cursor: 'pointer', fontSize: compact ? 11 : 12, padding: pad,
@@ -3432,15 +3606,11 @@ window.__ModuleLoader__.load({
       }
 
       function Select ({ value, options, onChange }) {
+        // 尺寸/边框/底色全部交给宿主 CSS 的 `.zf-set-row__control select`
+        // —— 与文本输入框共用一套规则，避免「同一屏两套高度」。
         return h('select', {
           value,
-          onChange: event => onChange(event.target.value),
-          style: {
-            fontSize: 12, padding: '5px 8px', borderRadius: 8, minWidth: 150,
-            color: 'var(--dsw-alias-label-primary)',
-            background: 'var(--dsw-alias-bg-layer-1)',
-            border: '1px solid var(--dsw-alias-border-l2)'
-          }
+          onChange: event => onChange(event.target.value)
         }, options.map(opt => h('option', { key: opt.value, value: opt.value }, opt.label)))
       }
 
@@ -3465,7 +3635,7 @@ window.__ModuleLoader__.load({
         useEffect(() => { setLocal(value) }, [value])
         const shown = typeof local === 'number' ? local : value
         const commit = v => { if (v !== value) onChange(v) }
-        return h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
+        return h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, width: '100%' } },
           h('input', {
             type: 'range', min, max, step,
             value: shown,
@@ -3474,12 +3644,11 @@ window.__ModuleLoader__.load({
             // 松手 / 键盘调整 / 失焦：提交
             onChange: event => commit(Number(event.target.value)),
             onPointerUp: event => commit(Number(event.target.value)),
-            onBlur: event => commit(Number(event.target.value)),
-            style: { width: 130, accentColor: 'var(--dsw-alias-brand-primary)' }
+            onBlur: event => commit(Number(event.target.value))
           }),
-          h('span', {
-            style: { fontSize: 12, width: 44, textAlign: 'right', color: 'var(--dsw-alias-label-secondary)' }
-          }, `${shown}${suffix}`)
+          // 数值走 `.zf-set-row__value`：等宽 + 定宽右对齐，
+          // 数字变化时滑杆不会左右抖（原先内联了同一套，现在只有一处定义）。
+          h('span', { className: 'zf-set-row__value' }, `${shown}${suffix}`)
         )
       }
 
@@ -3544,7 +3713,7 @@ window.__ModuleLoader__.load({
               h('button', {
                 type: 'button',
                 onClick: () => applyCombo(settings.preset),
-                style: buttonStyle(false)
+                className: buttonStyle(false).className
               }, t('applyCombo')))),
           h(Row, { label: t('scheme'), hint: t('schemeHint') },
             h(Segmented, {
@@ -3875,7 +4044,7 @@ window.__ModuleLoader__.load({
                   state.pickerOpen = !pickerOpen
                   emit()
                 },
-                style: buttonStyle(false)
+                className: buttonStyle(false).className
               }, t('bgChange')))),
           pickerOpen && h('div', { id: ART_PANEL_ID, style: artPanelStyle },
             // 图例放在展开区里：收起时那一行说明只是白占高度
@@ -3967,12 +4136,12 @@ window.__ModuleLoader__.load({
               onClick: () => {
                 if (rotateEditingOf() === settings.rotateActive) { renameRotateList(); setRotateEditing(null) } else { setRotateEditing(settings.rotateActive) }
               },
-              style: buttonStyle(false, 'quiet')
+              className: buttonStyle(false, 'quiet').className
             }, rotateEditingOf() === settings.rotateActive ? t('rotateListDone') : t('rotateListEdit')),
             typeof settings.rotateActive === 'string' && h('button', {
               type: 'button',
               onClick: () => { if (state.rotateDeleteArm === true) { deleteRotateList() } else { setRotateDeleteArm(true) } },
-              style: buttonStyle(false, 'danger')
+              className: buttonStyle(false, 'danger').className
             }, state.rotateDeleteArm === true ? t('rotateListDeleteArm') : t('rotateListDelete')))),
           // 编辑态：改名输入 + 操作提示（放两行，避免挤在一个 Row 里）
           rotateEditingOf() !== null && h(Row, { label: t('rotateListName') },
@@ -3993,7 +4162,7 @@ window.__ModuleLoader__.load({
               h('button', {
                 type: 'button',
                 onClick: () => { renameRotateList(); setRotateEditing(null) },
-                style: buttonStyle(false)
+                className: buttonStyle(false).className
               }, t('rotateListSaveName')))),
           settings.backgroundRotate !== 'off' && h(Row, { label: '' },
             h('div', {
@@ -4015,7 +4184,7 @@ window.__ModuleLoader__.load({
                 type: 'button',
                 'aria-pressed': settings.accentHue === 'preset' ? 'true' : 'false',
                 onClick: () => set({ accentHue: 'preset' }),
-                style: buttonStyle(settings.accentHue === 'preset')
+                className: buttonStyle(settings.accentHue === 'preset').className
               }, t('accentHuePreset')),
               h(Slider, {
                 value: typeof settings.accentHue === 'number' ? settings.accentHue : 0,
@@ -4103,7 +4272,7 @@ window.__ModuleLoader__.load({
             h('button', {
               type: 'button',
               onClick: () => { void load() },
-              style: { ...buttonStyle(false), marginTop: 10 }
+              className: buttonStyle(false).className, style: { marginTop: 10 }
             }, t('retry'))
           )
         }
@@ -4193,10 +4362,13 @@ window.__ModuleLoader__.load({
         // 按钮比没有这个按钮更糟（用户分不清是坏了还是本来就那样）。
         const tabPatch = tabDefaultsPatch(activeTab.id, settings, s.defaults)
 
-        return h('div', { style: { padding: '4px 0 20px', maxWidth: 720 } },
-          // 页签栏吸顶：每一页滚起来时页签始终可见（`background` 页展开壁纸
-          // 网格后是唯一会滚的地方）。背景色必须给 —— 外壳内容列本身是
-          // `overflow-y:auto`，不铺底色的话行会从页签**之间**透出来。
+        return h('div', { className: 'zf-set' },
+          // 标题 + 副标题（对齐桌宠插件的 `__title` / `__intro`）。
+          h('h2', { className: 'zf-set__title' }, t('panelTitle')),
+          h('p', { className: 'zf-set__intro' }, t('panelSubtitle')),
+          // 页签栏：pill 形 34px，样式在 `.zf-set-tabs` / `.zf-set-tab`。
+          // 吸顶（`tabBarStyle`）保留 —— `background` 页展开壁纸网格后是
+          // 唯一会滚的地方，页签要始终可见。
           h('div', { style: tabBarStyle },
             h('div', { style: { flex: '1 1 auto', minWidth: 0 } },
               h(Segmented, {
@@ -4218,28 +4390,21 @@ window.__ModuleLoader__.load({
               'aria-label': t('tabReset'),
               disabled: tabPatch === null,
               onClick: () => { if (tabPatch !== null) set(tabPatch) },
-              style: {
-                fontSize: 12, flex: 'none', padding: '4px 2px',
-                border: 'none', background: 'transparent',
-                cursor: tabPatch === null ? 'default' : 'pointer',
-                color: tabPatch === null
-                  ? 'var(--dsw-alias-label-tertiary)'
-                  : 'var(--dsw-alias-label-secondary)',
-                opacity: tabPatch === null ? 0.5 : 1
-              }
+              className: 'zf-set-btn zf-set-btn--quiet'
             }, t('tabReset'))),
           h('div', { style: tabHintStyle }, t(activeTab.hint)),
           h('div', {
             key: activeTab.id,
+            className: 'zf-set-panel',
             role: 'tabpanel',
             id: `zf-panel-${activeTab.id}`,
             'aria-labelledby': `zf-tab-${activeTab.id}`,
             tabIndex: -1
-          }, ...activeBody(ctx)),
+          }, ...renderCards(activeTab, activeBody(ctx))),
           // 底部动作区分**危险 / 中性 / 主要**三档 —— 原先四个按钮同级同色，
           // 主次不分，而「恢复默认」这种一键抹掉全部设置的动作与「重试」并排、
           // 样式相同，很容易误点。
-          h('div', { style: footerStyle },
+          h('div', { className: 'zf-set-foot' },
             // 危险动作：弱化为文字按钮，且需要**二次确认**
             h('button', {
               type: 'button',
@@ -4247,21 +4412,21 @@ window.__ModuleLoader__.load({
                 if (confirmReset) { void resetToDefaults(); setConfirmReset(false); return }
                 setConfirmReset(true)
               },
-              style: confirmReset ? buttonStyle(false, 'danger') : buttonStyle(false, 'quiet')
+              className: confirmReset ? buttonStyle(false, 'danger').className : buttonStyle(false, 'quiet').className
             }, confirmReset ? t('resetConfirm') : t('reset')),
             // 中性：导入导出
-            h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
+            h('div', { className: 'zf-set-btns' },
               h('button', {
                 type: 'button',
                 title: t('exportHint'),
                 onClick: () => exportSettings(),
-                style: buttonStyle(false)
+                className: buttonStyle(false).className
               }, t('exportSettings')),
               // 用 `<label>` 包一个隐藏的 file input ——
               // 直接点 `<input type=file>` 在不同浏览器里样式差异大。
               h('label', {
                 title: t('importHint'),
-                style: { ...buttonStyle(false), display: 'inline-flex', alignItems: 'center', cursor: 'pointer' }
+                className: buttonStyle(false).className, style: { display: 'inline-flex', alignItems: 'center', cursor: 'pointer' }
               },
               t('importSettings'),
               h('input', {
@@ -4279,7 +4444,7 @@ window.__ModuleLoader__.load({
             h('button', {
               type: 'button',
               onClick: () => { void save({}) },
-              style: buttonStyle(true)
+              className: buttonStyle(true).className
             }, s.lastError === null ? t('resave') : t('retry'))
           ),
           // 提示与错误**分开渲染**：提示是中性色（成功/信息），错误才用红。
@@ -5046,6 +5211,10 @@ window.__ModuleLoader__.load({
 
       exports.__test = {
         DICT, PRESETS, SCHEMES, BACKGROUNDS, BG_GROUPS, BG_GROUP_OF, POSITIONS, NS,
+        // 设置页的渲染原语（0.9.3）：Segmented 的「段选 vs 页签」两种模式
+        // 差别在**行为**（ARIA 角色）而不只是外观，扫源码文本的断言在重构时
+        // 会假失败 —— 导出它，让测试对着渲染结果写。
+        Segmented, Card, Row,
         // 供无头测试直接验证定位/打标逻辑
         makeModuleClass, makeMarker, readSessionState, readStats, nativeRightbarOpen,
         // 观测台路径裁决与设置同步（用例 41/42），以及官方 tab 的自动打开（用例 44）

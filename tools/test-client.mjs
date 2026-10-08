@@ -996,10 +996,15 @@ console.log('庄方宜主题 · 浏览器半边无头测试\n')
 {
   console.log('\n--- 布局健壮性 ---')
   const source = fs.readFileSync(path.join(ROOT, 'client.js'), 'utf8')
+  const hostSource = fs.readFileSync(path.join(ROOT, 'index.js'), 'utf8')
   ok('行容器用 grid 且左列可收缩', /gridTemplateColumns:\s*'minmax\(0,\s*1fr\)\s+auto'/.test(source))
   ok('提示文字允许换行（长中文不撑破）', /overflowWrap:\s*'anywhere'/.test(source))
   ok('控件列允许换行', /flexWrap:\s*'wrap'/.test(source))
-  ok('根容器有宽度约束', /maxWidth:\s*720/.test(source))
+  // 0.9.3：宽度约束从行内样式搬到宿主 CSS 的 `.zf-set`（与桌宠插件同一做法，
+  // 取值 760px 也是照它来的 —— 够放「最长标题 + 一行说明」，又不至于把
+  // 标签和控件拉到两端看不见彼此）。
+  ok('根容器有宽度约束（.zf-set 的 max-width）',
+    /'\.zf-set\{'[\s\S]{0,600}?max-width:760px/.test(hostSource))
 }
 
 // 用例 13：契约健全性
@@ -5884,27 +5889,38 @@ function shellDom (opts = {}) {
   //
   // 这条正是发现那 6 个死键的手段（title / px / percent / on / off / exportHint）。
   //
-  // 两类键不走字面量调用，必须排除，否则会误报：
+  // 三类键不走字面量调用，必须排除，否则会误报：
   //   ① **动态拼接**的键（`t(\`font_${f}\`)` 之类）—— 用前缀白名单；
   //   ② **页签标签**（`t(x.label)` / `t(activeTab.hint)`）—— 直接从
-  //      SETTINGS_TABS 推导，而不是手写一份（手写的白名单会与常量漂移）。
+  //      SETTINGS_TABS 推导，而不是手写一份（手写的白名单会与常量漂移）；
+  //   ③ **卡片标题/引导语**（0.9.3，`t(c.title)` / `t(c.lead)`）—— 同样从
+  //      `SETTINGS_TABS[].cards` 推导。卡片标题是数据（分组表）而非
+  //      字面量调用，字面量扫描必然看不见，这与 ② 是同一个道理。
   const stripComments2 = s => s
     .replace(/\/\*[\s\S]*?\*\//g, ' ')
     .replace(/(^|[^:])\/\/[^\n]*/g, '$1 ')
   const code2 = stripComments2(csrc)
   const DYNAMIC_PREFIX = /^(font_|fontScale_|contentWidth_|bg|pos|preset)/
   const tabKeys = new Set()
+  let cardKeyCount = 0
   for (const g of tabs) {
     tabKeys.add(g.label)
     if (g.hint !== undefined) tabKeys.add(g.hint)
+    for (const c of (Array.isArray(g.cards) ? g.cards : [])) {
+      tabKeys.add(c.title)
+      cardKeyCount++
+      if (c.lead !== undefined) { tabKeys.add(c.lead); cardKeyCount++ }
+    }
   }
   const dead = Object.keys(T.DICT.zh).filter(k =>
     !DYNAMIC_PREFIX.test(k) && !tabKeys.has(k) && !code2.includes(`t('${k}')`))
   ok('DICT 没有死键（每个键都有真实调用）', dead.length === 0, dead.join(', '))
-  // 反向自检：白名单确实只放过了页签键，不是把整类都豁免了
-  ok('死键检测的白名单只含页签标签（未过度豁免）',
-    [...tabKeys].every(k => T.DICT.zh[k] !== undefined) && tabKeys.size === tabs.length * 2,
-    `白名单 ${tabKeys.size} 项`)
+  // 反向自检：白名单确实只放过了「由常量推导的键」，不是把整类都豁免了。
+  // 数量 = 页签数 × 2（label + hint）+ 卡片键数。
+  ok('死键检测的白名单只含由常量推导的键（未过度豁免）',
+    [...tabKeys].every(k => T.DICT.zh[k] !== undefined) &&
+      tabKeys.size === tabs.length * 2 + cardKeyCount,
+    `白名单 ${tabKeys.size} 项（页签 ${tabs.length * 2} + 卡片 ${cardKeyCount}）`)
 
   // 10) 底部按钮主次：危险动作弱化 + 二次确认，主要动作在最右
   ok('危险动作使用弱化样式（quiet）', csrc.includes("buttonStyle(false, 'quiet')"))
@@ -6004,10 +6020,44 @@ function shellDom (opts = {}) {
     tabNodes.filter(n => n.props?.tabIndex === -1).length === tabs.length - 1)
   ok('页签栏声明了方向键切换（Segmented 的 tablist 分支）',
     csrc.includes("event.key === 'ArrowRight'") && csrc.includes("event.key === 'ArrowLeft'"))
-  // 不传 role 时不能产生任何 ARIA（观测栏那两处调用不能被牵连）
-  ok('Segmented 默认不产生 ARIA（观测栏两处调用行为不变）',
-    /role: isTabs \? 'tab' : undefined/.test(csrc) &&
-    /role: isTabs \? 'tablist' : undefined/.test(csrc))
+  // 不传 role 时不能产生任何 ARIA（观测栏那两处调用不能被牵连）。
+  //
+  // ⚠️ 用**行为**断言而不是扫源码文本：0.9.3 把页签分支从三元表达式改成了
+  // 提前 return（页签与段选的外观本来就不同），原先那条
+  // `role: isTabs ? 'tab' : undefined` 的正则随之失效 —— 但**行为没变**。
+  // 扫文本的断言在重构时会假失败，这类断言应当对着渲染结果写。
+  {
+    const seg = T.Segmented
+    ok('Segmented 已导出（可行为断言）', typeof seg === 'function')
+    if (typeof seg === 'function') {
+      // ⚠️ 本测试桩的 `createElement` 把 children 放在**元素本身**上
+      // （`{ type, props, children }`），不是 React 那样塞进 `props.children`
+      // —— 见文件上方那条说明。第一版按 React 的形状读，结果拿到 0 个子节点。
+      const kidsOf = node => {
+        const c = node?.children ?? node?.props?.children
+        if (c === undefined || c === null) return []
+        return Array.isArray(c) ? c.flat(Infinity).filter(Boolean) : [c]
+      }
+      // 段选模式（观测栏两处调用）：不产生任何 ARIA 角色
+      const plain = seg({ value: 'a', options: [{ value: 'a', label: 'A' }], onChange: () => {} })
+      ok('段选模式：容器无 role', plain.props.role === undefined, String(plain.props.role))
+      const pk = kidsOf(plain)
+      ok('段选模式：按钮无 role', pk.length > 0 && pk.every(c => c.props?.role === undefined),
+        `${pk.length} 个子节点`)
+      // 页签模式：容器 tablist、按钮 tab
+      const tabbed = seg({
+        value: 'a',
+        options: [{ value: 'a', label: 'A' }],
+        onChange: () => {},
+        role: 'tablist',
+        idPrefix: 'zf'
+      })
+      ok('页签模式：容器 role=tablist', tabbed.props.role === 'tablist', String(tabbed.props.role))
+      const tk = kidsOf(tabbed)
+      ok('页签模式：按钮 role=tab', tk.length > 0 && tk.every(c => c.props?.role === 'tab'),
+        `${tk.length} 个子节点`)
+    }
+  }
 
   // 12d) 「恢复本页」：可禁用、降级不渲染、只回退本页
   const resetLabel = T.DICT.zh.tabReset
@@ -6048,6 +6098,45 @@ function shellDom (opts = {}) {
     patchFn('look', dflt, null) === null && patchFn('look', dflt, undefined) === null)
   ok('未知页签 id 返回 null 而不是抛错',
     patchFn('__nope__', dflt, dflt) === null)
+
+  // 12d2) 卡片分组（0.9.3）：行按 `cards` 下标分组进可折叠卡片
+  //
+  // 参考同作者的桌宠插件（`dsh-zhuang-fangyi-pet`）的设置页：一个概念一张
+  // 可折叠卡片。这两条断言守的是「分组表与行数自洽」—— 下标越界会**静默
+  // 丢行**（某个设置项在界面上凭空消失，用户再也找不到），必须钉住。
+  {
+    const hostCssForSet = fs.readFileSync(path.join(ROOT, 'index.js'), 'utf8')
+    for (const g of tabs) {
+      const cards = Array.isArray(g.cards) ? g.cards : []
+      ok(`${g.id} 页声明了卡片分组`, cards.length > 0, String(cards.length))
+      // ① 连续覆盖：第一张从 0 开始，每张的 to === 下一张的 from，最后一张到 max
+      const contiguous = cards.length > 0 &&
+        cards[0].from === 0 &&
+        cards.every((c, i) => c.to > c.from && (i === cards.length - 1 ? c.to === g.max : c.to === cards[i + 1].from))
+      ok(`${g.id} 页卡片区间连续覆盖 0..${g.max}`, contiguous,
+        cards.map(c => `${c.from}-${c.to}`).join(' '))
+    }
+    // ② 渲染层：卡片确实被渲染出来（不是只声明不用）
+    const lookCards = walkTree(sectionView(pristine, { tab: 'look' }))
+      .filter(n => n.type === 'details' && String(n.props?.className ?? '').includes('zf-set-card'))
+    ok('外观页渲染出卡片（details.zf-set-card）', lookCards.length >= 3, String(lookCards.length))
+    // ③ 渲染出来的行数 === 页签函数返回的行数（不丢行）
+    const rowsIn = tree => walkTree(tree)
+      .filter(n => n.type === 'div' && String(n.props?.className ?? '') === 'zf-set-row')
+    const expectedLook = (csrc.split(/function TabLook \(ctx\)/)[1] ?? '')
+      .split(/function Tab[A-Z]/)[0].match(/h\(Row, /g)?.length ?? 0
+    ok('外观页渲染的行数与源码里的 h(Row, 数一致（分组不丢行）',
+      rowsIn(sectionView(pristine, { tab: 'look' })).length === expectedLook,
+      `渲染 ${rowsIn(sectionView(pristine, { tab: 'look' })).length} / 源码 ${expectedLook}`)
+    // ④ 样式在宿主 CSS 里（类名而非行内）—— 行内样式表达不了 :hover / [open]
+    ok('卡片样式在宿主 CSS（.zf-set-card）', hostCssForSet.includes("'.zf-set-card{'"))
+    ok('行样式在宿主 CSS（.zf-set-row）', hostCssForSet.includes("'.zf-set-row{'"))
+    ok('页签样式在宿主 CSS（.zf-set-tab）', hostCssForSet.includes("'.zf-set-tab{'"))
+    ok('控件统一尺度变量 --zf-ctl-h', /--zf-ctl-h:32px/.test(hostCssForSet))
+    // ⑤ 折叠箭头：用 CSS 转义写 ▾/▸（写成裸字符会被编辑器/编码问题吃掉）
+    ok('折叠箭头用 CSS 转义（\\25BE / \\25B8）',
+      hostCssForSet.includes('content:"\\\\25BE"') && hostCssForSet.includes('content:"\\\\25B8"'))
+  }
 
   // 12e) 壁纸选择器：默认收起 / 展开后 58 张 / 「无」不再塞在纹理组
   const thumbsOf = tree => srcOf(tree).filter(x => x.includes('/art/thumbs/'))
