@@ -36,6 +36,17 @@ jobs:
       - name: Contrast + accent-hue sweep
         run: npm run contrast
 
+      # 生成器一致性（0.10.0 补进 CI）。
+      #
+      # 这条守护的是「壁纸目录 ↔ client.js 副本」的一致性：client.js 不能
+      # import src/，所以壁纸清单是**生成的副本**。它抓过真实事故 ——
+      # 0.9.1 那次生成器用 JSON.stringify 写标签，产出双引号字符串，
+      # 与 client.js 全文件的单引号风格分叉。
+      #
+      # ⚠️ 放在无头测试**之前**：它只要 1 秒，失败得更快。
+      - name: Generated blocks in sync
+        run: node tools/gen-wallpapers.mjs --check
+
       - name: Headless client tests
         run: node tools/test-client.mjs
 

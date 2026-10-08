@@ -15,10 +15,69 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import zlib from 'node:zlib'
+import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.dirname(HERE)
+
+/* ------------------------------------------------------------------ *
+ * 真实引擎探针（Edge headless）
+ * ------------------------------------------------------------------ */
+
+const EDGE_PATH = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
+/** 本机是否有 Edge。CI（Linux）没有 —— 相关断言会显式 SKIP 并计数。 */
+const EDGE_OK = fs.existsSync(EDGE_PATH)
+
+/**
+ * 跑一次 Edge headless 并把 DOM 取回来（`--dump-dom`）。
+ *
+ * ── 为什么必须传 `--user-data-dir`（0.10.0，实测提速 15 倍）───────────
+ *
+ * 不指定时 Edge 用**默认 profile**，而开发机上通常已经开着浏览器
+ * （实测本机有 20+ 个 msedge 进程）：新起的 headless 实例要等默认 profile
+ * 的锁，**单次往返 16.1 秒**；给它一个独立临时目录后 **1.07 秒**。
+ * 套件里有 14 次调用，这一项就占掉约 224 秒 —— 实测改前 231 秒、
+ * 改后约 110 秒。
+ *
+ * ⚠️ 每个探针**必须用各自独立的目录**：共用同一个目录时多个实例仍会
+ * 互相排队（那正是默认 profile 的症状）。
+ *
+ * @param {string} file 本地 HTML 文件路径
+ * @param {object} [opts]
+ * @param {string} [opts.windowSize] 形如 `1280,700`
+ * @param {number} [opts.budget] virtual-time budget（ms）
+ * @param {number} [opts.maxBuffer] 输出上限
+ * @returns {string|null} DOM 文本；失败返回 null（调用方按「拿不到」处理）
+ */
+function edgeDump (file, opts = {}) {
+  if (!EDGE_OK) return null
+  const udd = path.join(os.tmpdir(), `zf-edge-${process.pid}-${Math.random().toString(36).slice(2, 8)}`)
+  const args = ['--headless=new', '--disable-gpu', '--no-sandbox',
+    `--user-data-dir=${udd}`]
+  if (opts.windowSize !== undefined) args.push(`--window-size=${opts.windowSize}`)
+  args.push(`--virtual-time-budget=${opts.budget ?? 1500}`, '--dump-dom',
+    `file:///${file.replace(/\\/g, '/')}`)
+  try {
+    return execFileSync(EDGE_PATH, args, {
+      encoding: 'utf8',
+      maxBuffer: opts.maxBuffer ?? 32 * 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'ignore']
+    })
+  } catch {
+    return null
+  } finally {
+    try { fs.rmSync(udd, { recursive: true, force: true }) } catch { /* 已被清理 */ }
+  }
+}
+
+/** 从 `--dump-dom` 结果里取 `<title>` 里的 JSON（探针的统一回传通道）。 */
+function edgeTitle (dom) {
+  if (typeof dom !== 'string' || dom.length === 0) return null
+  const m = /<title>([^<]*)<\/title>/.exec(dom)
+  if (!m || m[1] === 'pending') return null
+  try { return JSON.parse(m[1].replace(/&quot;/g, '"')) } catch { return null }
+}
 
 /* ------------------------------------------------------------------ *
  * 最小 DOM 桩
@@ -755,6 +814,21 @@ async function pngPixel (file, x, y) {
 let pass = 0
 let fail = 0
 const failures = []
+
+/**
+ * 被跳过的断言组计数（0.10.0）。
+ *
+ * 为什么要单独计数并汇总：真实引擎断言只在**本机有 Edge** 时才跑，
+ * CI（Linux）上必然跳过。如果只打印一行 SKIP、汇总里不体现，那么
+ * 「CI 全绿」会被误读成「这些断言跑过了」—— 而实际上它们一次都没执行。
+ * 汇总行里写出跳过数，才能一眼看出**这次绿灯覆盖了多少**。
+ */
+let skipped = 0
+
+function skip (label) {
+  skipped += 1
+  console.log(`  SKIP ${label}`)
+}
 
 function ok (label, condition, detail) {
   if (condition) {
@@ -3493,8 +3567,8 @@ function shellDom (opts = {}) {
       gridCss.includes('grid-auto-rows:max-content'),
       gridCss.includes('grid-auto-rows') ? '写了但不是 max-content' : '完全没写')
 
-    const EDGE_GRID = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
-    if (fs.existsSync(EDGE_GRID)) {
+    const EDGE_GRID = EDGE_PATH   // 统一取模块级常量（0.10.0）
+    if (EDGE_OK) {
       // `execFileSync` 必须在这里**局部导入** —— 本文件顶部没有它，
       // 直接引用会 ReferenceError，而它落在 `try` 里就被吞成「拿不到行距」，
       // 看起来像引擎问题、其实是自己少了一行 import（踩过一次）。
@@ -3552,10 +3626,7 @@ function shellDom (opts = {}) {
       fs.writeFileSync(f, html, 'utf8')
       let res = null
       try {
-        const dom = execFileSync(EDGE_GRID, [
-          '--headless=new', '--disable-gpu', '--no-sandbox', '--window-size=1280,700',
-          '--virtual-time-budget=1500', '--dump-dom', `file:///${f.replace(/\\/g, '/')}`
-        ], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] })
+        const dom = edgeDump(f, { windowSize: '1280,700', budget: 1500, maxBuffer: 64 * 1024 * 1024 })
         const t = /<title>([^<]*)<\/title>/.exec(dom)
         if (t && t[1] !== 'pending') res = JSON.parse(t[1].replace(/&quot;/g, '"'))
       } catch { res = null }
@@ -3567,7 +3638,7 @@ function shellDom (opts = {}) {
           `行距 ${res.pitch}，期望 ${expect.toFixed(1)}（差 ${(expect - res.pitch).toFixed(1)}px）`)
       }
     } else {
-      console.log('  SKIP 无 Edge —— 观测栏行距实测跳过；本地 Windows 会执行')
+      skip('无 Edge —— 观测栏行距实测跳过；本地 Windows 会执行')
     }
   }
 
@@ -3594,17 +3665,17 @@ function shellDom (opts = {}) {
   const { execFileSync } = await import('node:child_process')
   const { structureCss } = await import('../index.js')
 
-  const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
-  const edgeOk = fs.existsSync(EDGE)
+  const EDGE = EDGE_PATH   // 统一取模块级常量（0.10.0）
+  const edgeOk = EDGE_OK
   // ⚠️ 这里是**真实跳过**，不是「断言 Edge 存在」——
   // CI 跑在 Linux 上没有 Edge，断言存在会让 CI 必然失败（踩过）。
   // 本地（Windows）有 Edge 时才会真的跑这一组；跳过时打印一行说明，
   // 避免「静默没跑」被误认为「跑过了」。
   if (!edgeOk) {
-    console.log('  SKIP 无 Edge（Linux/CI）—— 真实引擎验证跳过；本地 Windows 会执行')
+    skip('无 Edge（Linux/CI）—— 真实引擎验证跳过；本地 Windows 会执行')
   }
 
-  if (edgeOk) {
+  if (EDGE_OK) {
     const html = `<!DOCTYPE html><html><head><style>
       ._3GBCTG_root:not([data-expanded]){contain:size layout;height:24px}
       .flowItem:is(:empty,:has(>[data-slot="conversation.chat.node"]:empty)){height:0}
@@ -3641,10 +3712,7 @@ function shellDom (opts = {}) {
     fs.writeFileSync(f, html, 'utf8')
     let res = null
     try {
-      const dom = execFileSync(EDGE, [
-        '--headless=new', '--disable-gpu', '--no-sandbox', '--virtual-time-budget=1500',
-        '--dump-dom', `file:///${f.replace(/\\/g, '/')}`
-      ], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] })
+      const dom = edgeDump(f, { budget: 1500, maxBuffer: 64 * 1024 * 1024 })
       const m = /<title>([^<]*)<\/title>/.exec(dom)
       if (m) res = JSON.parse(m[1].replace(/&quot;/g, '"'))
     } catch { res = null }
@@ -3706,10 +3774,9 @@ function shellDom (opts = {}) {
 
   // 真实引擎实测：确认两个消费者的计算值都是 0
   const { execFileSync } = await import('node:child_process')
-  const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
-  const edgeOk = fs.existsSync(EDGE)
-  if (!edgeOk) {
-    console.log('  SKIP 无 Edge（Linux/CI）—— 真实引擎验证跳过；本地 Windows 会执行')
+  const EDGE = EDGE_PATH   // 统一取模块级常量（0.10.0）
+  if (!EDGE_OK) {
+    skip('无 Edge（Linux/CI）—— 真实引擎验证跳过；本地 Windows 会执行')
   } else {
     const html = `<!DOCTYPE html><html data-windows-titlebar=""><head><style>
       [data-windows-titlebar] .BynINW_frame{--dsh-windows-content-radius:16px;padding-top:40px;
@@ -3735,10 +3802,7 @@ function shellDom (opts = {}) {
     fs.writeFileSync(f, html, 'utf8')
     let r = null
     try {
-      const dom = execFileSync(EDGE, [
-        '--headless=new', '--disable-gpu', '--no-sandbox', '--virtual-time-budget=1200',
-        '--dump-dom', `file:///${f.replace(/\\/g, '/')}`
-      ], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] })
+      const dom = edgeDump(f, { budget: 1200, maxBuffer: 32 * 1024 * 1024 })
       const m = /<title>([^<]*)<\/title>/.exec(dom)
       if (m) r = JSON.parse(m[1].replace(/&quot;/g, '"'))
     } catch { r = null }
@@ -3792,9 +3856,9 @@ function shellDom (opts = {}) {
 
   // 真实引擎实测：照抄 preload 的探针，确认选择器命中且行为正确
   const { execFileSync } = await import('node:child_process')
-  const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
-  if (!fs.existsSync(EDGE)) {
-    console.log('  SKIP 无 Edge（Linux/CI）—— 真实引擎验证跳过')
+  const EDGE = EDGE_PATH   // 统一取模块级常量（0.10.0）
+  if (!EDGE_OK) {
+    skip('无 Edge（Linux/CI）—— 真实引擎验证跳过')
   } else {
     const build = on => `<!DOCTYPE html><html><head><style>
       body{--dsw-specific-sidebar-fill:#1c1c15;--dsw-alias-label-primary:#f9fafb}
@@ -3819,10 +3883,7 @@ function shellDom (opts = {}) {
       const f = path.join(os.tmpdir(), `zf-probe-${on}.html`)
       fs.writeFileSync(f, build(on), 'utf8')
       try {
-        const dom = execFileSync(EDGE, [
-          '--headless=new', '--disable-gpu', '--no-sandbox', '--virtual-time-budget=1200',
-          '--dump-dom', `file:///${f.replace(/\\/g, '/')}`
-        ], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] })
+        const dom = edgeDump(f, { budget: 1200, maxBuffer: 32 * 1024 * 1024 })
         const m = /<title>([^<]*)<\/title>/.exec(dom)
         rows[on] = m ? JSON.parse(m[1].replace(/&quot;/g, '"')) : null
       } catch { rows[on] = null }
@@ -3903,9 +3964,9 @@ function shellDom (opts = {}) {
 
   // 3) 真实引擎实测：观测栏恒透明，透过去看到的就是全局那一档
   const { execFileSync } = await import('node:child_process')
-  const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
-  if (!fs.existsSync(EDGE)) {
-    console.log('  SKIP 无 Edge（Linux/CI）—— 真实引擎验证跳过')
+  const EDGE = EDGE_PATH   // 统一取模块级常量（0.10.0）
+  if (!EDGE_OK) {
+    skip('无 Edge（Linux/CI）—— 真实引擎验证跳过')
   } else {
     // color-mix 的计算值是 `color(srgb … / a)`，不是 rgba —— 两种都要认
     const alphaOf = c => {
@@ -3953,10 +4014,7 @@ function shellDom (opts = {}) {
       const f = path.join(os.tmpdir(), `zf-rail-${op}.html`)
       fs.writeFileSync(f, build(op), 'utf8')
       try {
-        const dom = execFileSync(EDGE, [
-          '--headless=new', '--disable-gpu', '--no-sandbox', '--virtual-time-budget=1200',
-          '--dump-dom', `file:///${f.replace(/\\/g, '/')}`
-        ], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] })
+        const dom = edgeDump(f, { budget: 1200, maxBuffer: 32 * 1024 * 1024 })
         const m = /<title>([^<]*)<\/title>/.exec(dom)
         rows[op] = m ? JSON.parse(m[1].replace(/&quot;/g, '"')) : null
       } catch { rows[op] = null }
@@ -4022,9 +4080,9 @@ function shellDom (opts = {}) {
 
   // 真实引擎实测：照抄壳的 DOM 结构 + 官方规则，量计算值
   const { execFileSync } = await import('node:child_process')
-  const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
-  if (!fs.existsSync(EDGE)) {
-    console.log('  SKIP 无 Edge（Linux/CI）—— 真实引擎验证跳过')
+  const EDGE = EDGE_PATH   // 统一取模块级常量（0.10.0）
+  if (!EDGE_OK) {
+    skip('无 Edge（Linux/CI）—— 真实引擎验证跳过')
   } else {
     // 官方选择器**逐字照抄**（含真实哈希类名），否则测的就不是真实场景。
     // ⚠️ 两条都要抄：docked pane 的底来自 `_tabHost_:not(_float_)`，
@@ -4066,10 +4124,7 @@ function shellDom (opts = {}) {
       const f = path.join(os.tmpdir(), `zf-dockkit-${on}.html`)
       fs.writeFileSync(f, build(on), 'utf8')
       try {
-        const dom = execFileSync(EDGE, [
-          '--headless=new', '--disable-gpu', '--no-sandbox', '--virtual-time-budget=1200',
-          '--dump-dom', `file:///${f.replace(/\\/g, '/')}`
-        ], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] })
+        const dom = edgeDump(f, { budget: 1200, maxBuffer: 32 * 1024 * 1024 })
         const m = /<title>([^<]*)<\/title>/.exec(dom)
         rows[on] = m ? JSON.parse(m[1].replace(/&quot;/g, '"')) : null
       } catch { rows[on] = null }
@@ -4147,9 +4202,9 @@ function shellDom (opts = {}) {
 
   // 真实引擎实测：照抄壳的三条规则，量计算值
   const { execFileSync } = await import('node:child_process')
-  const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
-  if (!fs.existsSync(EDGE)) {
-    console.log('  SKIP 无 Edge（Linux/CI）—— 真实引擎验证跳过')
+  const EDGE = EDGE_PATH   // 统一取模块级常量（0.10.0）
+  if (!EDGE_OK) {
+    skip('无 Edge（Linux/CI）—— 真实引擎验证跳过')
   } else {
     const build = on => `<!DOCTYPE html><html style="--zf-veil-sidebar:rgba(28,28,21,0.86)">
       <head><style>
@@ -4180,10 +4235,7 @@ function shellDom (opts = {}) {
       const f = path.join(os.tmpdir(), `zf-sidebar-${on}.html`)
       fs.writeFileSync(f, build(on), 'utf8')
       try {
-        const dom = execFileSync(EDGE, [
-          '--headless=new', '--disable-gpu', '--no-sandbox', '--virtual-time-budget=1200',
-          '--dump-dom', `file:///${f.replace(/\\/g, '/')}`
-        ], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] })
+        const dom = edgeDump(f, { budget: 1200, maxBuffer: 32 * 1024 * 1024 })
         const m = /<title>([^<]*)<\/title>/.exec(dom)
         rows[on] = m ? JSON.parse(m[1].replace(/&quot;/g, '"')) : null
       } catch { rows[on] = null }
@@ -4231,9 +4283,9 @@ function shellDom (opts = {}) {
 
   // 真实引擎实测：逐字照抄壳的选择器与渐变
   const { execFileSync } = await import('node:child_process')
-  const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
-  if (!fs.existsSync(EDGE)) {
-    console.log('  SKIP 无 Edge（Linux/CI）—— 真实引擎验证跳过')
+  const EDGE = EDGE_PATH   // 统一取模块级常量（0.10.0）
+  if (!EDGE_OK) {
+    skip('无 Edge（Linux/CI）—— 真实引擎验证跳过')
   } else {
     const build = on => `<!DOCTYPE html><html>
       <head><style>
@@ -4261,10 +4313,7 @@ function shellDom (opts = {}) {
       const f = path.join(os.tmpdir(), `zf-seat-${on}.html`)
       fs.writeFileSync(f, build(on), 'utf8')
       try {
-        const dom = execFileSync(EDGE, [
-          '--headless=new', '--disable-gpu', '--no-sandbox', '--virtual-time-budget=1200',
-          '--dump-dom', `file:///${f.replace(/\\/g, '/')}`
-        ], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] })
+        const dom = edgeDump(f, { budget: 1200, maxBuffer: 32 * 1024 * 1024 })
         const m = /<title>([^<]*)<\/title>/.exec(dom)
         rows[on] = m ? JSON.parse(m[1].replace(/&quot;/g, '"')) : null
       } catch { rows[on] = null }
@@ -4325,9 +4374,9 @@ function shellDom (opts = {}) {
 
   // 真实引擎实测：光标色可读、标记不在时不生效、::selection 规则确实被解析
   const { execFileSync } = await import('node:child_process')
-  const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
-  if (!fs.existsSync(EDGE)) {
-    console.log('  SKIP 无 Edge（Linux/CI）—— 真实引擎验证跳过')
+  const EDGE = EDGE_PATH   // 统一取模块级常量（0.10.0）
+  if (!EDGE_OK) {
+    skip('无 Edge（Linux/CI）—— 真实引擎验证跳过')
   } else {
     const build = on => `<!DOCTYPE html><html>
       <head><style>
@@ -4359,10 +4408,7 @@ function shellDom (opts = {}) {
       const f = path.join(os.tmpdir(), `zf-caret-${on}.html`)
       fs.writeFileSync(f, build(on), 'utf8')
       try {
-        const dom = execFileSync(EDGE, [
-          '--headless=new', '--disable-gpu', '--no-sandbox', '--virtual-time-budget=1200',
-          '--dump-dom', `file:///${f.replace(/\\/g, '/')}`
-        ], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] })
+        const dom = edgeDump(f, { budget: 1200, maxBuffer: 32 * 1024 * 1024 })
         const m = /<title>([^<]*)<\/title>/.exec(dom)
         rows[on] = m ? JSON.parse(m[1].replace(/&quot;/g, '"')) : null
       } catch { rows[on] = null }
@@ -4465,9 +4511,9 @@ function shellDom (opts = {}) {
 
   // 4) 真实引擎：CSS 契约（层级、时长、opacity 两态）
   const { execFileSync } = await import('node:child_process')
-  const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
-  if (!fs.existsSync(EDGE)) {
-    console.log('  SKIP 无 Edge（Linux/CI）—— 真实引擎验证跳过')
+  const EDGE = EDGE_PATH   // 统一取模块级常量（0.10.0）
+  if (!EDGE_OK) {
+    skip('无 Edge（Linux/CI）—— 真实引擎验证跳过')
   } else {
     const html = `<!DOCTYPE html><html data-zf-wallpaper="">
       <head><style>${structureCss()}</style></head><body>
@@ -4490,10 +4536,7 @@ function shellDom (opts = {}) {
     fs.writeFileSync(f, html, 'utf8')
     let r = null
     try {
-      const dumped = execFileSync(EDGE, [
-        '--headless=new', '--disable-gpu', '--no-sandbox', '--virtual-time-budget=1200',
-        '--dump-dom', `file:///${f.replace(/\\/g, '/')}`
-      ], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] })
+      const dumped = edgeDump(f, { budget: 1200, maxBuffer: 32 * 1024 * 1024 })
       const m = /<title>([^<]*)<\/title>/.exec(dumped)
       r = m ? JSON.parse(m[1].replace(/&quot;/g, '"')) : null
     } catch { r = null }
@@ -4618,9 +4661,9 @@ function shellDom (opts = {}) {
 
   // 4) 真实引擎：为什么必须写 body —— 复刻外壳的两条声明实测优先级
   const { execFileSync } = await import('node:child_process')
-  const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
-  if (!fs.existsSync(EDGE)) {
-    console.log('  SKIP 无 Edge（Linux/CI）—— 真实引擎验证跳过')
+  const EDGE = EDGE_PATH   // 统一取模块级常量（0.10.0）
+  if (!EDGE_OK) {
+    skip('无 Edge（Linux/CI）—— 真实引擎验证跳过')
   } else {
     // 外壳真实声明（实测）：`:root` 亮色一组、`body[data-ds-dark-theme]` 暗色一组
     const shellCss = `:root{--shiki-token-keyword:#d6336c}
@@ -4645,10 +4688,7 @@ function shellDom (opts = {}) {
       const f = path.join(os.tmpdir(), `zf-shiki-${tag}.html`)
       fs.writeFileSync(f, html, 'utf8')
       try {
-        const dom = execFileSync(EDGE, [
-          '--headless=new', '--disable-gpu', '--no-sandbox', '--virtual-time-budget=1000',
-          '--dump-dom', `file:///${f.replace(/\\/g, '/')}`
-        ], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] })
+        const dom = edgeDump(f, { budget: 1000, maxBuffer: 32 * 1024 * 1024 })
         const m = /<title>([^<]*)<\/title>/.exec(dom)
         return m ? m[1] : null
       } catch { return null }
@@ -4741,9 +4781,9 @@ function shellDom (opts = {}) {
 
   // 4) 真实引擎：为什么必须写在那个元素上 + 为什么必须 !important
   const { execFileSync } = await import('node:child_process')
-  const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
-  if (!fs.existsSync(EDGE)) {
-    console.log('  SKIP 无 Edge（Linux/CI）—— 真实引擎验证跳过')
+  const EDGE = EDGE_PATH   // 统一取模块级常量（0.10.0）
+  if (!EDGE_OK) {
+    skip('无 Edge（Linux/CI）—— 真实引擎验证跳过')
   } else {
     // 逐字照抄外壳那条声明 + 外壳自己写的行内 user-width
     const html = `<!DOCTYPE html><html>
@@ -4765,10 +4805,7 @@ function shellDom (opts = {}) {
     fs.writeFileSync(f, html, 'utf8')
     let r = null
     try {
-      const dom2 = execFileSync(EDGE, [
-        '--headless=new', '--disable-gpu', '--no-sandbox', '--virtual-time-budget=1200',
-        '--dump-dom', `file:///${f.replace(/\\/g, '/')}`
-      ], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] })
+      const dom2 = edgeDump(f, { budget: 1200, maxBuffer: 32 * 1024 * 1024 })
       const m = /<title>([^<]*)<\/title>/.exec(dom2)
       r = m ? JSON.parse(m[1].replace(/&quot;/g, '"')) : null
     } catch { r = null }
@@ -4854,9 +4891,9 @@ function shellDom (opts = {}) {
 
   // 4) 真实引擎：focus 经 `--zf-art-position` 落到合成层的 background-position
   const { execFileSync } = await import('node:child_process')
-  const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
-  if (!fs.existsSync(EDGE)) {
-    console.log('  SKIP 无 Edge（Linux/CI）—— 真实引擎验证跳过')
+  const EDGE = EDGE_PATH   // 统一取模块级常量（0.10.0）
+  if (!EDGE_OK) {
+    skip('无 Edge（Linux/CI）—— 真实引擎验证跳过')
   } else {
     const { structureCss } = await import('../index.js')
     const html = `<!DOCTYPE html><html data-zf-wallpaper="" data-zf-art-fit="cover"
@@ -4869,10 +4906,7 @@ function shellDom (opts = {}) {
     fs.writeFileSync(f, html, 'utf8')
     let r = null
     try {
-      const dumped = execFileSync(EDGE, [
-        '--headless=new', '--disable-gpu', '--no-sandbox', '--virtual-time-budget=1000',
-        '--dump-dom', `file:///${f.replace(/\\/g, '/')}`
-      ], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] })
+      const dumped = edgeDump(f, { budget: 1000, maxBuffer: 32 * 1024 * 1024 })
       const m = /<title>([^<]*)<\/title>/.exec(dumped)
       r = m ? m[1] : null
     } catch { r = null }
@@ -5298,9 +5332,9 @@ function shellDom (opts = {}) {
 
   // 3) 真实引擎：确认选择器真能命中（照抄官方类名）
   const { execFileSync } = await import('node:child_process')
-  const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
-  if (!fs.existsSync(EDGE)) {
-    console.log('  SKIP 无 Edge（Linux/CI）—— 真实引擎验证跳过')
+  const EDGE = EDGE_PATH   // 统一取模块级常量（0.10.0）
+  if (!EDGE_OK) {
+    skip('无 Edge（Linux/CI）—— 真实引擎验证跳过')
   } else {
     const html = `<!DOCTYPE html><html><head><style>
       body{--dsw-alias-label-primary:#f2f2f0;--dsw-alias-label-secondary:#b9b9b6;
@@ -5323,10 +5357,7 @@ function shellDom (opts = {}) {
     fs.writeFileSync(f, html, 'utf8')
     let r = null
     try {
-      const dumped = execFileSync(EDGE, [
-        '--headless=new', '--disable-gpu', '--no-sandbox', '--virtual-time-budget=1000',
-        '--dump-dom', `file:///${f.replace(/\\/g, '/')}`
-      ], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] })
+      const dumped = edgeDump(f, { budget: 1000, maxBuffer: 32 * 1024 * 1024 })
       const m = /<title>([^<]*)<\/title>/.exec(dumped)
       r = m ? JSON.parse(m[1].replace(/&quot;/g, '"')) : null
     } catch { r = null }
@@ -6418,9 +6449,15 @@ function crc32 (buf) {
 }
 
 
-console.log(`\n合计 ${pass + fail} 项，通过 ${pass}，失败 ${fail}`)
+console.log(`\n合计 ${pass + fail} 项，通过 ${pass}，失败 ${fail}` +
+  (skipped > 0 ? `，跳过 ${skipped} 组（无 Edge 的真实引擎断言）` : ''))
 if (fail > 0) {
   console.log(`\n失败项：\n  ${failures.join('\n  ')}`)
   process.exit(1)
+}
+if (skipped > 0) {
+  // 明说覆盖缺口：绿是绿，但少跑了这些。
+  console.log(`注意：本平台无 Edge，${skipped} 组真实引擎断言未执行 —— ` +
+    'CI 上同样如此，所以「CI 全绿」不等于这些断言通过了。')
 }
 console.log('全部通过。')
