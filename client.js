@@ -4548,12 +4548,42 @@ window.__ModuleLoader__.load({
 
       /* ---------------- 顶栏与右侧观测栏 ---------------- */
 
-      /** 预设色板（右栏色块用）。取自官方素材量化值。 */
-      const SWATCH = {
-        zhuang: '#F2E957',
-        burst: '#C4D579',
-        cyan: '#75DCD9',
-        wine: '#D86766'
+      /**
+       * 预设色块的颜色（观测栏「主题」那一组用）。
+       *
+       * ── 为什么是函数而不是一张常量表（0.12.1 修）──────────────────────
+       *
+       * 原先这里是一张**手抄常量**：
+       *
+       *   const SWATCH = { zhuang:'#F2E957', burst:'#C4D579', cyan:'#75DCD9', wine:'#D86766' }
+       *
+       * 它有两个各自独立、又同时命中的毛病：
+       *
+       *   ① **只有 4 项**。0.11.0 把预设从 4 套扩到 8 套，这张表没跟上 ——
+       *      `SWATCH[p]` 对 olive/sand/frost/amber 是 `undefined`，
+       *      `background:undefined` 不画任何东西。用户截图里后 4 行**没有色块**，
+       *      就是这个（实测：截图后 4 行左侧零个饱和像素）。
+       *      手抄表的漂移不是偶然 —— 它和 `PRESET_LABELS` 一样是「客户端副本」，
+       *      但 `PRESET_LABELS` 由生成器维护，这张表是纯手工的。
+       *
+       *   ② **手抄的是深色档的颜色**（`#F2E957` 等 = 官方本色），浅色模式下
+       *      压在浅色行底上对比只有 **1.08:1**（zhuang）—— 基本看不见。
+       *      而明暗两档的强调色本来就不同：浅色档为了当链接被压深过
+       *      （`accentLight`），深色档才用官方本色。
+       *
+       * 现在改为从**宿主下发的角色表**（`state.themeRoles`）里取，按当前明暗
+       * 档位选：既自动覆盖全部预设（扩预设不用再改这里），又天然是当前档位
+       * 该有的颜色。取色失败（宿主未升级/角色缺失）时返回 `null`，
+       * 调用方少画一个色块 —— 宁可没有装饰，也不要一个错色。
+       *
+       * @param {string} presetId
+       * @returns {string|null}
+       */
+      function presetChip (presetId) {
+        const scheme = currentScheme(theme)
+        const role = state.themeRoles?.[presetId]?.[scheme]
+        const brand = role?.brand
+        return typeof brand === 'string' && brand !== '' ? brand : null
       }
 
       /** 会话状态显示文案。 */
@@ -4630,18 +4660,24 @@ window.__ModuleLoader__.load({
           h('div', { className: 'zf-rail__group' },
             h('div', { className: 'zf-rail__label' }, t('groupTheme')),
             h('div', { className: 'zf-rail__swatches' },
-              ...PRESETS.map(p => h('button', {
-                key: p,
-                type: 'button',
-                className: 'zf-rail__swatch',
-                'aria-pressed': settings.preset === p ? 'true' : 'false',
-                onClick: () => set({ preset: p })
-              },
-              h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 7, minWidth: 0 } },
-                h('span', { className: 'zf-rail__chip', style: { background: SWATCH[p] } }),
-                h('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } },
-                  PRESET_LABELS[p]?.['zh'] ?? p)),
-              settings.preset === p ? h('span', null, '✓') : null)))),
+              ...PRESETS.map(p => {
+                const chip = presetChip(p)
+                const name = PRESET_LABELS[p]?.[bgLang()] ?? PRESET_LABELS[p]?.['zh'] ?? p
+                return h('button', {
+                  key: p,
+                  type: 'button',
+                  className: 'zf-rail__swatch',
+                  title: name,
+                  'aria-pressed': settings.preset === p ? 'true' : 'false',
+                  onClick: () => set({ preset: p })
+                },
+                h('span', { className: 'zf-rail__swatch-main' },
+                  // 色块只在**取到真实颜色**时渲染：取不到就少一个装饰，
+                  // 而不是画一个错色（错色会让人以为那套预设就是这个颜色）
+                  chip === null ? null : h('span', { className: 'zf-rail__chip', style: { background: chip } }),
+                  h('span', { className: 'zf-rail__swatch-text' }, name)),
+                settings.preset === p ? h('span', { className: 'zf-rail__swatch-tick' }, '✓') : null)
+              }))),
           h('div', { className: 'zf-rail__group' },
             h('div', { className: 'zf-rail__label' }, t('contentWidth')),
             // 复用设置页的 Segmented（compact + grow 适配窄栏），不再手写一份

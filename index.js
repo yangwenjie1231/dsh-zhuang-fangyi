@@ -1008,13 +1008,50 @@ export function structureCss () {
     '  box-shadow:0 0 0 1.5px var(--dsw-alias-bg-layer-1);',
     '  pointer-events:none;',
     '}',
-    '.zf-rail__swatches{ display:flex;flex-direction:column;gap:6px; }',
+    /* ── 预设色板：响应式网格（0.12.1）────────────────────────────────────
+     *
+     * 0.12.1 前是 `flex-direction:column` + 每行 `width:100%`。这在浮层
+     * （240~380px）里没问题，但**官方右栏标签页**里容器宽得多 —— 用户截图
+     * 实测 857 设备px ÷ 1.5 DPI = **571 CSS px**，而每行都被拉满：
+     * 色块与文字挤在最左、✓ 飘在最右、中间约 400px 全是空白。
+     *
+     * 改成 `auto-fill` 网格后（实测数据，见 `tools/test-client.mjs` 的探针）：
+     *   内容宽 210 → 1 列   258 → 1 列   350 → 2 列
+     *   480 → 3 列   543 → 3 列   600 → 3 列   700 → 4 列
+     * 窄浮层仍是单列（不破坏原布局），宽容器自动铺开。
+     *
+     * ── 为什么 `minmax(160px, …)` 是量出来的而不是拍的 ──────────────────
+     *
+     * 下限决定「最长的名字会不会被截断」。实测中英两套标签（最长的中文是
+     * 5 字「大招墨青金」，最长的英文是 `Signature yellow-green`）：
+     *
+     *   min   210   258   350   400   480   543   600   700   （容器宽 → 列数/截断）
+     *   150   1/0   1/0   2/0   2/0   3/**1**  3/0   3/0   4/0
+     *   160   1/0   1/0   2/0   2/0   2/0   3/0   3/0   4/0
+     *
+     * `150px` 在容器 462~522px 这一段会挤到 3 列，而每格只有 156px，
+     * 英文名被 ellipsis 切掉 14px（`Signature yellow-gre…`）。`160px` 在
+     * 全部实测宽度上**中英零截断**，代价仅仅是 480px 那档少一列。
+     *
+     * 取「零截断」而不是「多一列」：中文界面下两者完全一样（中文 5 字
+     * 在 156px 里放得下），差别只出现在英文界面的一个窄带上 —— 而为了
+     * 一个不常出现的宽度去切掉一个用户看得见的标签，是拿正确性换密度。
+     *
+     * `min-width:0` 不是可选项：网格项默认 `min-width:auto`，内容超宽时会把
+     * 轨道撑破而不是让内部的 `text-overflow:ellipsis` 生效。
+     */
+    '.zf-rail__swatches{',
+    '  display:grid;grid-template-columns:repeat(auto-fill, minmax(160px, 1fr));gap:6px;',
+    '}',
     '.zf-rail__swatch{',
-    '  width:100%;height:28px;border-radius:7px;cursor:pointer;padding:0 9px;box-sizing:border-box;',
+    '  width:100%;height:28px;min-width:0;border-radius:7px;cursor:pointer;padding:0 9px;box-sizing:border-box;',
     '  display:inline-flex;align-items:center;justify-content:space-between;gap:6px;',
     '  border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-2);',
     '  color:var(--dsw-alias-label-secondary);font-size:11px;',
     '}',
+    '.zf-rail__swatch-main{ display:inline-flex;align-items:center;gap:7px;min-width:0; }',
+    '.zf-rail__swatch-text{ overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }',
+    '.zf-rail__swatch-tick{ flex:0 0 auto; }',
     '.zf-rail__swatch:hover{ border-color:var(--dsw-alias-border-l4);color:var(--dsw-alias-label-primary); }',
     /* ── 观测栏壁纸缩略图网格 ────────────────────────────────────────────
      *

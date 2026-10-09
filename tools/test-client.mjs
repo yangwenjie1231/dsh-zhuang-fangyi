@@ -563,12 +563,24 @@ function makeHarness (settingsPayload, themePayload, stylePayload = DEFAULT_STYL
   }
 
   const dictionaries = new Map()
+  /**
+   * 桩当前「界面语言」。
+   *
+   * 原先 `bind` **写死读 `zh`**，于是英文界面路径在测试里根本无法到达 ——
+   * 任何「中英两套文案」的断言都只能是恒真的（改坏了也测不出来，实测确认：
+   * 把 `bgLang()` 派生的名字换回写死中文，套件照样全绿）。
+   *
+   * 真实的 `locale.bind(ns)` 会按外壳当前语言取词，所以这里也照做。
+   * 通过 `globalThis.__zfNextLang` 一次性切换（与 `__zfNextSettings` 同一手法），
+   * `boot()` 会读取并重置它。
+   */
+  let lang = 'zh'
   const locale = {
     register: (ns, dict) => {
       dictionaries.set(ns, dict)
       return () => dictionaries.delete(ns)
     },
-    bind: ns => key => dictionaries.get(ns)?.zh?.[key] ?? key
+    bind: ns => key => dictionaries.get(ns)?.[lang]?.[key] ?? key
   }
 
   /**
@@ -687,7 +699,9 @@ function makeHarness (settingsPayload, themePayload, stylePayload = DEFAULT_STYL
     ctx, dom, layers, registered, slotRegistrations, dictionaries, calls,
     effects, listeners, fetchImpl, getPreference: () => preference,
     // 官方 tab 相关的观测面
-    tabRegistrations, serviceFixture
+    tabRegistrations, serviceFixture,
+    /** 切换桩的界面语言（英文路径原本不可达，见 `locale` 处的说明）。 */
+    setLang: next => { lang = next }
   }
 }
 
@@ -880,13 +894,35 @@ const overrides = Object.fromEntries(PAL.PRESET_IDS.map(id => [id, {
   '--dsw-alias-bg-base': { light: '#FAFAFA', dark: '#141414' }
 }]))
 
-/** 角色表：壁纸的纱色由它算，测试需要真值。 */
-const roles = {
-  zhuang: { light: { base: '#FAFAF5', sidebar: '#F5F6EF' }, dark: { base: '#171815', sidebar: '#1A1C18' } },
-  burst: { light: { base: '#F7FAF8', sidebar: '#F1F6F3' }, dark: { base: '#141917', sidebar: '#161C1A' } },
-  cyan: { light: { base: '#F6FAFA', sidebar: '#F0F6F6' }, dark: { base: '#141819', sidebar: '#161B1C' } },
-  wine: { light: { base: '#FBF8F7', sidebar: '#F7F1F0' }, dark: { base: '#181516', sidebar: '#1B1718' } }
-}
+/**
+ * 角色表：壁纸的纱色由它算，观测栏的预设色块也从它取 —— 测试需要真值。
+ *
+ * ⚠️ 0.12.1 起**按 `PAL.PRESETS` 派生**，不再手抄 4 条。
+ *
+ * 原先这里是手写的四条（只有 zhuang/burst/cyan/wine，且只有 base/sidebar）。
+ * 它和当年 `client.js` 里那张手抄的 `SWATCH` 是同一类东西，而那张表正是
+ * 用户截图里「后 4 行没有色块」的根因 —— 0.11.0 把预设扩到 8 套，两张
+ * 手抄表都没跟上。桩里再留一张手抄表，等于把这个 bug 复制到测试里：
+ * 断言永远只覆盖 4 套，剩下 4 套没人看着。
+ *
+ * 现在直接展开宿主真实下发的形状（`rolesPayload` 的 `{light,dark}` +
+ * 全部角色键），扩预设时自动跟上。
+ */
+const roles = Object.fromEntries(PAL.PRESET_IDS.map(id => [id, {
+  light: { ...PAL.PRESETS[id].light },
+  dark: { ...PAL.PRESETS[id].dark }
+}]))
+
+/**
+ * `#RRGGBB` → `"R, G, B"`（`toRgba()` 写进 `--zf-veil` 的格式）。
+ *
+ * 纱色的断言原先手抄 rgb 字面量（`rgba(250, 250, 245, …)`）。桩的 roles 一旦
+ * 改成派生，这些字面量就**静默失配** —— 断言报错的位置离真正的原因很远。
+ * 派生出来就没有这个问题。
+ */
+const veilOf = (id, scheme, key) =>
+  PAL.PRESETS[id][scheme][key].replace('#', '').match(/../g)
+    .map(x => parseInt(x, 16)).join(', ')
 
 /**
  * 桩用的 `presetStyles`（宿主 `/themes` 真实下发的字段）。
@@ -918,8 +954,14 @@ const baseSettings = {
   accentGlow: false
 }
 
-/** 跑一次完整挂载。 */
-async function boot (settings, payloadOverrides, services) {
+/**
+ * 跑一次完整挂载。
+ *
+ * @param {object} [payloadOverrides] 覆盖 `/themes` 返回的字段
+ * @param {object} [services] 覆盖注入的服务
+ * @param {'zh'|'en'} [lang] 桩的界面语言（默认 zh）。英文路径要靠它才可达。
+ */
+async function boot (settings, payloadOverrides, services, lang) {
   const h = makeHarness(
     { settings },
     {
@@ -932,6 +974,9 @@ async function boot (settings, payloadOverrides, services) {
     DEFAULT_STYLE,
     services ?? DEFAULT_SERVICES
   )
+  // 语言在 apply() 之前设好：`bgLang()` 是在渲染时按 DICT 探针判断的，
+  // 设置晚了第一次渲染就已经是旧语言。
+  h.setLang(lang ?? 'zh')
   globalThis.document = h.dom.document
   globalThis.fetch = h.fetchImpl
   const { module } = loadClientBundle()
@@ -960,11 +1005,13 @@ console.log('庄方宜主题 · 浏览器半边无头测试\n')
   ok('壁纸属性已开启', h.dom.html.hasAttribute('data-zf-wallpaper') && h.dom.body.hasAttribute('data-zf-wallpaper'))
   ok('等高线边框已开启', h.dom.body.hasAttribute('data-zf-contour'))
   ok('微光默认关闭', !h.dom.body.hasAttribute('data-zf-glow'))
+  // 纱的期望值从**角色表派生**，不再手抄 rgb —— 手抄值会随桩的更新静默失效
+  // （0.12.1 把 roles 改成按 PRESETS 派生时就撞过一次：断言还在比对旧配色）。
   ok('纱带 alpha（14% 壁纸 -> 0.860）',
-    /rgba\(250, 250, 245, 0\.860\)/.test(h.dom.html.props.get('--zf-veil') ?? ''),
+    new RegExp(`rgba\\(${veilOf('zhuang', 'light', 'base')}, 0\\.860\\)`).test(h.dom.html.props.get('--zf-veil') ?? ''),
     h.dom.html.props.get('--zf-veil'))
   ok('侧栏纱同样带 alpha',
-    /rgba\(245, 246, 239, 0\.860\)/.test(h.dom.html.props.get('--zf-veil-sidebar') ?? ''),
+    new RegExp(`rgba\\(${veilOf('zhuang', 'light', 'sidebar')}, 0\\.860\\)`).test(h.dom.html.props.get('--zf-veil-sidebar') ?? ''),
     h.dom.html.props.get('--zf-veil-sidebar'))
   ok('壁纸图指向当前预设', h.dom.html.props.get('--zf-art-src') === 'var(--zf-art-sakura)', h.dom.html.props.get('--zf-art-src'))
 }
@@ -977,7 +1024,9 @@ console.log('庄方宜主题 · 浏览器半边无头测试\n')
   ok('未额外挂 token 层（由主题接管）', !h.layers.has('dsh-zhuang-fangyi'))
   // 0.8.0 起壁纸明暗共用一张：切深色只换纱色，`--zf-art-src` 不再拼 -dark
   ok('深色下壁纸仍指向同一变量（无 -dark）', h.dom.html.props.get('--zf-art-src') === 'var(--zf-art-sakura)', h.dom.html.props.get('--zf-art-src'))
-  ok('纱用暗色角色', /rgba\(23, 24, 21, 0\.860\)/.test(h.dom.html.props.get('--zf-veil') ?? ''), h.dom.html.props.get('--zf-veil'))
+  ok('纱用暗色角色',
+    new RegExp(`rgba\\(${veilOf('zhuang', 'dark', 'base')}, 0\\.860\\)`).test(h.dom.html.props.get('--zf-veil') ?? ''),
+    h.dom.html.props.get('--zf-veil'))
 }
 
 // 用例 3：固定浅色 + 另一预设
@@ -1023,11 +1072,15 @@ console.log('庄方宜主题 · 浏览器半边无头测试\n')
   h.dom.body.setAttribute('data-ds-dark-theme', '')
   for (const fn of h.listeners.get('theme/change') ?? []) fn()
   ok('深浅切换壁纸变量不变（明暗共用一张图）', h.dom.html.props.get('--zf-art-src') === 'var(--zf-art-sakura)', h.dom.html.props.get('--zf-art-src'))
-  ok('纱同步切到暗色角色', /rgba\(23, 24, 21, 0\.860\)/.test(h.dom.html.props.get('--zf-veil') ?? ''), h.dom.html.props.get('--zf-veil'))
+  ok('纱同步切到暗色角色',
+    new RegExp(`rgba\\(${veilOf('zhuang', 'dark', 'base')}, 0\\.860\\)`).test(h.dom.html.props.get('--zf-veil') ?? ''),
+    h.dom.html.props.get('--zf-veil'))
   h.dom.body.removeAttribute('data-ds-dark-theme')
   for (const fn of h.listeners.get('theme/change') ?? []) fn()
   ok('切回亮色图', h.dom.html.props.get('--zf-art-src') === 'var(--zf-art-sakura)', h.dom.html.props.get('--zf-art-src'))
-  ok('纱切回亮色角色', /rgba\(250, 250, 245, 0\.860\)/.test(h.dom.html.props.get('--zf-veil') ?? ''), h.dom.html.props.get('--zf-veil'))
+  ok('纱切回亮色角色',
+    new RegExp(`rgba\\(${veilOf('zhuang', 'light', 'base')}, 0\\.860\\)`).test(h.dom.html.props.get('--zf-veil') ?? ''),
+    h.dom.html.props.get('--zf-veil'))
 }
 
 // 用例 8：头像开关真的生效（曾是不可用的假开关）
@@ -3539,6 +3592,122 @@ function shellDom (opts = {}) {
   ok('PRESET_LABELS 没有被 t() 包着用（它不是 DICT 键）',
     !/t\(PRESET_LABELS/.test(csrc))
 
+  // 4b) 观测栏色块（0.12.1）
+  //
+  // 修之前是一张**手抄常量** `SWATCH`，只有 4 项 —— 0.11.0 把预设扩到 8 套后
+  // 后 4 行没有色块（用户截图实测：那 4 行左侧零个饱和像素）。所以这里同时盯
+  // 两件事：**表没了**（不再有第二份会漂移的副本），且**取色走宿主角色表**。
+  // ⚠️ 必须在**剥掉注释**之后再查：修复说明里正当地引用了那张旧表的原文
+  //   （`const SWATCH = { … }`），直接搜源码会命中注释 —— 那是「断言扫文本
+  //   而不是扫行为」的典型假失败（本仓库踩过多次）。
+  const csrcNoComments = csrc
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '')
+  ok('client.js 不再有手抄的 SWATCH 常量表',
+    !/const SWATCH = \{/.test(csrcNoComments))
+  ok('色块取色走宿主下发的 themeRoles（不再是硬编码色值）',
+    /function presetChip \(presetId\)/.test(csrcNoComments) &&
+    /state\.themeRoles\?\.\[presetId\]\?\.\[scheme\]/.test(csrcNoComments))
+  // 色块必须**按当前明暗档位**取：浅色档的强调色被压深过（accentLight），
+  // 深色档才是官方本色。手抄表当年写的是深色档的值，浅色下对比只有 1.08:1。
+  ok('色块按当前明暗档位取色（不是固定一档）',
+    /const scheme = currentScheme\(theme\)/.test(
+      /function presetChip[\s\S]{0,400}?\n      \}/.exec(csrcNoComments)?.[0] ?? ''))
+
+  // 4c) 色块的实际渲染：8 套预设**每套都有**色块，且两档取到的颜色不同
+  {
+    const withChips = async (scheme) => {
+      const dark = scheme === 'dark'
+      const { h, mod } = await boot({ ...baseSettings, scheme: dark ? 'dark' : 'light' })
+      const overlay = h.slotRegistrations.filter(r => r.meta.name === 'shell.overlay')
+      const rail = overlay.find(r => r.meta.id === 'zhuang-fangyi-rail')
+      const nodes = []
+      const walk = n => {
+        if (n === null || n === undefined) return
+        if (Array.isArray(n)) { n.forEach(walk); return }
+        if (typeof n !== 'object') return
+        const el = typeof n.type === 'function' ? n.type(n.props ?? {}) : n
+        if (el && typeof el === 'object' && !Array.isArray(el)) { nodes.push(el); walk(el.children) }
+      }
+      walk(rail.component({}))
+      const chips = nodes.filter(n => n.props?.className === 'zf-rail__chip')
+      const swatches = nodes.filter(n => n.props?.className === 'zf-rail__swatch')
+      return { chips, swatches, mod }
+    }
+    const light = await withChips('light')
+    const dark = await withChips('dark')
+    ok('8 套预设**每套**都渲染色块（0.11.0 扩预设后曾漏掉后 4 套）',
+      light.chips.length === PAL.PRESET_IDS.length,
+      `实测 ${light.chips.length}/${PAL.PRESET_IDS.length}`)
+    ok('色块数 = 色板按钮数（每行都有色块，没有光秃秃的行）',
+      light.chips.length === light.swatches.length,
+      `色块 ${light.chips.length} vs 行 ${light.swatches.length}`)
+    const colorsOf = r => r.chips.map(c => c.props?.style?.background)
+    ok('浅色档每块都有具体色值（不是 undefined —— 那正是当年的症状）',
+      colorsOf(light).every(c => typeof c === 'string' && c.length > 0),
+      JSON.stringify(colorsOf(light)))
+    ok('明暗两档取到的是**不同**的颜色（手抄表当年只写了深色档的值）',
+      JSON.stringify(colorsOf(light)) !== JSON.stringify(colorsOf(dark)),
+      `light=${JSON.stringify(colorsOf(light))} dark=${JSON.stringify(colorsOf(dark))}`)
+    // 取色必须与角色表一致 —— 否则「派生」只是换了个地方硬编码
+    const expectLight = PAL.PRESET_IDS.map(id => PAL.PRESETS[id].light.brand)
+    ok('色块色值 = 角色表 brand（浅色档）',
+      JSON.stringify(colorsOf(light)) === JSON.stringify(expectLight),
+      JSON.stringify(colorsOf(light)))
+    // 角色表缺失时**不画**色块，而不是画一个错色
+    const noRoles = await boot({ ...baseSettings, scheme: 'light' }, { roles: {} })
+    const ov2 = noRoles.h.slotRegistrations.filter(r => r.meta.name === 'shell.overlay')
+    const rail2 = ov2.find(r => r.meta.id === 'zhuang-fangyi-rail')
+    const nodes2 = []
+    const walk2 = n => {
+      if (n === null || n === undefined) return
+      if (Array.isArray(n)) { n.forEach(walk2); return }
+      if (typeof n !== 'object') return
+      const el = typeof n.type === 'function' ? n.type(n.props ?? {}) : n
+      if (el && typeof el === 'object' && !Array.isArray(el)) { nodes2.push(el); walk2(el.children) }
+    }
+    walk2(rail2.component({}))
+    const chips2 = nodes2.filter(n => n.props?.className === 'zf-rail__chip')
+    const swatches2 = nodes2.filter(n => n.props?.className === 'zf-rail__swatch')
+    ok('角色表缺失时不画色块（宁可少装饰，也不给错色）', chips2.length === 0, `实测 ${chips2.length}`)
+    ok('角色表缺失时色板本身仍在（只是没有色块）',
+      swatches2.length === PAL.PRESET_IDS.length, `实测 ${swatches2.length}`)
+
+    // 预设名必须跟随界面语言。`bgLang()` 是拿 DICT 探针判断的，英文界面下
+    // 要走 `PRESET_LABELS[p].en`；写死 `.zh` 在中文界面下**看起来完全正常**，
+    // 所以只有真的用英文界面跑一次才测得出来（原先桩写死读 zh，测不到）。
+    const en = await boot({ ...baseSettings, scheme: 'light' }, null, null, 'en')
+    const ovEn = en.h.slotRegistrations.filter(r => r.meta.name === 'shell.overlay')
+    const railEn = ovEn.find(r => r.meta.id === 'zhuang-fangyi-rail')
+    const nodesEn = []
+    const walkEn = n => {
+      if (n === null || n === undefined) return
+      if (Array.isArray(n)) { n.forEach(walkEn); return }
+      if (typeof n !== 'object') return
+      const el = typeof n.type === 'function' ? n.type(n.props ?? {}) : n
+      if (el && typeof el === 'object' && !Array.isArray(el)) { nodesEn.push(el); walkEn(el.children) }
+    }
+    walkEn(railEn.component({}))
+    const namesEn = nodesEn
+      .filter(n => n.props?.className === 'zf-rail__swatch-text')
+      .map(n => n.children?.[0])
+    ok('英文界面下预设名走英文（不是写死中文）',
+      namesEn[0] === PAL.PRESET_LABELS_EN?.zhuang || namesEn[0] === 'Signature yellow-green',
+      JSON.stringify(namesEn.slice(0, 3)))
+    ok('英文界面下 8 套名字都在（没有回落成 id）',
+      namesEn.length === PAL.PRESET_IDS.length && namesEn.every(n => typeof n === 'string' && !PAL.PRESET_IDS.includes(n)),
+      JSON.stringify(namesEn))
+    // 对照：中文界面下必须**不是**英文（否则「跟随语言」实际是写死英文）
+    // ⚠️ 从 `nodesEn` 的同一条路径取（`zf-rail__swatch-text` 节点的 children），
+    //    不要从按钮节点上找 —— 按钮的 children 是 `[main, tick]`，名字在里面一层。
+    const namesZh = light.swatches
+      .map(s => (s.children ?? []).find(c => c?.props?.className === 'zf-rail__swatch-main'))
+      .map(m => (m?.children ?? []).find(c => c?.props?.className === 'zf-rail__swatch-text'))
+      .map(c => c?.children?.[0])
+    ok('中文界面下预设名是中文（与英文界面形成对照）',
+      namesZh[0] === '本体黄绿', JSON.stringify(namesZh.slice(0, 3)))
+  }
+
   // 5) DICT 值等于键名 = 漏翻（界面会显示英文键）
   //    例外：**单位与符号**类文案本就该相同（`px: 'px'`、`percent: '%'`），
   //    它们不是翻译对象。用白名单排除，而不是放宽整条断言。
@@ -3656,6 +3825,96 @@ function shellDom (opts = {}) {
       }
     } else {
       skip('无 Edge —— 观测栏行距实测跳过；本地 Windows 会执行')
+    }
+  }
+
+  // 6c) 预设色板：宽容器下必须**多列**，窄栏必须仍是单列（0.12.1）
+  //
+  // 用户截图：观测台在**官方右栏标签页**里（857 设备px ÷ 1.5 DPI = 571 CSS px），
+  // 而色板每行 `width:100%` 铺满 —— 色块与文字挤在最左、✓ 飘在最右、
+  // 中间约 400px 空白。这类「观感」问题只能量布局，读 CSS 文本看不出。
+  //
+  // 断言的判据是**列数**（容器宽 → 排几列），不是「有没有写 auto-fill」：
+  // 写对了属性但下限取错（例如 minmax(600px,…)）时，宽容器里仍然只有 1 列。
+  {
+    const hostSrcCss = fs.readFileSync(path.join(ROOT, 'index.js'), 'utf8')
+    const grabDecls = (marker) => {
+      const start = hostSrcCss.indexOf(marker)
+      if (start < 0) return ''
+      const rest = hostSrcCss.slice(start + marker.length)
+      const out = []
+      for (const raw of rest.split('\n')) {
+        const line = raw.trim()
+        if (line.startsWith('//') || line.startsWith('*') || line.startsWith('/*')) continue
+        if (/^'\s*\}',?$/.test(line)) break
+        const m = /^'(.*)',?$/.exec(line)
+        if (m) out.push(m[1].replace(/\\'/g, "'"))
+      }
+      return out.join('')
+    }
+    const swatchDecls = grabDecls("'.zf-rail__swatches{'")
+    ok('抠出了预设色板的 CSS 声明（含 grid-template-columns）',
+      swatchDecls.includes('grid-template-columns'),
+      swatchDecls.slice(0, 100) || '（空）')
+
+    if (!EDGE_OK) {
+      skip('无 Edge —— 预设色板列数实测跳过；本地 Windows 会执行')
+    } else {
+      const swatchCell = `
+<button type="button" class="zf-rail__swatch">
+  <span class="zf-rail__swatch-main">
+    <span class="zf-rail__chip"></span>
+    <span class="zf-rail__swatch-text">大招墨青金</span></span>
+  <span class="zf-rail__swatch-tick">✓</span></button>`
+      const widths = [210, 258, 350, 400, 480, 543, 600, 700]
+      const boxes = widths.map(w =>
+        `<div style="width:${w}px"><div class="zf-rail__swatches" id="s${w}">` +
+        swatchCell.repeat(8) + '</div></div>').join('\n')
+      const html = `<!doctype html><meta charset=utf-8><title>pending</title>
+<style>html,body{margin:0;background:#1a1a1a}
+.zf-rail__swatches{${swatchDecls}}
+.zf-rail__swatch{width:100%;height:28px;min-width:0;border-radius:7px;cursor:pointer;padding:0 9px;box-sizing:border-box;
+  display:inline-flex;align-items:center;justify-content:space-between;gap:6px;
+  border:1px solid #444;background:#222;color:#bbb;font-size:11px;font-family:sans-serif}
+.zf-rail__swatch-main{display:inline-flex;align-items:center;gap:7px;min-width:0}
+.zf-rail__swatch-text{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.zf-rail__swatch-tick{flex:0 0 auto}
+.zf-rail__chip{width:11px;height:11px;border-radius:3px;flex:0 0 auto;background:#F2E957}</style>
+${boxes}
+<script>
+var W = ${JSON.stringify(widths)};
+document.title = JSON.stringify(W.map(function (w) {
+  var el = document.getElementById('s' + w);
+  var btns = [].slice.call(el.querySelectorAll('.zf-rail__swatch'));
+  var lefts = {};
+  btns.forEach(function (b) { lefts[Math.round(b.getBoundingClientRect().left)] = 1 });
+  return { w: w, cols: Object.keys(lefts).length };
+}));
+<\/script>`
+      const f = path.join(os.tmpdir(), 'zf-swatchgrid-assert.html')
+      fs.writeFileSync(f, html, 'utf8')
+      let res = null
+      try {
+        const dom = edgeDump(f, { windowSize: '1400,900', budget: 1500, maxBuffer: 64 * 1024 * 1024 })
+        const t = /<title>([^<]*)<\/title>/.exec(dom)
+        if (t && t[1] !== 'pending') res = JSON.parse(t[1].replace(/&quot;/g, '"'))
+      } catch { res = null }
+      ok('拿到预设色板的真实列数', res !== null)
+      if (res !== null) {
+        const colsAt = w => res.find(r => r.w === w)?.cols
+        // 窄栏（浮层 240/288px → 内容 210/258px）必须仍是单列：改宽容器
+        // 不能把窄栏改坏（那里本来就没有多余空间）。
+        ok('窄栏仍是单列（浮层 210/258px）', colsAt(210) === 1 && colsAt(258) === 1,
+          `210→${colsAt(210)} 258→${colsAt(258)}`)
+        // 官方面板宽度下必须铺开成多列 —— 这正是用户截图里空白的来源。
+        ok('宽容器下铺开成多列（350/543/700px）',
+          colsAt(350) >= 2 && colsAt(543) >= 3 && colsAt(700) >= 4,
+          `350→${colsAt(350)} 543→${colsAt(543)} 700→${colsAt(700)}`)
+        // 单调不减：容器变宽不应该少一列（下限取错时会出现这种怪象）
+        ok('列数随容器变宽单调不减',
+          widths.every((w, i) => i === 0 || colsAt(w) >= colsAt(widths[i - 1])),
+          widths.map(w => `${w}:${colsAt(w)}`).join(' '))
+      }
     }
   }
 
@@ -5553,7 +5812,8 @@ function shellDom (opts = {}) {
     // ② 编辑主预设的控件（设置页 value / 观测栏 aria-pressed 与 ✓）
     /^\s*value: settings\.preset,$/,
     /^\s*'aria-pressed': settings\.preset === p \?/,
-    /^\s*settings\.preset === p \? h\('span', null, '✓'\)/,
+    // 观测栏色板的 ✓（0.12.1 起 tick 有类名，片段随之更新）
+    /^\s*settings\.preset === p \? h\('span', \{ className: 'zf-rail__swatch-tick' \}, '✓'\)/,
     // ③ 诊断快照
     /^\s*preset: state\.settings\.preset,$/,
     // ④ C14 按钮：套用「当前主预设」的组合

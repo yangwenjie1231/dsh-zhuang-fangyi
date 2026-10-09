@@ -3,6 +3,11 @@ node_modules/
 __pycache__/
 dist/
 
+# 一次性分析脚本（量像素、试参数、负向验证…）。
+# 结论都写进了代码注释与 CHANGELOG，脚本本身没有留存价值 ——
+# 它们依赖仓库外的素材与作者本机的绝对路径，入库只会让 clone 者困惑。
+.scratch/
+
 # 生成脚本（源素材在仓库外的 `庄方宜素材/`，不随仓库分发）：
 #   tools/prepare-art.py      → art/*.webp + art/thumbs/*.webp + art/wallpapers.json
 #   tools/prepare-splash.py   → art/splash*.webp
