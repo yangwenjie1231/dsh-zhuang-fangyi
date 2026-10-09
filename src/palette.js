@@ -21,6 +21,20 @@
  *
  * 5. 所有取色经 `contrast.js` 断言（正文 4.5:1 / 大字图形 3:1 / 焦点环 3:1）。
  *
+ * ── 关于「导出但只在本文件用」的符号（0.12.0 明确）────────────────────
+ *
+ * 本文件里的 `parseColor` / `mixColor` / `withAlpha` / `tint` / `adjust` /
+ * `buildRamp` / `rotateAccent` / `deriveAliases` / `tokensForScheme` /
+ * `themeId` / `themeLabel` / `RAMP_STEPS` / `RAMP_PREFIX` 都只有本文件内部
+ * 调用，**但刻意保留 `export`**：它们是这条配色管线的分层构件
+ * （取色 → 混色 → 色阶 → 角色 → token），导出后读代码的人能顺着名字
+ * 找到每一层的定义与文档，而不是面对一堆内部私有函数。
+ *
+ * 判据与「真死代码」的区别：**删掉会不会让管线读不懂**。
+ *   · 会 → 保留导出（本节这些）；
+ *   · 不会、且零调用、且注释还声称有人用 → 删除
+ *     （0.12.0 删了 `lightestOf` / `darkestOf`，见下方说明）。
+ *
  * ── 配色来源 ──────────────────────────────────────────────────────────
  * 官方素材量化提取：荧光黄绿 #F2E957 · 青 #75DCD9 · 酒红 #D86766 ·
  * 橄榄绿 #9EBD87 · 米白 #E8D4D2；大招形态 墨青 #1D3D30 · 冰白青 #D2E7E0 ·
@@ -533,35 +547,16 @@ export const PRESET_COMBOS = Object.fromEntries(
   Object.keys(PRESET_SPECS).map(id => [id, recommendCombo(id)])
 )
 
-/**
- * 一组颜色里**最亮**的那个（按相对亮度）。
+/*
+ * 0.12.0 删除了两个导出：`lightestOf()` 与 `darkestOf()`。
  *
- * 用于浅色模式：强调色要在最亮的面上仍然够暗，才算可读。
- */
-export function lightestOf (colors) {
-  let best = null
-  let bestLum = -1
-  for (const c of colors) {
-    const l = luminance(c)
-    if (l !== null && l > bestLum) { bestLum = l; best = c }
-  }
-  return best ?? undefined
-}
-
-/**
- * 一组颜色里**最暗**的那个（按相对亮度）。
+ * 两者零调用 —— 当年为「强调色要压在最亮/最暗的面上仍可读」而写，
+ * 但实际实现走的是 `surfaces` + `luminance()` 的**内联比较**
+ * （见下方 `buildRoles` 里的 `const lums = surfaces.map(...)`），
+ * 那两个函数从未被接上。
  *
- * 用于深色模式：强调色要在最暗的面上仍然够亮，才算可读。
+ * `luminance()` 保留：它有 12 处真实调用（含测试）。
  */
-export function darkestOf (colors) {
-  let best = null
-  let bestLum = 2
-  for (const c of colors) {
-    const l = luminance(c)
-    if (l !== null && l < bestLum) { bestLum = l; best = c }
-  }
-  return best ?? undefined
-}
 
 /**
  * 由一个预设 + 明暗生成完整角色表。

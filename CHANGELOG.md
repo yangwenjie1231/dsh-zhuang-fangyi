@@ -10,6 +10,67 @@
 
 ---
 
+## [0.12.0] - 2026-10-09
+
+**代码质量**：拆掉最长的函数、清掉真死代码、给清理结论加上回归守护。
+没有用户可见变化。
+
+### 变更
+
+- **`TabBackground` 399 → 174 行**。它是全仓唯一的长函数（第二长的
+  `applySettingsInner` 只有 45 行）。实测拆分依据：399 行里 **238 行是
+  状态与构建逻辑、0 处 `h(Row, `**，只有 161 行是真正的渲染。
+
+  抽出两个工厂：
+  - `makeRotateListApi` —— 轮播列表的状态 API（82 行）
+  - `makeArtPicker` —— 壁纸格子与分组的构建（156 行）
+
+  两个工厂插在**第一个页签之前**而不是页签之间：测试按
+  `function TabXxx (ctx)` 切块数 `h(Row, `，插在页签之间会被算进前一个
+  页签的块里。抽出后 `h(Row, ` 仍是 9 处，「每页一屏」契约不变。
+
+### 修复
+
+- **删除 7 个真死代码导出**（零调用，逐个复核过）：
+
+  | 文件 | 删除的导出 |
+  |---|---|
+  | `src/settings.js` | `backgroundArtId`、`customBackgroundOf` |
+  | `src/fonts.js` | `FONT_LABELS`、`SCALE_LABELS` |
+  | `src/palette.js` | `lightestOf`、`darkestOf` |
+  | `src/wallpaperCatalog.js` | `WALLPAPER_BY_ID` |
+
+  其中 `customBackgroundOf` 的注释写着「客户端与宿主都用它分流」——
+  **与事实不符**：实际分流在客户端 `artSrcOf()` 里内联了（它要同时处理
+  内置 / 自定义 / `none` 三种情况）。保留这种「导出但没人用、注释还说有人用」
+  的函数比删掉更糟：下一个读代码的人会以为那是权威入口。
+
+  `FONT_LABELS` / `SCALE_LABELS` 同理 —— 档位显示名实际走客户端 DICT
+  （要跟随宿主 locale），改那两个常量不会有任何效果。
+
+- **测试断言扫描范围漏了工厂**。「页内声明的键确实在该页被写」只扫
+  `function TabXxx (ctx)`，而 `TabBackground` 的部分 `set()` 调用随这次
+  拆分搬进了工厂 —— 于是报出 `background:rotateLists` 这种**假漂移**。
+  已按页签登记它用的工厂。
+
+- **`check-manifest.mjs` 新增「已删死代码不得复活」的反向断言**。
+  这类断言检查「不存在」，容易恒绿，所以做了负向验证：把 `lightestOf`
+  加回去后确实 FAIL。
+
+- **明确「导出但只在本文件用」与「真死代码」的判据**（写进 `palette.js`
+  文件头）：**删掉会不会让管线读不懂**。会 → 保留导出（如 `parseColor` /
+  `mixColor` / `buildRamp` 等 13 个配色管线构件）；不会、且零调用、
+  且注释还声称有人用 → 删除。
+
+### 说明
+
+- 拆分过程里踩到两个只有运行才暴露的坑：`node --check` 查不出
+  **未定义标识符**（我把 `rotateListsOf` 留在了新函数里却只解构了 `rotate`
+  对象，测试跑起来才报 `ReferenceError`）；以及新注释里写了 `Tab<Id>`
+  被「不含 JSX」断言的正则命中（该断言会把 `<大写字母开头的标签>` 当成 JSX）。
+
+---
+
 ## [0.11.0] - 2026-10-09
 
 ### 新增

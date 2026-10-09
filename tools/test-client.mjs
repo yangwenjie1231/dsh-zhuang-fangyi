@@ -6041,10 +6041,23 @@ function shellDom (opts = {}) {
   //
   // 单向校验（不做排他）：「一键推荐组合」按设计就跨页写 5 个键，
   // 排他校验会把它误报成漂移。
+  //
+  // ⚠️ 扫描范围必须包含**该页用的工厂**（0.12.0）：`TabBackground` 的部分
+  // `set()` 调用搬进了 `makeRotateListApi` / `makeArtPicker`。只扫
+  // `function TabXxx (ctx)` 会漏掉它们，报出 `background:rotateLists` 这种
+  // 假漂移（实测踩过）。工厂是该页代码路径的一部分，断言的本意是
+  // 「声明的键有真实的 UI 行」，所以按页签登记它用的工厂。
+  const TAB_FACTORIES = {
+    background: ['makeRotateListApi', 'makeArtPicker']
+  }
   const keyNotWritten = []
   for (const tab of tabs) {
     const parts = csrc.split(new RegExp(`function ${bodyName(tab.id)} \\(ctx\\)`))
-    const body = parts[1] ?? ''
+    let body = parts[1] ?? ''
+    for (const fn of (TAB_FACTORIES[tab.id] ?? [])) {
+      const fp = csrc.split(new RegExp(`function ${fn} \\(`))
+      body += '\n' + (fp[1] ?? '')
+    }
     for (const key of tab.keys) {
       if (!new RegExp(`set\\(\\{[^}]*\\b${key}\\b`).test(body)) keyNotWritten.push(`${tab.id}:${key}`)
     }

@@ -159,18 +159,12 @@ export function fontAttrs (family, scale) {
   }
 }
 
-/** 全部档位的显示名（设置页用）。 */
-export const FONT_LABELS = {
-  default: { zh: '默认', en: 'Default' },
-  sans: { zh: '无衬线', en: 'Sans' },
-  serif: { zh: '衬线', en: 'Serif' },
-  rounded: { zh: '圆体', en: 'Rounded' },
-  mono: { zh: '等宽', en: 'Mono' }
-}
-
-/** 字号档位的显示名。 */
-export const SCALE_LABELS = {
-  0.95: { zh: '紧凑', en: 'Compact' },
-  1: { zh: '标准', en: 'Normal' },
-  1.05: { zh: '宽松', en: 'Roomy' }
-}
+/*
+ * 0.12.0 删除了两个导出：`FONT_LABELS` 与 `SCALE_LABELS`。
+ *
+ * 它们零调用 —— 档位显示名走的是**客户端 DICT**（`t('font_sans')` /
+ * `t('fontScale_0_95')`），因为那两处要跟随宿主 locale，而这里的
+ * `{zh, en}` 字面量不走 `locale.bind()`，拿不到外壳当前语言。
+ *
+ * 留着它们的害处是「两套显示名」的错觉：改这里不会有任何效果。
+ */

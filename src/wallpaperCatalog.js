@@ -139,5 +139,12 @@ export const BACKGROUNDS = {
   ...Object.fromEntries(WALLPAPERS.map((w) => [w.id, w.file]))
 }
 
-/** id → 壁纸定义。 */
-export const WALLPAPER_BY_ID = Object.fromEntries(WALLPAPERS.map((w) => [w.id, w]))
+/*
+ * 0.12.0 删除了 `WALLPAPER_BY_ID`（id → 壁纸定义）。
+ *
+ * 零调用：需要「按 id 取定义」的两处都直接遍历 `WALLPAPERS` 数组
+ * （`gen-wallpapers.mjs` 要的是顺序，`client.js` 用的是生成的 `BG_*` 表）。
+ * 多一份索引表就多一处要跟着维护的副本 —— 而本文件的整个存在意义
+ * 就是消灭副本。
+ */
+

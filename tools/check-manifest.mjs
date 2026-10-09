@@ -236,6 +236,39 @@ for (const [file, needle] of Object.entries(DERIVED_LISTS)) {
   }
 }
 
+// ── 已删除的死代码不得复活（0.12.0）─────────────────────────────────────
+//
+// 这 7 个导出在 0.12.0 被删掉，理由都是「零调用」或「注释声称有人用但实际没有」。
+// 断言它们不再出现，是为了防止某次重构把旧代码复制回来 —— 那种情况下
+// 不会有人注意到「这个函数其实没人调」。
+//
+// ⚠️ 这是**反向**断言（检查「不存在」），所以必须确认它真的会失败：
+// 故意加回一个同名函数后跑一次，应看到对应 FAIL。已实测。
+const DELETED_EXPORTS = {
+  'src/settings.js': ['backgroundArtId', 'customBackgroundOf'],
+  'src/fonts.js': ['FONT_LABELS', 'SCALE_LABELS'],
+  'src/palette.js': ['lightestOf', 'darkestOf'],
+  'src/wallpaperCatalog.js': ['WALLPAPER_BY_ID']
+}
+for (const [file, names] of Object.entries(DELETED_EXPORTS)) {
+  // ⚠️ `read()` 已经用 ROOT 解析过路径，这里**不要再 join 一次** ——
+  // 第一版写成 `path.join(ROOT, file)` 传进去，结果拼成了
+  // `<ROOT>\<ROOT>\src\settings.js` 直接 ENOENT（断言自己崩了，
+  // 而不是报出「死代码复活」）。
+  if (!fs.existsSync(path.join(ROOT, file))) {
+    fail(`缺 ${file}（死代码回归断言的目标文件）`)
+    continue
+  }
+  const src = read(file)
+  const revived = names.filter(n => new RegExp(`export\\s+(?:function|const)\\s+${n}\\b`).test(src))
+  if (revived.length === 0) {
+    pass(`${file} 的 ${names.length} 个已删导出未复活`)
+  } else {
+    fail(`${file} 里 ${revived.join(', ')} 又出现了 —— 它们零调用，是 0.12.0 ` +
+      '刻意删掉的死代码。若确实要用，请连同调用点一起加回来并更新本断言')
+  }
+}
+
 console.log()
 if (failed === 0) {
   console.log('全部通过。')

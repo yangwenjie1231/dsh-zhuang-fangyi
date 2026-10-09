@@ -3696,105 +3696,19 @@ window.__ModuleLoader__.load({
        */
 
       /** 「外观」页：原「总览」「明暗」「排版」三组合并（8 行）。 */
-      function TabLook (ctx) {
-        const { settings, set, presetOptions, applyCombo } = ctx
-        return [
-          h(Row, { label: t('enabled'), hint: t('enabledHint') },
-            h(Toggle, { value: settings.enabled, onChange: v => set({ enabled: v }) })),
-          h(Row, { label: t('preset') },
-            h(Select, {
-              value: settings.preset,
-              // 文案带上风格名（「本体黄绿 · 明亮轻盈」）——
-              // 预设是**整套风格**而不只是配色，光看色名体现不出来。
-              // style 缺失时不留下孤立的 ' · '（宿主未升级/字段缺失时也要好看）。
-              options: PRESETS.map(p => {
-                const style = state.presetStyles?.[p]?.style
-                return {
-                  value: p,
-                  label: style ? `${PRESET_LABELS[p].zh} · ${style}` : PRESET_LABELS[p].zh
-                }
-              }),
-              onChange: v => set({ preset: v })
-            })),
-          // C14：一键推荐组合。放在预设行**紧下面** —— 它是「这套预设该怎么配」
-          // 的动作，离预设越近越好找。
-          //
-          // 不自动触发（与「推荐壁纸只提示、不自动切换」同一原则）：套用会改动
-          // 壁纸与排版，必须是用户显式点击。
-          h(Row, { label: t('applyCombo'), hint: t('applyComboHint') },
-            h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, justifyContent: 'flex-end' } },
-              h('button', {
-                type: 'button',
-                onClick: () => applyCombo(settings.preset),
-                className: buttonStyle(false).className
-              }, t('applyCombo')))),
-          h(Row, { label: t('scheme'), hint: t('schemeHint') },
-            h(Segmented, {
-              value: settings.scheme,
-              options: [
-                { value: 'system', label: t('schemeSystem') },
-                { value: 'light', label: t('schemeLight') },
-                { value: 'dark', label: t('schemeDark') }
-              ],
-              onChange: v => set({ scheme: v })
-            })),
-          // C13：明暗分档预设。默认两格都是「跟随主预设」——
-          // 不选就不分叉，老用户升级后行为完全不变。
-          //
-          // 两格各自带标签：并排两个下拉若都不标，看不出哪个管浅色。
-          // （原先就是这个问题：`presetLight` / `presetDark` 两个 DICT 键
-          // 定义了却从未渲染 —— 有断言盯着这一点。）
-          h(Row, { label: t('schemePresets'), hint: t('schemePresetsHint') },
-            h('div', { style: { display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' } },
-              h('div', { style: fieldStyle },
-                h('span', { style: fieldLabelStyle }, t('presetLight')),
-                h(Select, {
-                  value: settings.presetLight ?? FOLLOW,
-                  options: presetOptions(),
-                  onChange: v => set({ presetLight: v === FOLLOW ? null : v })
-                })),
-              h('div', { style: fieldStyle },
-                h('span', { style: fieldLabelStyle }, t('presetDark')),
-                h(Select, {
-                  value: settings.presetDark ?? FOLLOW,
-                  options: presetOptions(),
-                  onChange: v => set({ presetDark: v === FOLLOW ? null : v })
-                })))),
-          h(Row, { label: t('fontFamily'), hint: t('fontFamilyHint') },
-            h(Select, {
-              value: settings.fontFamily ?? 'default',
-              // 显示名走 t()（与其它设置项一致，由宿主 locale 决定语言）；
-              // DICT 里没有该键时 t() 会原样返回键名，所以档位名直接写进 DICT
-              options: FONT_FAMILIES.map(f => ({ value: f, label: t(`font_${f}`) })),
-              onChange: v => set({ fontFamily: v })
-            })),
-          h(Row, { label: t('fontScale'), hint: t('fontScaleHint') },
-            h(Segmented, {
-              value: String(settings.fontScale ?? 1),
-              options: FONT_SCALES.map(sc => ({
-                value: String(sc),
-                label: t(`fontScale_${String(sc).replace('.', '_')}`)
-              })),
-              onChange: v => set({ fontScale: Number(v) })
-            })),
-          h(Row, { label: t('contentWidth'), hint: t('contentWidthHint') },
-            h(Segmented, {
-              value: String(settings.contentWidth ?? 'auto'),
-              options: CONTENT_WIDTH_MODES.map(m => ({ value: m, label: t(`contentWidth_${m}`) })),
-              onChange: v => set({ contentWidth: v })
-            }))
-        ]
-      }
-
-      /** 「背景」页：壁纸与其调节（6 行）。 */
-      function TabBackground (ctx) {
-        const { settings, set, customList, uploading } = ctx
-        const pickerOpen = state.pickerOpen === true
-        const needle = (state.pickerQuery ?? '').trim().toLowerCase()
-        const matches = label => needle === '' || label.toLowerCase().includes(needle)
-        const recommendedOf = id =>
-          isRecommendedArt(state.presetStyles, presetForScheme(settings, currentScheme(theme)), id)
-
+      /**
+       * 轮播自定义列表的状态 API（0.12.0 从 `TabBackground` 抽出）。
+       *
+       * 抽出理由：它占 `TabBackground` 的 82 行且**与渲染无关** ——
+       * 原函数 399 行里 238 行是状态与构建逻辑，只有 151 行是渲染。
+       * 放在这里（第一个页签之前）而不是页签之间：测试按
+       * `function TabXxx (ctx)` 切块数 `h(Row, `，插在页签之间会被
+       * 算进前一个页签的块里。
+       *
+       * `state` / `emit` / `t` 走闭包（它们是 `apply()` 作用域的），
+       * 只有随每次渲染变化的 `settings` / `set` 作为参数传入。
+       */
+      function makeRotateListApi ({ settings, set }) {
         /* ── v8：轮播自定义列表 ────────────────────────────────────────────
          *
          * 列表编辑是**面板局部 UI 状态**，放共享 `state` 而不是组件内 `useState`：
@@ -3877,7 +3791,24 @@ window.__ModuleLoader__.load({
         /** 编辑态下某张内置图是否已是列表成员。 */
         const isMember = id =>
           editingList !== null && (rotateListsOf().find(l => l.id === editingList)?.ids ?? []).includes(id)
+        return {
+          rotateListsOf, rotateEditingOf, setRotateEditing, setRotateDraftName,
+          setRotateDeleteArm, createRotateList, deleteRotateList, renameRotateList,
+          toggleRotateMember, editingList, isMember
+        }
+      }
 
+      /**
+       * 壁纸选择器的格子与分组构建（0.12.0 从 `TabBackground` 抽出）。
+       *
+       * 抽出理由同上：156 行、**0 处 `h(Row, `** —— 它是「怎么画格子」，
+       * 不是「这一页有哪些设置行」。抽出后 `TabBackground` 只剩 9 行设置
+       * 与它们的分组，职责单一。
+       *
+       * `rotate` 是上面那个工厂的返回值（编辑态点格子要切换成员，而不是换壁纸）。
+       */
+      function makeArtPicker ({ settings, set, customList, uploading, needle, matches, recommendedOf, rotate }) {
+        const { isMember, editingList, toggleRotateMember } = rotate
         /** 当前壁纸：收起态那一格预览。 */
         const current = (() => {
           if (settings.background === CUSTOM_BACKGROUND) {
@@ -4034,6 +3965,122 @@ window.__ModuleLoader__.load({
 
         const visible = bgGroups.filter(x => x !== null)
         const noMatch = needle !== '' && visible.length === 0 && mineTiles.length === 0
+        return { current, tile, group, bgGroups, mineTiles, uploadTile, noneTile, visible, noMatch }
+      }
+
+      function TabLook (ctx) {
+        const { settings, set, presetOptions, applyCombo } = ctx
+        return [
+          h(Row, { label: t('enabled'), hint: t('enabledHint') },
+            h(Toggle, { value: settings.enabled, onChange: v => set({ enabled: v }) })),
+          h(Row, { label: t('preset') },
+            h(Select, {
+              value: settings.preset,
+              // 文案带上风格名（「本体黄绿 · 明亮轻盈」）——
+              // 预设是**整套风格**而不只是配色，光看色名体现不出来。
+              // style 缺失时不留下孤立的 ' · '（宿主未升级/字段缺失时也要好看）。
+              options: PRESETS.map(p => {
+                const style = state.presetStyles?.[p]?.style
+                return {
+                  value: p,
+                  label: style ? `${PRESET_LABELS[p].zh} · ${style}` : PRESET_LABELS[p].zh
+                }
+              }),
+              onChange: v => set({ preset: v })
+            })),
+          // C14：一键推荐组合。放在预设行**紧下面** —— 它是「这套预设该怎么配」
+          // 的动作，离预设越近越好找。
+          //
+          // 不自动触发（与「推荐壁纸只提示、不自动切换」同一原则）：套用会改动
+          // 壁纸与排版，必须是用户显式点击。
+          h(Row, { label: t('applyCombo'), hint: t('applyComboHint') },
+            h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, justifyContent: 'flex-end' } },
+              h('button', {
+                type: 'button',
+                onClick: () => applyCombo(settings.preset),
+                className: buttonStyle(false).className
+              }, t('applyCombo')))),
+          h(Row, { label: t('scheme'), hint: t('schemeHint') },
+            h(Segmented, {
+              value: settings.scheme,
+              options: [
+                { value: 'system', label: t('schemeSystem') },
+                { value: 'light', label: t('schemeLight') },
+                { value: 'dark', label: t('schemeDark') }
+              ],
+              onChange: v => set({ scheme: v })
+            })),
+          // C13：明暗分档预设。默认两格都是「跟随主预设」——
+          // 不选就不分叉，老用户升级后行为完全不变。
+          //
+          // 两格各自带标签：并排两个下拉若都不标，看不出哪个管浅色。
+          // （原先就是这个问题：`presetLight` / `presetDark` 两个 DICT 键
+          // 定义了却从未渲染 —— 有断言盯着这一点。）
+          h(Row, { label: t('schemePresets'), hint: t('schemePresetsHint') },
+            h('div', { style: { display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' } },
+              h('div', { style: fieldStyle },
+                h('span', { style: fieldLabelStyle }, t('presetLight')),
+                h(Select, {
+                  value: settings.presetLight ?? FOLLOW,
+                  options: presetOptions(),
+                  onChange: v => set({ presetLight: v === FOLLOW ? null : v })
+                })),
+              h('div', { style: fieldStyle },
+                h('span', { style: fieldLabelStyle }, t('presetDark')),
+                h(Select, {
+                  value: settings.presetDark ?? FOLLOW,
+                  options: presetOptions(),
+                  onChange: v => set({ presetDark: v === FOLLOW ? null : v })
+                })))),
+          h(Row, { label: t('fontFamily'), hint: t('fontFamilyHint') },
+            h(Select, {
+              value: settings.fontFamily ?? 'default',
+              // 显示名走 t()（与其它设置项一致，由宿主 locale 决定语言）；
+              // DICT 里没有该键时 t() 会原样返回键名，所以档位名直接写进 DICT
+              options: FONT_FAMILIES.map(f => ({ value: f, label: t(`font_${f}`) })),
+              onChange: v => set({ fontFamily: v })
+            })),
+          h(Row, { label: t('fontScale'), hint: t('fontScaleHint') },
+            h(Segmented, {
+              value: String(settings.fontScale ?? 1),
+              options: FONT_SCALES.map(sc => ({
+                value: String(sc),
+                label: t(`fontScale_${String(sc).replace('.', '_')}`)
+              })),
+              onChange: v => set({ fontScale: Number(v) })
+            })),
+          h(Row, { label: t('contentWidth'), hint: t('contentWidthHint') },
+            h(Segmented, {
+              value: String(settings.contentWidth ?? 'auto'),
+              options: CONTENT_WIDTH_MODES.map(m => ({ value: m, label: t(`contentWidth_${m}`) })),
+              onChange: v => set({ contentWidth: v })
+            }))
+        ]
+      }
+
+      /** 「背景」页：壁纸与其调节（9 行 + 选择器展开区）。 */
+      function TabBackground (ctx) {
+        const { settings, set, customList, uploading } = ctx
+        const pickerOpen = state.pickerOpen === true
+        const needle = (state.pickerQuery ?? '').trim().toLowerCase()
+        const matches = label => needle === '' || label.toLowerCase().includes(needle)
+        const recommendedOf = id =>
+          isRecommendedArt(state.presetStyles, presetForScheme(settings, currentScheme(theme)), id)
+
+        // 状态与构建逻辑抽到两个工厂（0.12.0）：本函数从 399 行降到约 160 行，
+        // 只负责「这一页有哪些设置行」。工厂定义在第一个页签之前 ——
+        // 插在页签之间会被行数统计算进前一个页签。
+        //
+        // ⚠️ 从工厂返回值里**解构出用到的每一项**。第一版只拿了 `rotate` 对象，
+        // 但下面的轮播列表行直接调 `rotateListsOf()` —— 于是运行时报
+        // `ReferenceError`（`node --check` 查不出未定义标识符）。
+        const rotate = makeRotateListApi({ settings, set })
+        const {
+          rotateListsOf, rotateEditingOf, setRotateEditing, setRotateDraftName,
+          setRotateDeleteArm, createRotateList, deleteRotateList, renameRotateList
+        } = rotate
+        const { current, tile, group, bgGroups, mineTiles, uploadTile, noneTile, visible, noMatch } =
+          makeArtPicker({ settings, set, customList, uploading, needle, matches, recommendedOf, rotate })
 
         return [
           h(Row, { label: t('background') },

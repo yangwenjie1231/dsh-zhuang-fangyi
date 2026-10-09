@@ -340,25 +340,17 @@ export function normalizeSettings (input) {
   return out
 }
 
-/**
- * 是否可以用当前设置生效。
- * 背景选 `none` 或自定义但文件缺失时，只降级背景、不影响配色。
- */
-export function backgroundArtId (settings) {
-  if (settings.background === 'none') return null
-  return settings.background
-}
-
-/**
- * 当前背景**是否是自定义图**（且那条记录有效）。
+/*
+ * 0.12.0 删除了两个导出：`backgroundArtId()` 与 `customBackgroundOf()`。
  *
- * 客户端与宿主都用它分流：自定义图走 `<ROUTE>/backgrounds/<file>`，
- * 内置图走 `var(--zf-art-<id>)`。
+ * 两者都**零调用**，而且 `customBackgroundOf` 的注释还写着「客户端与宿主
+ * 都用它分流」—— 与事实不符：实际分流在客户端 `artSrcOf()` 里**内联**了
+ * （它要同时处理内置 / 自定义 / `none` 三种情况，共用一个函数反而更绕）。
+ *
+ * 保留「导出但没人用」的函数比删掉更糟：它会让下一个读代码的人以为
+ * 那是权威入口，改完才发现根本没生效。这类「注释与代码不符」是本仓库
+ * 反复出现的问题（见 CHANGELOG 里多条修复）。
  */
-export function customBackgroundOf (settings) {
-  if (settings?.background !== CUSTOM_BACKGROUND) return null
-  return settings.customBackground ?? null
-}
 
 /**
  * 某个明暗档位**实际生效**的预设（C13）。
